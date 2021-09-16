@@ -1,6 +1,105 @@
+use anyhow::{anyhow, bail, ensure, Result};
+
 fn main() {
     let x = Bitboard6::new(0x20103c407e00);
     println!("Road: {}", x.check_road());
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum Piece {
+    WhiteFlat,
+    WhiteWall,
+    WhiteCap,
+    BlackFlat,
+    BlackWall,
+    BlackCap,
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum Player {
+    White,
+    Black,
+}
+
+pub struct Board6 {
+    board: [Vec<Piece>; 36],
+    active_player: Player,
+    move_num: usize,
+}
+
+impl Board6 {
+    fn new() -> Self {
+        const SIZE: usize = 36;
+        const INIT: Vec<Piece> = Vec::new();
+        Self {
+            board: [INIT; SIZE],
+            active_player: Player::White,
+            move_num: 1,
+        }
+    }
+    fn try_from_tps(tps: &str) -> Result<Self> {
+        let data: Vec<_> = tps.split_whitespace().collect();
+        ensure!(data.len() == 3, "Malformed tps string!");
+        let rows: Vec<_> = data[0].split("/").collect();
+        ensure!(rows.len() == 6, "Wrong board size for tps");
+        let mut board = Self::new();
+        for (r_idx, row) in rows.into_iter().enumerate() {
+            let mut col = 0;
+            let tiles = row.split(",");
+            for tile in tiles {
+                if tile.starts_with("x") {
+                    if let Some(c) = tile.chars().nth(1) {
+                        col += c
+                            .to_digit(10)
+                            .ok_or_else(|| anyhow!("Failed to parse digit"))?;
+                    } else {
+                        col += 1;
+                    }
+                } else {
+                    let stack = parse_tps_stack(tile)?;
+                    ensure!(col < 6, "Too many columns for this board size");
+                    board.board[r_idx * 6 + col as usize].extend(stack.into_iter());
+                    col += 1;
+                }
+            }
+        }
+        let active_player = match data[1] {
+            "1" => Player::White,
+            "2" => Player::Black,
+            _ => bail!("Unknown active player id"),
+        };
+        board.active_player = active_player;
+        board.move_num = data[2].parse()?;
+        Ok(board)
+    }
+    fn tile(&self, row: usize, col: usize) -> &Vec<Piece> {
+        &self.board[row * 6 + col]
+    }
+    fn tile_mut(&mut self, row: usize, col: usize) -> &mut Vec<Piece> {
+        &mut self.board[row * 6 + col]
+    }
+}
+
+fn parse_tps_stack(tile: &str) -> Result<Vec<Piece>> {
+    let mut vec = Vec::new();
+    for c in tile.chars() {
+        match c {
+            '1' => vec.push(Piece::WhiteFlat),
+            '2' => vec.push(Piece::BlackFlat),
+            'S' => match vec.pop() {
+                Some(Piece::WhiteFlat) => vec.push(Piece::WhiteWall),
+                Some(Piece::BlackFlat) => vec.push(Piece::BlackWall),
+                _ => bail!("Bad wall notation"),
+            },
+            'C' => match vec.pop() {
+                Some(Piece::WhiteFlat) => vec.push(Piece::WhiteCap),
+                Some(Piece::BlackFlat) => vec.push(Piece::BlackCap),
+                _ => bail!("Bad capstone notation"),
+            },
+            _ => bail!("Unknown character encountered in tile"),
+        }
+    }
+    Ok(vec)
 }
 
 // 09 10 11 12 13 14
@@ -129,5 +228,28 @@ mod test {
         assert!(!Bitboard6::new(0x20103c406e00).check_road());
         assert!(!Bitboard6::new(0x42243c34446200).check_road());
         assert!(!Bitboard6::new(0).check_road());
+    }
+    #[test]
+    pub fn test_read_tps() {
+        let example_tps = "x6/x2,2,x3/x3,2C,x2/x2,211S,x2,2/x6/x,1,1,2,2,1 2 7";
+        let board = Board6::try_from_tps(example_tps);
+        assert!(board.is_ok());
+        let board = board.unwrap();
+        assert_eq!(board.active_player, Player::Black);
+        assert_eq!(board.move_num, 7);
+        let mut b = Board6::new();
+        b.tile_mut(1, 2).push(Piece::BlackFlat);
+        b.tile_mut(2, 3).push(Piece::BlackCap);
+        let mut stack = vec![Piece::BlackFlat, Piece::WhiteFlat, Piece::WhiteWall];
+        // b.tile_mut(3, 2) = &mut stack;
+        std::mem::swap(b.tile_mut(3, 2), &mut stack);
+        b.tile_mut(3, 5).push(Piece::BlackFlat);
+
+        b.tile_mut(5, 1).push(Piece::WhiteFlat);
+        b.tile_mut(5, 2).push(Piece::WhiteFlat);
+        b.tile_mut(5, 3).push(Piece::BlackFlat);
+        b.tile_mut(5, 4).push(Piece::BlackFlat);
+        b.tile_mut(5, 5).push(Piece::WhiteFlat);
+        assert_eq!(board.board, b.board);
     }
 }
