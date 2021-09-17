@@ -86,6 +86,30 @@ pub fn generate_stack_moves(
     moves.push(in_progress.set_tile(tile_num, pieces_left));
 }
 
+pub fn generate_crush_moves(
+    moves: &mut Vec<StackMovement>,
+    in_progress: StackMovement,
+    tile_num: usize,
+    moves_left: usize,
+    pieces_left: u64,
+) {
+    if moves_left == 0 || pieces_left == 1 {
+        let last_move = in_progress.set_tile(tile_num, pieces_left);
+        moves.push(last_move);
+        return;
+    }
+    let max_placement = 1 + pieces_left - moves_left as u64; // Todo figure out if this is right
+    for piece_count in 1..max_placement {
+        generate_stack_moves(
+            moves,
+            in_progress.set_tile(tile_num, piece_count),
+            tile_num + 1,
+            moves_left - 1,
+            pieces_left - piece_count,
+        );
+    }
+}
+
 fn get_stack_sq(in_progress: StackMovement, tile_num: usize) -> Option<usize> {
     let src_index = in_progress.src_index();
     let dir = in_progress.direction();
@@ -107,6 +131,15 @@ pub enum Piece {
     BlackFlat,
     BlackWall,
     BlackCap,
+}
+
+impl Piece {
+    fn owner(self) -> Player {
+        match self {
+            Piece::WhiteFlat | Piece::WhiteWall | Piece::WhiteCap => Player::White,
+            Piece::BlackFlat | Piece::BlackWall | Piece::BlackCap => Player::Black,
+        }
+    }
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -166,11 +199,24 @@ impl Board6 {
         board.move_num = data[2].parse()?;
         Ok(board)
     }
+    fn row_col(&self, index: usize) -> (usize, usize) {
+        (index / 6, index % 6)
+    }
     fn tile(&self, row: usize, col: usize) -> &Vec<Piece> {
         &self.board[row * 6 + col]
     }
     fn tile_mut(&mut self, row: usize, col: usize) -> &mut Vec<Piece> {
         &mut self.board[row * 6 + col]
+    }
+    fn scan_active_stacks(&self, player: Player) -> Vec<usize> {
+        self.board.iter().enumerate().filter_map(|(i, vec)| {
+            match vec.last() {
+                Some(piece) if piece.owner() == player => {
+                    Some(i)
+                },
+                _ => None,
+            }
+        }).collect()
     }
 }
 
@@ -345,6 +391,9 @@ mod test {
         b.tile_mut(5, 4).push(Piece::BlackFlat);
         b.tile_mut(5, 5).push(Piece::WhiteFlat);
         assert_eq!(board.board, b.board);
+
+        assert_eq!(board.scan_active_stacks(Player::White).len(), 4);
+        assert_eq!(board.scan_active_stacks(Player::Black).len(), 5);
     }
     #[test]
     pub fn test_move_bitwise() {
@@ -365,5 +414,9 @@ mod test {
             }
             assert_eq!(moves.len(), 2usize.pow(stack_size as u32) - 1);
         }
+
+        moves.clear();
+        generate_crush_moves(&mut moves, StackMovement(0), 1, 1, 2);
+        assert_eq!(moves.len(), 1);
     }
 }
