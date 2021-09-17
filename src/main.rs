@@ -5,6 +5,100 @@ fn main() {
     println!("Road: {}", x.check_road());
 }
 
+/// 0011 1111 Src Tile
+/// 1100 0000 Direction
+/// 00000000F00 Number Picked Up
+/// 0000000F000 Tile 1
+/// 000000F0000 Tile 2
+/// 00000F00000 Tile 3
+/// 0000F000000 Tile 4
+/// 000F0000000 Tile 5
+/// 00F00000000 Tile 6
+/// 0F000000000 Tile 7
+/// 10000000000 Wall Smash
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StackMovement(u64);
+
+impl StackMovement {
+    fn src_index(self) -> usize {
+        self.0 as usize & 0x3F
+    }
+    fn direction(self) -> u64 {
+        (self.0 & 0xC0) >> 6
+    }
+    fn set_tile(self, tile_num: usize, count: u64) -> Self {
+        match tile_num {
+            1 => self.set_tile1(count),
+            2 => self.set_tile2(count),
+            3 => self.set_tile3(count),
+            4 => self.set_tile4(count),
+            5 => self.set_tile5(count),
+            6 => self.set_tile6(count),
+            7 => self.set_tile7(count),
+            _ => unimplemented!(),
+        }
+    }
+    fn set_tile1(self, count: u64) -> Self {
+        Self(self.0 | (count << 8))
+    }
+    fn set_tile2(self, count: u64) -> Self {
+        Self(self.0 | (count << 12))
+    }
+    fn set_tile3(self, count: u64) -> Self {
+        Self(self.0 | (count << 16))
+    }
+    fn set_tile4(self, count: u64) -> Self {
+        Self(self.0 | (count << 20))
+    }
+    fn set_tile5(self, count: u64) -> Self {
+        Self(self.0 | (count << 24))
+    }
+    fn set_tile6(self, count: u64) -> Self {
+        Self(self.0 | (count << 28))
+    }
+    fn set_tile7(self, count: u64) -> Self {
+        Self(self.0 | (count << 32))
+    }
+}
+
+pub fn generate_stack_moves(
+    moves: &mut Vec<StackMovement>,
+    in_progress: StackMovement,
+    tile_num: usize,
+    moves_left: usize,
+    pieces_left: u64,
+) {
+    // Todo Consider packing extra data into StackMovement?
+    if moves_left == 0 || pieces_left == 1 {
+        let last_move = in_progress.set_tile(tile_num, pieces_left);
+        moves.push(last_move);
+        return;
+    }
+    for piece_count in 1..pieces_left {
+        generate_stack_moves(
+            moves,
+            in_progress.set_tile(tile_num, piece_count),
+            tile_num + 1,
+            moves_left - 1,
+            pieces_left - piece_count,
+        );
+    }
+    moves.push(in_progress.set_tile(tile_num, pieces_left));
+}
+
+fn get_stack_sq(in_progress: StackMovement, tile_num: usize) -> Option<usize> {
+    let src_index = in_progress.src_index();
+    let dir = in_progress.direction();
+    let dest_index = match dir {
+        0 => src_index.checked_sub(8 * tile_num),
+        1 => Some(src_index + 1 * tile_num),
+        2 => Some(src_index + 8 * tile_num),
+        3 => src_index.checked_sub(1 * tile_num),
+        _ => unreachable!(),
+    };
+    todo!()
+}
+
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Piece {
     WhiteFlat,
@@ -251,5 +345,25 @@ mod test {
         b.tile_mut(5, 4).push(Piece::BlackFlat);
         b.tile_mut(5, 5).push(Piece::WhiteFlat);
         assert_eq!(board.board, b.board);
+    }
+    #[test]
+    pub fn test_move_bitwise() {
+        let m = StackMovement(0);
+        assert_eq!(StackMovement(0xF00), m.set_tile1(0xF));
+        let mut moves = Vec::new();
+        generate_stack_moves(&mut moves, StackMovement(0), 1, 3, 3);
+        assert_eq!(moves.len(), 4);
+        generate_stack_moves(&mut moves, StackMovement(0), 1, 3, 2);
+        assert_eq!(moves.len(), 4 + 2);
+        generate_stack_moves(&mut moves, StackMovement(0), 1, 3, 1);
+        assert_eq!(moves.len(), 4 + 2 + 1);
+
+        for stack_size in 4..7 {
+            moves.clear();
+            for take_pieces in 1..stack_size as u64 + 1 {
+                generate_stack_moves(&mut moves, StackMovement(0), 1, stack_size, take_pieces);
+            }
+            assert_eq!(moves.len(), 2usize.pow(stack_size as u32) - 1);
+        }
     }
 }
