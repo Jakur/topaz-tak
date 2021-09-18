@@ -66,8 +66,11 @@ impl Board6 {
             move_num: 1,
         }
     }
-    const fn size(&self) -> usize {
+    const fn size() -> usize {
         6
+    }
+    const fn board_size(&self) -> usize {
+        Self::size()
     }
     fn try_from_tps(tps: &str) -> Result<Self> {
         let data: Vec<_> = tps.split_whitespace().collect();
@@ -105,6 +108,9 @@ impl Board6 {
         Ok(board)
     }
     fn row_col(&self, index: usize) -> (usize, usize) {
+        Self::row_col_static(index)
+    }
+    fn row_col_static(index: usize) -> (usize, usize) {
         (index / 6, index % 6)
     }
     fn try_tile(&self, row: usize, col: usize) -> Option<&Vec<Piece>> {

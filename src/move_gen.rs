@@ -14,7 +14,7 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<StackMovement>) 
                 moves,
                 dir_move,
                 max_steps,
-                std::cmp::min(board.size(), stack_height),
+                std::cmp::min(board.board_size(), stack_height),
             );
             // Todo Capstone movement
         }
@@ -51,6 +51,9 @@ impl StackMovement {
     fn set_number(self, num: u64) -> Self {
         StackMovement(self.0 | (num << 8))
     }
+    fn number(self) -> u64 {
+        (self.0 & 0xF00) >> 8
+    }
     fn set_tile(self, tile_num: usize, count: u64) -> Self {
         match tile_num {
             1 => self.set_tile1(count),
@@ -64,28 +67,57 @@ impl StackMovement {
         }
     }
     fn set_tile1(self, count: u64) -> Self {
-        Self(self.0 | (count << 8))
-    }
-    fn set_tile2(self, count: u64) -> Self {
         Self(self.0 | (count << 12))
     }
-    fn set_tile3(self, count: u64) -> Self {
+    fn set_tile2(self, count: u64) -> Self {
         Self(self.0 | (count << 16))
     }
-    fn set_tile4(self, count: u64) -> Self {
+    fn set_tile3(self, count: u64) -> Self {
         Self(self.0 | (count << 20))
     }
-    fn set_tile5(self, count: u64) -> Self {
+    fn set_tile4(self, count: u64) -> Self {
         Self(self.0 | (count << 24))
     }
-    fn set_tile6(self, count: u64) -> Self {
+    fn set_tile5(self, count: u64) -> Self {
         Self(self.0 | (count << 28))
     }
-    fn set_tile7(self, count: u64) -> Self {
+    fn set_tile6(self, count: u64) -> Self {
         Self(self.0 | (count << 32))
+    }
+    fn set_tile7(self, count: u64) -> Self {
+        Self(self.0 | (count << 36))
     }
     fn set_crush(self) -> Self {
         Self(self.0 | 0x10000000000)
+    }
+    fn to_ptn(self) -> String {
+        let dir = match self.direction() {
+            0 => "+",
+            1 => ">",
+            2 => "-",
+            3 => "<",
+            _ => unimplemented!(),
+        };
+        let spread = self.0 & 0xFFFFFFF000;
+        let size = Board6::size();
+        let (row, col) = Board6::row_col_static(self.src_index());
+        let col = match col {
+            0 => "a",
+            1 => "b",
+            2 => "c",
+            3 => "d",
+            4 => "e",
+            5 => "f",
+            _ => unimplemented!(),
+        };
+        let row = size - row;
+        let mut s = if format!("{}", self.number()) == format!("{:X}", spread) {
+            format!("{}{}{}{}", self.number(), col, row, dir)
+        } else {
+            format!("{}{}{}{}{:X}", self.number(), col, row, dir, spread)
+        };
+        s.retain(|c| c != '0');
+        s
     }
 }
 
@@ -133,10 +165,10 @@ fn find_dir_limit<F>(
     let mut row = st_row;
     let mut col = st_col;
     let mut counter = 0;
+    let res = step_fn(row, col);
+    row = res.0;
+    col = res.1;
     while let Some(stack) = board.try_tile(row, col) {
-        let res = step_fn(row, col);
-        row = res.0;
-        col = res.1;
         match stack.last() {
             Some(piece) if piece.is_blocker() => {
                 if board.tile(st_row, st_col).last().unwrap().is_cap() && piece.is_wall() {
@@ -146,6 +178,9 @@ fn find_dir_limit<F>(
             }
             _ => {}
         }
+        let res = step_fn(row, col);
+        row = res.0;
+        col = res.1;
         counter += 1;
     }
     limits.steps[dir] = counter;
@@ -210,7 +245,7 @@ pub fn recursive_stack_moves(
     pieces_left: u64,
 ) {
     // Todo Consider packing extra data into StackMovement?
-    if moves_left == 0 || pieces_left == 1 {
+    if moves_left == 1 || pieces_left == 1 {
         let last_move = in_progress.set_tile(tile_num, pieces_left);
         moves.push(last_move);
         return;
@@ -257,7 +292,7 @@ mod test {
     #[test]
     pub fn single_direction_move() {
         let m = StackMovement(0);
-        assert_eq!(StackMovement(0xF00), m.set_tile1(0xF));
+        assert_eq!(StackMovement(0xF000), m.set_tile1(0xF));
         let mut moves = Vec::new();
         recursive_stack_moves(&mut moves, StackMovement(0), 1, 3, 3);
         assert_eq!(moves.len(), 4);
@@ -286,5 +321,19 @@ mod test {
         moves.clear();
         generate_all_stack_moves(&board, &mut moves);
         assert_eq!(moves.len(), one_dir * 4);
+
+        let tps2 = "x6/x6/x2,2,12121,x2/x6/x6/x6 1 6";
+        let board = Board6::try_from_tps(tps2).unwrap();
+        moves.clear();
+        generate_all_stack_moves(&board, &mut moves);
+        let mut dir_count = [0; 4];
+        for m in moves.iter() {
+            dir_count[m.direction() as usize] += 1;
+            // dbg!(m.to_ptn());
+        }
+        // dbg!(&dir_count);
+        assert_eq!(dir_count[0], dir_count[1]);
+        assert_eq!(dir_count[2], dir_count[3]);
+        assert_eq!(moves.len(), 182 - 3 * 34);
     }
 }
