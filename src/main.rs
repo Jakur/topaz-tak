@@ -9,15 +9,26 @@ fn main() {
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Piece {
-    WhiteFlat,
-    WhiteWall,
-    WhiteCap,
-    BlackFlat,
-    BlackWall,
-    BlackCap,
+    WhiteFlat = 1,
+    WhiteWall = 2,
+    WhiteCap = 3,
+    BlackFlat = 4,
+    BlackWall = 5,
+    BlackCap = 6,
 }
 
 impl Piece {
+    fn from_index(index: u64) -> Self {
+        match index {
+            1 => Piece::WhiteFlat,
+            2 => Piece::WhiteWall,
+            3 => Piece::WhiteCap,
+            4 => Piece::BlackFlat,
+            5 => Piece::BlackWall,
+            6 => Piece::BlackCap,
+            _ => unimplemented!(),
+        }
+    }
     fn owner(self) -> Player {
         match self {
             Piece::WhiteFlat | Piece::WhiteWall | Piece::WhiteCap => Player::White,

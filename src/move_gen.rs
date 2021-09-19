@@ -1,40 +1,16 @@
 use super::{Board6, Piece, Player};
 use std::fmt;
 
-pub enum GameMove {
-    Place(Placement),
-    Slide(StackMovement),
-}
-
-pub struct Placement {
-    piece: Piece,
-    location: usize,
-}
-
-impl Placement {
-    fn new(piece: Piece, location: usize) -> Self {
-        Self { piece, location }
-    }
-    fn to_ptn(&self) -> String {
-        let square = tile_ptn(self.location);
-        match self.piece {
-            Piece::WhiteCap | Piece::BlackCap => format!("C{}", square),
-            Piece::WhiteWall | Piece::BlackWall => format!("S{}", square),
-            _ => square,
-        }
-    }
-}
-
 pub fn generate_all_moves(
     board: &Board6,
-    placements: &mut Vec<Placement>,
-    stack_moves: &mut Vec<StackMovement>,
+    placements: &mut Vec<GameMove>,
+    stack_moves: &mut Vec<GameMove>,
 ) {
     generate_all_place_moves(board, placements);
     generate_all_stack_moves(board, stack_moves);
 }
 
-pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<Placement>) {
+pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     let start_locs = board.scan_empty_tiles();
     let (flat, wall, cap) = match board.active_player {
         Player::White => (Piece::WhiteFlat, Piece::WhiteWall, Piece::WhiteCap),
@@ -42,20 +18,20 @@ pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<Placement>) {
     };
     if board.caps_reserve(board.active_player) > 0 {
         for index in start_locs.iter().copied() {
-            moves.push(Placement::new(cap, index));
+            moves.push(GameMove::from_placement(cap, index));
         }
     }
     for index in start_locs {
-        moves.push(Placement::new(flat, index));
-        moves.push(Placement::new(wall, index));
+        moves.push(GameMove::from_placement(flat, index));
+        moves.push(GameMove::from_placement(wall, index));
     }
 }
 
-pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<StackMovement>) {
+pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     let start_locs = board.scan_active_stacks(board.active_player);
     for index in start_locs {
         let stack_height = board.board[index].len();
-        let start_move = StackMovement(index as u64);
+        let start_move = GameMove(index as u64);
         let limits = find_move_limits(board, index);
         for dir in 0..4 {
             let dir_move = start_move.set_direction(dir as u64);
@@ -77,23 +53,37 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<StackMovement>) 
     }
 }
 
-// pub fn generate_four_dir_moves(board: &Board6, tile)
+const PLACEMENT_THRESHOLD: u64 = 0x20000000000;
 
 /// 0011 1111 Src Tile
 /// 1100 0000 Direction
-/// 00000000F00 Number Picked Up
-/// 0000000F000 Tile 1
-/// 000000F0000 Tile 2
-/// 00000F00000 Tile 3
-/// 0000F000000 Tile 4
-/// 000F0000000 Tile 5
-/// 00F00000000 Tile 6
-/// 0F000000000 Tile 7
-/// 10000000000 Wall Smash
+/// 000000000F00 Number Picked Up
+/// 00000000F000 Tile 1
+/// 0000000F0000 Tile 2
+/// 000000F00000 Tile 3
+/// 00000F000000 Tile 4
+/// 0000F0000000 Tile 5
+/// 000F00000000 Tile 6
+/// 00F000000000 Tile 7
+/// 010000000000 Wall Smash
+/// F00000000000 Placement Piece
 #[derive(Clone, Copy, PartialEq)]
-pub struct StackMovement(u64);
+pub struct GameMove(u64);
 
-impl StackMovement {
+impl GameMove {
+    fn from_placement(piece: Piece, index: usize) -> Self {
+        let bits = ((piece as u64) << 40) | index as u64;
+        Self(bits)
+    }
+    fn is_place_move(self) -> bool {
+        self.0 >= PLACEMENT_THRESHOLD
+    }
+    fn place_piece(self) -> Piece {
+        Piece::from_index(self.0 >> 40)
+    }
+    fn is_stack_move(self) -> bool {
+        self.0 < PLACEMENT_THRESHOLD
+    }
     fn src_index(self) -> usize {
         self.0 as usize & 0x3F
     }
@@ -102,10 +92,10 @@ impl StackMovement {
     }
     /// North, East, South, West respectively
     fn set_direction(self, dir: u64) -> Self {
-        StackMovement(self.0 | (dir << 6))
+        GameMove(self.0 | (dir << 6))
     }
     fn set_number(self, num: u64) -> Self {
-        StackMovement(self.0 | (num << 8))
+        GameMove(self.0 | (num << 8))
     }
     fn number(self) -> u64 {
         (self.0 & 0xF00) >> 8
@@ -147,6 +137,14 @@ impl StackMovement {
         Self(self.0 | 0x10000000000)
     }
     fn to_ptn(self) -> String {
+        let square = tile_ptn(self.src_index());
+        if self.is_place_move() {
+            match self.place_piece() {
+                Piece::WhiteCap | Piece::BlackCap => return format!("C{}", square),
+                Piece::WhiteWall | Piece::BlackWall => return format!("S{}", square),
+                _ => return square,
+            }
+        }
         let dir = match self.direction() {
             0 => "+",
             1 => ">",
@@ -155,23 +153,20 @@ impl StackMovement {
             _ => unimplemented!(),
         };
         let spread = (self.0 & 0xFFFFFFF000) >> 12;
-        let square = tile_ptn(self.src_index());
         let num_string = if self.number() == 1 {
             "".to_string()
         } else {
             format!("{}", self.number())
         };
-        let mut s = if format!("{}", self.number()) == format!("{:X}", spread) {
+        if format!("{}", self.number()) == format!("{:X}", spread) {
             format!("{}{}{}", num_string, square, dir)
         } else {
             format!("{}{}{}{:X}", num_string, square, dir, spread)
-        };
-        // s.retain(|c| c != '0');
-        s
+        }
     }
 }
 
-impl fmt::Debug for StackMovement {
+impl fmt::Debug for GameMove {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "StackMovement({:#X})", self.0)
     }
@@ -269,8 +264,8 @@ fn step_west(row: usize, col: usize) -> (usize, usize) {
 }
 
 pub fn directional_stack_moves(
-    moves: &mut Vec<StackMovement>,
-    init_move: StackMovement,
+    moves: &mut Vec<GameMove>,
+    init_move: GameMove,
     max_move: usize,
     pieces_available: usize,
 ) {
@@ -286,8 +281,8 @@ pub fn directional_stack_moves(
 }
 
 pub fn directional_crush_moves(
-    moves: &mut Vec<StackMovement>,
-    init_move: StackMovement,
+    moves: &mut Vec<GameMove>,
+    init_move: GameMove,
     max_move: usize,
     pieces_available: usize,
 ) {
@@ -304,8 +299,8 @@ pub fn directional_crush_moves(
 }
 
 pub fn recursive_stack_moves(
-    moves: &mut Vec<StackMovement>,
-    in_progress: StackMovement,
+    moves: &mut Vec<GameMove>,
+    in_progress: GameMove,
     tile_num: usize,
     moves_left: usize,
     pieces_left: u64,
@@ -329,8 +324,8 @@ pub fn recursive_stack_moves(
 }
 
 pub fn recursive_crush_moves(
-    moves: &mut Vec<StackMovement>,
-    in_progress: StackMovement,
+    moves: &mut Vec<GameMove>,
+    in_progress: GameMove,
     tile_num: usize,
     moves_left: usize,
     pieces_left: u64,
@@ -357,24 +352,24 @@ mod test {
     use super::*;
     #[test]
     pub fn single_direction_move() {
-        let m = StackMovement(0);
-        assert_eq!(StackMovement(0xF000), m.set_tile1(0xF));
+        let m = GameMove(0);
+        assert_eq!(GameMove(0xF000), m.set_tile1(0xF));
         let mut moves = Vec::new();
-        recursive_stack_moves(&mut moves, StackMovement(0), 1, 3, 3);
+        recursive_stack_moves(&mut moves, GameMove(0), 1, 3, 3);
         assert_eq!(moves.len(), 4);
-        recursive_stack_moves(&mut moves, StackMovement(0), 1, 3, 2);
+        recursive_stack_moves(&mut moves, GameMove(0), 1, 3, 2);
         assert_eq!(moves.len(), 4 + 2);
-        recursive_stack_moves(&mut moves, StackMovement(0), 1, 3, 1);
+        recursive_stack_moves(&mut moves, GameMove(0), 1, 3, 1);
         assert_eq!(moves.len(), 4 + 2 + 1);
 
         for stack_size in 4..7 {
             moves.clear();
-            directional_stack_moves(&mut moves, StackMovement(0), stack_size, stack_size);
+            directional_stack_moves(&mut moves, GameMove(0), stack_size, stack_size);
             assert_eq!(moves.len(), 2usize.pow(stack_size as u32) - 1);
         }
 
         moves.clear();
-        recursive_crush_moves(&mut moves, StackMovement(0), 1, 1, 2);
+        recursive_crush_moves(&mut moves, GameMove(0), 1, 1, 2);
         assert_eq!(moves.len(), 1);
     }
     #[test]
@@ -382,7 +377,7 @@ mod test {
         let tps = "x6/x6/x3,12,x2/x2,1,1,x2/x6/x6 2 3";
         let board = Board6::try_from_tps(tps).unwrap();
         let mut moves = Vec::new();
-        directional_stack_moves(&mut moves, StackMovement(0), 2, 2);
+        directional_stack_moves(&mut moves, GameMove(0), 2, 2);
         let one_dir = moves.len();
         moves.clear();
         generate_all_stack_moves(&board, &mut moves);
@@ -402,7 +397,7 @@ mod test {
         assert_eq!(dir_count[2], dir_count[3]);
         assert_eq!(moves.len(), 182 - 3 * 34);
     }
-    fn all_moves_allocate(board: &Board6) -> (Vec<Placement>, Vec<StackMovement>) {
+    fn all_moves_allocate(board: &Board6) -> (Vec<GameMove>, Vec<GameMove>) {
         let mut vec1 = Vec::new();
         let mut vec2 = Vec::new();
         generate_all_moves(board, &mut vec1, &mut vec2);
