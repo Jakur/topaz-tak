@@ -1,5 +1,55 @@
-use super::{Board6, Piece};
+use super::{Board6, Piece, Player};
 use std::fmt;
+
+pub enum GameMove {
+    Place(Placement),
+    Slide(StackMovement),
+}
+
+pub struct Placement {
+    piece: Piece,
+    location: usize,
+}
+
+impl Placement {
+    fn new(piece: Piece, location: usize) -> Self {
+        Self { piece, location }
+    }
+    fn to_ptn(&self) -> String {
+        let square = tile_ptn(self.location);
+        match self.piece {
+            Piece::WhiteCap | Piece::BlackCap => format!("C{}", square),
+            Piece::WhiteWall | Piece::BlackWall => format!("S{}", square),
+            _ => square,
+        }
+    }
+}
+
+pub fn generate_all_moves(
+    board: &Board6,
+    placements: &mut Vec<Placement>,
+    stack_moves: &mut Vec<StackMovement>,
+) {
+    generate_all_place_moves(board, placements);
+    generate_all_stack_moves(board, stack_moves);
+}
+
+pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<Placement>) {
+    let start_locs = board.scan_empty_tiles();
+    let (flat, wall, cap) = match board.active_player {
+        Player::White => (Piece::WhiteFlat, Piece::WhiteWall, Piece::WhiteCap),
+        Player::Black => (Piece::BlackFlat, Piece::BlackWall, Piece::BlackCap),
+    };
+    if board.caps_reserve(board.active_player) > 0 {
+        for index in start_locs.iter().copied() {
+            moves.push(Placement::new(cap, index));
+        }
+    }
+    for index in start_locs {
+        moves.push(Placement::new(flat, index));
+        moves.push(Placement::new(wall, index));
+    }
+}
 
 pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<StackMovement>) {
     let start_locs = board.scan_active_stacks(board.active_player);
@@ -10,6 +60,9 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<StackMovement>) 
         for dir in 0..4 {
             let dir_move = start_move.set_direction(dir as u64);
             let max_steps = limits.steps[dir];
+            if max_steps == 0 {
+                continue;
+            }
             directional_stack_moves(
                 moves,
                 dir_move,
@@ -17,6 +70,9 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<StackMovement>) 
                 std::cmp::min(board.board_size(), stack_height),
             );
             // Todo Capstone movement
+            if limits.can_crush[dir] {
+                todo!();
+            }
         }
     }
 }
@@ -98,25 +154,19 @@ impl StackMovement {
             3 => "<",
             _ => unimplemented!(),
         };
-        let spread = self.0 & 0xFFFFFFF000;
-        let size = Board6::size();
-        let (row, col) = Board6::row_col_static(self.src_index());
-        let col = match col {
-            0 => "a",
-            1 => "b",
-            2 => "c",
-            3 => "d",
-            4 => "e",
-            5 => "f",
-            _ => unimplemented!(),
-        };
-        let row = size - row;
-        let mut s = if format!("{}", self.number()) == format!("{:X}", spread) {
-            format!("{}{}{}{}", self.number(), col, row, dir)
+        let spread = (self.0 & 0xFFFFFFF000) >> 12;
+        let square = tile_ptn(self.src_index());
+        let num_string = if self.number() == 1 {
+            "".to_string()
         } else {
-            format!("{}{}{}{}{:X}", self.number(), col, row, dir, spread)
+            format!("{}", self.number())
         };
-        s.retain(|c| c != '0');
+        let mut s = if format!("{}", self.number()) == format!("{:X}", spread) {
+            format!("{}{}{}", num_string, square, dir)
+        } else {
+            format!("{}{}{}{:X}", num_string, square, dir, spread)
+        };
+        // s.retain(|c| c != '0');
         s
     }
 }
@@ -125,6 +175,22 @@ impl fmt::Debug for StackMovement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "StackMovement({:#X})", self.0)
     }
+}
+
+fn tile_ptn(index: usize) -> String {
+    let size = Board6::size();
+    let (row, col) = Board6::row_col_static(index);
+    let col = match col {
+        0 => "a",
+        1 => "b",
+        2 => "c",
+        3 => "d",
+        4 => "e",
+        5 => "f",
+        _ => unimplemented!(),
+    };
+    let row = size - row;
+    format!("{}{}", col, row)
 }
 
 #[derive(Debug)]
@@ -269,7 +335,7 @@ pub fn recursive_crush_moves(
     moves_left: usize,
     pieces_left: u64,
 ) {
-    if moves_left == 0 || pieces_left == 1 {
+    if moves_left == 1 || pieces_left == 1 {
         let last_move = in_progress.set_tile(tile_num, pieces_left);
         moves.push(last_move);
         return;
@@ -335,5 +401,41 @@ mod test {
         assert_eq!(dir_count[0], dir_count[1]);
         assert_eq!(dir_count[2], dir_count[3]);
         assert_eq!(moves.len(), 182 - 3 * 34);
+    }
+    fn all_moves_allocate(board: &Board6) -> (Vec<Placement>, Vec<StackMovement>) {
+        let mut vec1 = Vec::new();
+        let mut vec2 = Vec::new();
+        generate_all_moves(board, &mut vec1, &mut vec2);
+        (vec1, vec2)
+    }
+    fn compare_move_lists(my_moves: Vec<String>, source_file: &str) {
+        use std::collections::HashSet;
+        let file_data = std::fs::read_to_string(source_file).unwrap();
+        let my_set: HashSet<_> = my_moves.iter().map(|s| s.as_ref()).collect();
+        let correct: HashSet<_> = file_data.lines().collect();
+        println!("<<<");
+        for k in my_set.iter() {
+            if !correct.contains(k) {
+                println!("{}", k);
+            }
+        }
+        println!(">>>");
+        for k in correct {
+            if !my_set.contains(&k) {
+                println!("{}", k);
+            }
+        }
+    }
+    #[test]
+    pub fn all_non_crush_moves() {
+        let tps = "x,1,2,x3/2,221,2,x3/2C,x,21C,x3/2,1,1,1,x2/x,2,x4/x,2,x3,1 1 11";
+        let board = Board6::try_from_tps(tps).unwrap();
+        let (place, slide) = all_moves_allocate(&board);
+        // let ptn: Vec<_> = place
+        //     .into_iter()
+        //     .map(|p| p.to_ptn())
+        //     .chain(slide.into_iter().map(|s| s.to_ptn()))
+        //     .collect();
+        assert_eq!(place.len() + slide.len(), 91);
     }
 }

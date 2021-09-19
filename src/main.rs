@@ -46,14 +46,16 @@ impl Piece {
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Player {
-    White,
-    Black,
+    White = 0,
+    Black = 1,
 }
 
 pub struct Board6 {
     board: [Vec<Piece>; 36],
     active_player: Player,
     move_num: usize,
+    flats_left: [usize; 2],
+    caps_left: [usize; 2],
 }
 
 impl Board6 {
@@ -64,6 +66,8 @@ impl Board6 {
             board: [INIT; SIZE],
             active_player: Player::White,
             move_num: 1,
+            flats_left: [30, 30],
+            caps_left: [1, 1],
         }
     }
     const fn size() -> usize {
@@ -92,6 +96,11 @@ impl Board6 {
                     }
                 } else {
                     let stack = parse_tps_stack(tile)?;
+                    match stack.last() {
+                        Some(Piece::WhiteCap) => board.caps_left[0] -= 1,
+                        Some(Piece::BlackCap) => board.caps_left[1] -= 1,
+                        _ => {}
+                    }
                     ensure!(col < 6, "Too many columns for this board size");
                     board.board[r_idx * 6 + col as usize].extend(stack.into_iter());
                     col += 1;
@@ -135,6 +144,22 @@ impl Board6 {
                 _ => None,
             })
             .collect()
+    }
+    fn scan_empty_tiles(&self) -> Vec<usize> {
+        self.board
+            .iter()
+            .enumerate()
+            .filter_map(|(i, vec)| match vec.last() {
+                Some(_) => None,
+                None => Some(i),
+            })
+            .collect()
+    }
+    fn pieces_reserve(&self, player: Player) -> usize {
+        self.flats_left[player as usize]
+    }
+    fn caps_reserve(&self, player: Player) -> usize {
+        self.caps_left[player as usize]
     }
 }
 
