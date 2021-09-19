@@ -10,6 +10,7 @@ pub fn generate_all_moves(
     generate_all_stack_moves(board, stack_moves);
 }
 
+/// Generates all legal placements of flats, walls, and caps for the active player.
 pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     let start_locs = board.scan_empty_tiles();
     let (flat, wall, cap) = match board.active_player {
@@ -27,6 +28,7 @@ pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     }
 }
 
+/// Generates all legal sliding movements for the active player's stacks.
 pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     let start_locs = board.scan_active_stacks(board.active_player);
     for index in start_locs {
@@ -39,15 +41,11 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
             if max_steps == 0 {
                 continue;
             }
-            directional_stack_moves(
-                moves,
-                dir_move,
-                max_steps,
-                std::cmp::min(board.board_size(), stack_height),
-            );
-            // Todo Capstone movement
+            let max_pieces = std::cmp::min(board.board_size(), stack_height);
+            directional_stack_moves(moves, dir_move, max_steps, max_pieces);
+
             if limits.can_crush[dir] {
-                todo!();
+                directional_crush_moves(moves, dir_move, max_steps, max_pieces);
             }
         }
     }
@@ -203,6 +201,13 @@ impl MoveLimits {
     }
 }
 
+/// Calculates how far a stack can move in all four directions, respecting the
+/// edges of the board as well as the obstacle pieces: walls and capstones. Currently,
+/// the size of the stack is not considered (it's unclear if this is faster). If a
+/// wall is detected and the top stack piece is a capstone then a flag is set for
+/// the given direction to show that wall crush moves can be generated on the
+/// steps[dir] + 1 tile. If a fast bitwise method for wall detection is found,
+/// the empty board limits can be precomputed to replace this function.
 pub fn find_move_limits(board: &Board6, st_index: usize) -> MoveLimits {
     let (st_row, st_col) = board.row_col(st_index);
     let mut limits = MoveLimits::new();
@@ -213,6 +218,8 @@ pub fn find_move_limits(board: &Board6, st_index: usize) -> MoveLimits {
     limits
 }
 
+/// Finds the movement limit in a single direction, updating the index to be
+/// searched according to the step_fn. See [find_move_limits].
 fn find_dir_limit<F>(
     board: &Board6,
     st_row: usize,
@@ -263,6 +270,8 @@ fn step_west(row: usize, col: usize) -> (usize, usize) {
     (row, col.wrapping_sub(1))
 }
 
+/// Find all stack moves for a single stack in one direction. Calls the recursive
+/// function [recursive_stack_moves] 1..=pieces_available times.
 pub fn directional_stack_moves(
     moves: &mut Vec<GameMove>,
     init_move: GameMove,
@@ -280,6 +289,12 @@ pub fn directional_stack_moves(
     }
 }
 
+/// Find all crush moves for a single stack in one direction. The crush tile has
+/// index max_move + 1 and only a lone capstone can crush a wall, so we set
+/// the corresponding last tile and wall crush bits before recursing. Calls the
+/// recursive function [recursive_crush_moves] for all legal initial stack sizes.
+/// This is more restrictive than the condition on [directional_stack_moves] because
+/// one flat must be placed for tile traversed.
 pub fn directional_crush_moves(
     moves: &mut Vec<GameMove>,
     init_move: GameMove,
@@ -305,7 +320,6 @@ pub fn recursive_stack_moves(
     moves_left: usize,
     pieces_left: u64,
 ) {
-    // Todo Consider packing extra data into StackMovement?
     if moves_left == 1 || pieces_left == 1 {
         let last_move = in_progress.set_tile(tile_num, pieces_left);
         moves.push(last_move);
@@ -432,5 +446,12 @@ mod test {
         //     .chain(slide.into_iter().map(|s| s.to_ptn()))
         //     .collect();
         assert_eq!(place.len() + slide.len(), 91);
+    }
+    #[test]
+    pub fn crush_moves() {
+        let s = "1,1,2212S,x3/x2,1,x,1,x/2,211212C,11112,2,1S,22112S/221,x,221C,1,x,2/2,2,1,1,1,2/2,x,1,x2,2 2 35";
+        let board = Board6::try_from_tps(s).unwrap();
+        let (place, slide) = all_moves_allocate(&board);
+        assert_eq!(place.len() + slide.len(), 228);
     }
 }
