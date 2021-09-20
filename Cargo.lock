@@ -7,8 +7,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61604a8f862e1d5c3229fdd78f8b02c68dcf73a4c4b05fd636d12240aaa242c1"
 
 [[package]]
+name = "board-game-traits"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f142875a8746cee0aec9350872730b3960c2df6d43766882d85827a1938b12e"
+
+[[package]]
 name = "topaz-tak"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "board-game-traits",
 ]

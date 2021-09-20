@@ -1,5 +1,9 @@
 use anyhow::{anyhow, bail, ensure, Result};
+use bitboard::{Bitboard, Bitboard6};
+use board_game_traits::{Color, GameResult, Position};
+use move_gen::{generate_all_moves, GameMove};
 
+mod bitboard;
 mod move_gen;
 
 fn main() {
@@ -29,10 +33,10 @@ impl Piece {
             _ => unimplemented!(),
         }
     }
-    fn owner(self) -> Player {
+    fn owner(self) -> Color {
         match self {
-            Piece::WhiteFlat | Piece::WhiteWall | Piece::WhiteCap => Player::White,
-            Piece::BlackFlat | Piece::BlackWall | Piece::BlackCap => Player::Black,
+            Piece::WhiteFlat | Piece::WhiteWall | Piece::WhiteCap => Color::White,
+            Piece::BlackFlat | Piece::BlackWall | Piece::BlackCap => Color::Black,
         }
     }
     fn is_wall(self) -> bool {
@@ -55,15 +59,9 @@ impl Piece {
     }
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub enum Player {
-    White = 0,
-    Black = 1,
-}
-
 pub struct Board6 {
     board: [Vec<Piece>; 36],
-    active_player: Player,
+    active_player: Color,
     move_num: usize,
     flats_left: [usize; 2],
     caps_left: [usize; 2],
@@ -75,7 +73,7 @@ impl Board6 {
         const INIT: Vec<Piece> = Vec::new();
         Self {
             board: [INIT; SIZE],
-            active_player: Player::White,
+            active_player: Color::White,
             move_num: 1,
             flats_left: [30, 30],
             caps_left: [1, 1],
@@ -107,20 +105,25 @@ impl Board6 {
                     }
                 } else {
                     let stack = parse_tps_stack(tile)?;
-                    match stack.last() {
-                        Some(Piece::WhiteCap) => board.caps_left[0] -= 1,
-                        Some(Piece::BlackCap) => board.caps_left[1] -= 1,
-                        _ => {}
-                    }
                     ensure!(col < 6, "Too many columns for this board size");
                     board.board[r_idx * 6 + col as usize].extend(stack.into_iter());
                     col += 1;
                 }
             }
         }
+        for stack in board.board.iter() {
+            for piece in stack.iter() {
+                match piece {
+                    Piece::WhiteCap => board.caps_left[0] -= 1,
+                    Piece::BlackCap => board.caps_left[1] -= 1,
+                    Piece::WhiteFlat | Piece::WhiteWall => board.flats_left[0] -= 1,
+                    Piece::BlackFlat | Piece::BlackWall => board.flats_left[1] -= 1,
+                }
+            }
+        }
         let active_player = match data[1] {
-            "1" => Player::White,
-            "2" => Player::Black,
+            "1" => Color::White,
+            "2" => Color::Black,
             _ => bail!("Unknown active player id"),
         };
         board.active_player = active_player;
@@ -146,7 +149,7 @@ impl Board6 {
     fn tile_mut(&mut self, row: usize, col: usize) -> &mut Vec<Piece> {
         &mut self.board[row * 6 + col]
     }
-    fn scan_active_stacks(&self, player: Player) -> Vec<usize> {
+    fn scan_active_stacks(&self, player: Color) -> Vec<usize> {
         self.board
             .iter()
             .enumerate()
@@ -166,11 +169,35 @@ impl Board6 {
             })
             .collect()
     }
-    fn pieces_reserve(&self, player: Player) -> usize {
+    fn pieces_reserve(&self, player: Color) -> usize {
         self.flats_left[player as usize]
     }
-    fn caps_reserve(&self, player: Player) -> usize {
+    fn caps_reserve(&self, player: Color) -> usize {
         self.caps_left[player as usize]
+    }
+    fn board_fill(&self) -> bool {
+        self.board.iter().all(|stack| !stack.is_empty())
+    }
+    fn flat_game(&self) -> GameResult {
+        let mut white_score = 0;
+        let mut black_score = 0;
+        for stack in self.board.iter() {
+            match stack.last() {
+                Some(Piece::WhiteFlat) => white_score += 1,
+                Some(Piece::BlackFlat) => black_score += 1,
+                _ => {}
+            }
+        }
+        if white_score > black_score {
+            GameResult::WhiteWin
+        } else if black_score > white_score {
+            GameResult::BlackWin
+        } else {
+            GameResult::Draw
+        }
+    }
+    fn road(&self, player: Color) -> bool {
+        todo!()
     }
 }
 
@@ -196,109 +223,38 @@ fn parse_tps_stack(tile: &str) -> Result<Vec<Piece>> {
     Ok(vec)
 }
 
-// 09 10 11 12 13 14
-// 16 17 18 19 20 21
-
-pub trait Bitboard {
-    fn adjacent(self) -> Self;
-    fn check_road(self) -> bool;
-    fn pop_lowest(&mut self) -> Self;
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Bitboard6(u64);
-
-impl std::ops::BitAnd for Bitboard6 {
-    type Output = Self;
-
-    fn bitand(self, Self(rhs): Self) -> Self::Output {
-        Bitboard6::new(self.0 & rhs)
+impl Position for Board6 {
+    type Move = GameMove;
+    type ReverseMove = GameMove;
+    fn start_position() -> Self {
+        Self::new()
     }
-}
-
-impl std::ops::BitOr for Bitboard6 {
-    type Output = Self;
-
-    fn bitor(self, Self(rhs): Self) -> Self::Output {
-        Bitboard6::new(self.0 | rhs)
+    fn side_to_move(&self) -> Color {
+        self.active_player
     }
-}
-
-impl std::ops::Not for Bitboard6 {
-    type Output = Self;
-
-    fn not(self) -> Self::Output {
-        Bitboard6::new(!self.0)
+    fn generate_moves(&self, moves: &mut Vec<<Self as Position>::Move>) {
+        generate_all_moves(self, moves);
     }
-}
-
-impl std::ops::BitOrAssign for Bitboard6 {
-    fn bitor_assign(&mut self, other: Self) {
-        self.0 |= other.0;
-    }
-}
-
-impl std::ops::BitAndAssign for Bitboard6 {
-    fn bitand_assign(&mut self, other: Self) {
-        self.0 &= other.0;
-    }
-}
-
-impl Bitboard6 {
-    const fn new(data: u64) -> Self {
-        const INNER: u64 = 0x7e7e7e7e7e7e00; // 6x6 Board
-        Self(data & INNER)
-    }
-    fn nonzero(&self) -> bool {
-        self.0 != 0
-    }
-}
-
-impl Bitboard for Bitboard6 {
-    fn adjacent(self) -> Self {
-        let Bitboard6(data) = self;
-        let up = data >> 8;
-        let down = data << 8;
-        let left = data >> 1;
-        let right = data << 1;
-        Bitboard6::new(up | down | left | right)
-    }
-    fn check_road(self) -> bool {
-        const LEFT_TOP: Bitboard6 = Bitboard6::new(0x2020202027e00);
-        const TOP: Bitboard6 = Bitboard6::new(0x7e00);
-        const BOTTOM: Bitboard6 = Bitboard6::new(0x7e000000000000);
-        const LEFT: Bitboard6 = Bitboard6::new(0x2020202020200);
-        const RIGHT: Bitboard6 = Bitboard6::new(0x40404040404000);
-        let mut unchecked = self & LEFT_TOP; // Only need to start from two edges
-        while unchecked.nonzero() {
-            // Find all connected components
-            let mut component = unchecked.pop_lowest();
-            let mut prev = Bitboard6::new(0);
-            // While component is still being updated
-            while component != prev {
-                prev = component;
-                component |= component.adjacent() & self
-            }
-            // If component has squares on two opposite edges there is a road
-            if (component & TOP).nonzero() && (component & BOTTOM).nonzero() {
-                return true;
-            }
-            if (component & LEFT).nonzero() && (component & RIGHT).nonzero() {
-                return true;
-            }
-            unchecked = unchecked & !component;
+    fn game_result(&self) -> Option<GameResult> {
+        let prev_player = !self.side_to_move();
+        let current_player = self.side_to_move();
+        // If both players have a road the active player wins, but the eval will
+        // be checked after the players switch, so we check the prev player first
+        if self.road(prev_player) {
+            return Some(GameResult::win_by(prev_player));
+        } else if self.road(current_player) {
+            return Some(GameResult::win_by(current_player));
         }
-        false
-    }
-    fn pop_lowest(&mut self) -> Self {
-        let highest_index = self.0.trailing_zeros();
-        if highest_index == 64 {
-            Self::new(0)
-        } else {
-            let value = 1 << highest_index;
-            self.0 ^= value;
-            Self::new(value)
+        if self.flats_left[0] == 0 || self.flats_left[1] == 0 || self.board_fill() {
+            return Some(self.flat_game());
         }
+        None
+    }
+    fn reverse_move(&mut self, _: <Self as Position>::ReverseMove) {
+        todo!()
+    }
+    fn do_move(&mut self, _: <Self as Position>::Move) -> <Self as Position>::ReverseMove {
+        todo!()
     }
 }
 
@@ -329,7 +285,7 @@ mod test {
         let board = Board6::try_from_tps(example_tps);
         assert!(board.is_ok());
         let board = board.unwrap();
-        assert_eq!(board.active_player, Player::Black);
+        assert_eq!(board.active_player, Color::Black);
         assert_eq!(board.move_num, 7);
         let mut b = Board6::new();
         b.tile_mut(1, 2).push(Piece::BlackFlat);
@@ -346,7 +302,7 @@ mod test {
         b.tile_mut(5, 5).push(Piece::WhiteFlat);
         assert_eq!(board.board, b.board);
 
-        assert_eq!(board.scan_active_stacks(Player::White).len(), 4);
-        assert_eq!(board.scan_active_stacks(Player::Black).len(), 5);
+        assert_eq!(board.scan_active_stacks(Color::White).len(), 4);
+        assert_eq!(board.scan_active_stacks(Color::Black).len(), 5);
     }
 }

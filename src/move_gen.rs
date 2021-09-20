@@ -1,21 +1,18 @@
-use super::{Board6, Piece, Player};
+use super::{Board6, Piece};
+use board_game_traits::Color;
 use std::fmt;
 
-pub fn generate_all_moves(
-    board: &Board6,
-    placements: &mut Vec<GameMove>,
-    stack_moves: &mut Vec<GameMove>,
-) {
-    generate_all_place_moves(board, placements);
-    generate_all_stack_moves(board, stack_moves);
+pub fn generate_all_moves(board: &Board6, moves: &mut Vec<GameMove>) {
+    generate_all_place_moves(board, moves);
+    generate_all_stack_moves(board, moves);
 }
 
 /// Generates all legal placements of flats, walls, and caps for the active player.
 pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     let start_locs = board.scan_empty_tiles();
     let (flat, wall, cap) = match board.active_player {
-        Player::White => (Piece::WhiteFlat, Piece::WhiteWall, Piece::WhiteCap),
-        Player::Black => (Piece::BlackFlat, Piece::BlackWall, Piece::BlackCap),
+        Color::White => (Piece::WhiteFlat, Piece::WhiteWall, Piece::WhiteCap),
+        Color::Black => (Piece::BlackFlat, Piece::BlackWall, Piece::BlackCap),
     };
     if board.caps_reserve(board.active_player) > 0 {
         for index in start_locs.iter().copied() {
@@ -65,7 +62,7 @@ const PLACEMENT_THRESHOLD: u64 = 0x20000000000;
 /// 00F000000000 Tile 7
 /// 010000000000 Wall Smash
 /// F00000000000 Placement Piece
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct GameMove(u64);
 
 impl GameMove {
@@ -411,11 +408,10 @@ mod test {
         assert_eq!(dir_count[2], dir_count[3]);
         assert_eq!(moves.len(), 182 - 3 * 34);
     }
-    fn all_moves_allocate(board: &Board6) -> (Vec<GameMove>, Vec<GameMove>) {
-        let mut vec1 = Vec::new();
-        let mut vec2 = Vec::new();
-        generate_all_moves(board, &mut vec1, &mut vec2);
-        (vec1, vec2)
+    fn all_moves_allocate(board: &Board6) -> Vec<GameMove> {
+        let mut vec = Vec::new();
+        generate_all_moves(board, &mut vec);
+        vec
     }
     fn compare_move_lists(my_moves: Vec<String>, source_file: &str) {
         use std::collections::HashSet;
@@ -439,19 +435,14 @@ mod test {
     pub fn all_non_crush_moves() {
         let tps = "x,1,2,x3/2,221,2,x3/2C,x,21C,x3/2,1,1,1,x2/x,2,x4/x,2,x3,1 1 11";
         let board = Board6::try_from_tps(tps).unwrap();
-        let (place, slide) = all_moves_allocate(&board);
-        // let ptn: Vec<_> = place
-        //     .into_iter()
-        //     .map(|p| p.to_ptn())
-        //     .chain(slide.into_iter().map(|s| s.to_ptn()))
-        //     .collect();
-        assert_eq!(place.len() + slide.len(), 91);
+        let moves = all_moves_allocate(&board);
+        assert_eq!(moves.len(), 91);
     }
     #[test]
     pub fn crush_moves() {
         let s = "1,1,2212S,x3/x2,1,x,1,x/2,211212C,11112,2,1S,22112S/221,x,221C,1,x,2/2,2,1,1,1,2/2,x,1,x2,2 2 35";
         let board = Board6::try_from_tps(s).unwrap();
-        let (place, slide) = all_moves_allocate(&board);
-        assert_eq!(place.len() + slide.len(), 228);
+        let moves = all_moves_allocate(&board);
+        assert_eq!(moves.len(), 228);
     }
 }
