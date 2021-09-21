@@ -262,24 +262,6 @@ impl Position for Board6 {
 mod test {
     use super::*;
     #[test]
-    pub fn pop_lowest() {
-        let mut x = Bitboard6::new(0x20103c007e00);
-        let y = x.pop_lowest();
-        assert_eq!(x, Bitboard6::new(0x20103c007c00));
-        assert_eq!(y, Bitboard6::new(0x200));
-    }
-    #[test]
-    pub fn bitboard_road() {
-        // Positive
-        assert!(Bitboard6::new(0x20103c407e00).check_road());
-        assert!(Bitboard6::new(0x2020303c446e00).check_road());
-        assert!(Bitboard6::new(0xffffffffffffffff).check_road());
-        // Negative
-        assert!(!Bitboard6::new(0x20103c406e00).check_road());
-        assert!(!Bitboard6::new(0x42243c34446200).check_road());
-        assert!(!Bitboard6::new(0).check_road());
-    }
-    #[test]
     pub fn test_read_tps() {
         let example_tps = "x6/x2,2,x3/x3,2C,x2/x2,211S,x2,2/x6/x,1,1,2,2,1 2 7";
         let board = Board6::try_from_tps(example_tps);
