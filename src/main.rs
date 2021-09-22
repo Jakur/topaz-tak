@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, ensure, Result};
 use bitboard::{Bitboard, Bitboard6, BitboardStorage};
 use board_game_traits::{Color, GameResult, Position};
-use move_gen::{generate_all_moves, GameMove};
+use move_gen::{generate_all_moves, GameMove, RevGameMove};
 
 mod bitboard;
 mod move_gen;
@@ -268,7 +268,7 @@ fn parse_tps_stack(tile: &str) -> Result<Vec<Piece>> {
 
 impl Position for Board6 {
     type Move = GameMove;
-    type ReverseMove = GameMove;
+    type ReverseMove = RevGameMove;
     fn start_position() -> Self {
         Self::new()
     }
@@ -293,8 +293,41 @@ impl Position for Board6 {
         }
         None
     }
-    fn reverse_move(&mut self, _: <Self as Position>::ReverseMove) {
-        todo!()
+    fn reverse_move(&mut self, rev_m: <Self as Position>::ReverseMove) {
+        if let Color::White = self.active_player {
+            self.move_num -= 1;
+        }
+        self.active_player = !self.active_player;
+        let m = rev_m.game_move;
+        let src_index = m.src_index();
+        if m.is_place_move() {
+            let piece = self.board[src_index].pop().unwrap();
+            if piece.is_cap() {
+                self.caps_left[piece.owner() as usize] += 1;
+            } else {
+                self.flats_left[piece.owner() as usize] += 1;
+            }
+        } else {
+            let iter = rev_m.rev_iter(self.board_size());
+            // We need to get a mutable reference to multiple areas of the array. Hold on.
+            let (origin, rest, offset): (&mut Vec<Piece>, &mut [Vec<Piece>], usize) = {
+                if src_index > rev_m.dest_sq {
+                    // Easy case, because all indices remain the same
+                    let (split_left, split_right) = self.board.split_at_mut(src_index);
+                    (&mut split_right[0], split_left, 0)
+                } else {
+                    todo!()
+                }
+            };
+            for idx in iter {
+                let piece = rest[idx].pop().unwrap();
+                origin.push(piece); // This will need to be reversed later
+            }
+            let pieces_moved = rev_m.game_move.number() as usize;
+            let range_st = origin.len() - pieces_moved;
+            let slice = &mut origin[range_st..];
+            slice.reverse();
+        }
     }
     fn do_move(&mut self, m: GameMove) -> <Self as Position>::ReverseMove {
         if let Color::Black = self.active_player {
@@ -310,28 +343,28 @@ impl Position for Board6 {
             } else {
                 self.flats_left[piece.owner() as usize] -= 1;
             }
-            m
+            RevGameMove::new(m, src_index)
         } else {
             let num_pieces = m.number() as usize;
             let stack_move = m.forward_iter(self.board_size());
             let src_stack = &mut self.board[src_index];
             // Todo remove allocation with split_at_mut
             let take_stack: Vec<_> = src_stack.split_off(src_stack.len() - num_pieces);
-            let mut last_square = 0;
+            let mut last_idx = 0;
             for (piece, sq) in take_stack.into_iter().zip(stack_move) {
                 debug_assert!(sq != src_index);
                 self.board[sq].push(piece);
-                last_square = sq;
+                last_idx = sq;
             }
-            let len = self.board[last_square].len();
-            let last_square = &mut self.board[last_square];
+            let last_square = &mut self.board[last_idx];
+            let len = last_square.len();
             if len >= 2 {
                 if let Some(piece) = last_square[len - 2].crush() {
                     last_square[len - 2] = piece;
-                    return m.set_crush();
+                    return RevGameMove::new(m.set_crush(), last_idx);
                 }
             }
-            m
+            RevGameMove::new(m, last_idx)
         }
     }
 }
@@ -390,5 +423,15 @@ mod test {
             "5d3-41*",
             "2,2,2,21,12,x/x4,2,x/x4,2C,x/1,2,12,1,x2/x2,1S,12221,12,1/x3,21C,1,1 2 19",
         );
+    }
+    #[test]
+    pub fn test_make_unmake_move() {
+        let s = "2,2,2,21,12,x/x4,2,x/x4,2C,x/1,2,12,122211C,x2/x2,1S,1,12,1/x3,2S,1,1 1 19";
+        let mut board = Board6::try_from_tps(s).unwrap();
+        let ptn = "5d3<41";
+        let parsed = GameMove::try_from_ptn(ptn, &board).unwrap();
+        let rev_move = board.do_move(parsed);
+        board.reverse_move(rev_move);
+        assert_eq!(board, Board6::try_from_tps(s).unwrap())
     }
 }

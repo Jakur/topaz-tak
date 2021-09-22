@@ -51,6 +51,21 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct RevGameMove {
+    pub game_move: GameMove,
+    pub dest_sq: usize,
+}
+
+impl RevGameMove {
+    pub fn new(game_move: GameMove, dest_sq: usize) -> Self {
+        Self { game_move, dest_sq }
+    }
+    pub fn rev_iter(self, board_size: usize) -> RevStackMoveIterator {
+        RevStackMoveIterator::new(self, board_size)
+    }
+}
+
 /// 0011 1111 Src Tile
 /// 1100 0000 Direction
 /// 000000000F00 Number Picked Up
@@ -212,6 +227,52 @@ impl Iterator for StackMoveIterator {
             }
         }
         self.slide_bits -= 1;
+        Some(self.index)
+    }
+}
+
+pub struct RevStackMoveIterator {
+    slide_bits: u64,
+    direction: u8,
+    index: usize,
+    board_size: usize,
+}
+
+impl RevStackMoveIterator {
+    fn new(rev_move: RevGameMove, board_size: usize) -> Self {
+        let game_move = rev_move.game_move;
+        let slide_bits = game_move.slide_bits().swap_bytes();
+        let direction = game_move.direction() as u8;
+        let index = rev_move.dest_sq;
+        Self {
+            slide_bits,
+            direction,
+            index,
+            board_size,
+        }
+    }
+}
+
+impl Iterator for RevStackMoveIterator {
+    type Item = usize;
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        if self.slide_bits == 0 {
+            return None;
+        }
+        // Drop the high bits instead of the low bits
+        let bits = self.slide_bits & 0xF000_0000_0000_0000;
+        if bits == 0 {
+            self.slide_bits = self.slide_bits << 4;
+            // Reversed from the normal direction step, since we're going backwards
+            match self.direction {
+                0 => self.index += self.board_size,
+                1 => self.index -= 1,
+                2 => self.index -= self.board_size,
+                3 => self.index += 1,
+                _ => unimplemented!(),
+            }
+        }
+        self.slide_bits -= 0x1000_0000_0000_0000;
         Some(self.index)
     }
 }
