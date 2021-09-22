@@ -17,17 +17,20 @@ impl GameMove {
             3 => "<",
             _ => unimplemented!(),
         };
-        let spread = (self.0 & 0xFFFFFFF000) >> 12;
+        let spread_bits = (self.0 & 0xFFFFFFF000) >> 12;
+        let spread = format!("{:X}", spread_bits);
+        // Our bitwise order is reversed, so we need to reverse this String
+        let spread: String = spread.chars().rev().collect();
         let num_string = if self.number() == 1 {
             "".to_string()
         } else {
             format!("{}", self.number())
         };
         let crush_str = if self.crush() { "*" } else { "" };
-        if format!("{}", self.number()) == format!("{:X}", spread) {
+        if format!("{}", self.number()) == spread {
             format!("{}{}{}{}", num_string, square, dir, crush_str)
         } else {
-            format!("{}{}{}{:X}{}", num_string, square, dir, spread, crush_str)
+            format!("{}{}{}{}{}", num_string, square, dir, spread, crush_str)
         }
     }
     // fn try_from_ptn(s: &str, size: usize) -> Result<Self>
@@ -74,12 +77,13 @@ impl GameMove {
             };
             let crush = s.ends_with("*");
             let mut slide_bits = 0u64;
-            // Unfortunately we need to read the slide in reversed order
-            let mut slide_iter = s.chars().rev().filter(|&c| c != '*').enumerate();
-            while let Some((counter, ch)) = slide_iter.next() {
+
+            let mut counter = 0;
+            while let Some(ch) = iter.next() {
                 if let Some(num) = ch.to_digit(16) {
                     let value = (num as u64) << (4 * counter);
                     slide_bits |= value;
+                    counter += 1;
                 } else {
                     break;
                 }

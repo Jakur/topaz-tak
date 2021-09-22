@@ -79,7 +79,7 @@ impl GameMove {
         let bits = self.0 & 0xFFFFFFF000;
         bits >> 12
     }
-    fn place_piece(self) -> Piece {
+    pub fn place_piece(self) -> Piece {
         Piece::from_index(self.0 >> 44)
     }
     fn is_stack_move(self) -> bool {
@@ -147,7 +147,7 @@ impl GameMove {
             self
         }
     }
-    fn set_crush(self) -> Self {
+    pub fn set_crush(self) -> Self {
         Self(self.0 | 0x10000000000)
     }
     pub fn crush(&self) -> bool {
@@ -165,57 +165,54 @@ impl fmt::Debug for GameMove {
     }
 }
 
-pub struct StackMoveTile {
-    pub row: usize,
-    pub col: usize,
-    pub pieces: usize,
-}
-
-impl StackMoveTile {
-    pub fn new(row: usize, col: usize, pieces: usize) -> Self {
-        Self { row, col, pieces }
-    }
-}
-
 pub struct StackMoveIterator {
     slide_bits: u64,
     direction: u8,
-    row: usize,
-    col: usize,
+    index: usize,
+    board_size: usize,
 }
 
 impl StackMoveIterator {
     fn new(game_move: GameMove, board_size: usize) -> Self {
         let slide_bits = game_move.slide_bits();
         let direction = game_move.direction() as u8;
-        let index = game_move.src_index();
-        let row = index / board_size;
-        let col = index % board_size;
+        let mut index = game_move.src_index();
+        // We want to start on the first dest square, not the origin square
+        match direction {
+            0 => index -= board_size,
+            1 => index += 1,
+            2 => index += board_size,
+            3 => index -= 1,
+            _ => unimplemented!(),
+        }
         Self {
             slide_bits,
             direction,
-            row,
-            col,
+            index,
+            board_size,
         }
     }
 }
 
 impl Iterator for StackMoveIterator {
-    type Item = StackMoveTile;
+    type Item = usize;
     fn next(&mut self) -> Option<<Self as Iterator>::Item> {
-        let bits = self.slide_bits & 0xF;
-        if bits == 0 {
+        if self.slide_bits == 0 {
             return None;
         }
-        self.slide_bits = self.slide_bits >> 4;
-        match self.direction {
-            0 => self.row -= 1,
-            1 => self.col += 1,
-            2 => self.row += 1,
-            3 => self.col -= 1,
-            _ => unimplemented!(),
+        let bits = self.slide_bits & 0xF;
+        if bits == 0 {
+            self.slide_bits = self.slide_bits >> 4;
+            match self.direction {
+                0 => self.index -= self.board_size,
+                1 => self.index += 1,
+                2 => self.index += self.board_size,
+                3 => self.index -= 1,
+                _ => unimplemented!(),
+            }
         }
-        Some(StackMoveTile::new(self.row, self.col, bits as usize))
+        self.slide_bits -= 1;
+        Some(self.index)
     }
 }
 
@@ -437,9 +434,7 @@ mod test {
         let mut dir_count = [0; 4];
         for m in moves.iter() {
             dir_count[m.direction() as usize] += 1;
-            // dbg!(m.to_ptn());
         }
-        // dbg!(&dir_count);
         assert_eq!(dir_count[0], dir_count[1]);
         assert_eq!(dir_count[2], dir_count[3]);
         assert_eq!(moves.len(), 182 - 3 * 34);

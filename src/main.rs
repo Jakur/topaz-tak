@@ -10,7 +10,7 @@ fn main() {
     println!("Road: {}", x.check_road());
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum Piece {
     WhiteFlat = 1,
     WhiteWall = 2,
@@ -74,15 +74,36 @@ impl Piece {
             Color::Black => Piece::BlackFlat,
         }
     }
+    fn crush(self) -> Option<Piece> {
+        match self {
+            Piece::WhiteWall => Some(Piece::WhiteFlat),
+            Piece::BlackWall => Some(Piece::BlackFlat),
+            _ => None,
+        }
+    }
 }
 
+impl std::fmt::Debug for Piece {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let s = match self {
+            Piece::WhiteFlat => "w",
+            Piece::BlackFlat => "b",
+            Piece::WhiteCap => "C",
+            Piece::BlackCap => "D",
+            Piece::WhiteWall => "S",
+            Piece::BlackWall => "T",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub struct Board6 {
     board: [Vec<Piece>; 36],
     active_player: Color,
     move_num: usize,
     flats_left: [usize; 2],
     caps_left: [usize; 2],
-    stack_cache: Vec<Piece>,
 }
 
 impl Board6 {
@@ -95,7 +116,6 @@ impl Board6 {
             move_num: 1,
             flats_left: [30, 30],
             caps_left: [1, 1],
-            stack_cache: Vec::with_capacity(Self::size()),
         }
     }
     const fn size() -> usize {
@@ -277,33 +297,40 @@ impl Position for Board6 {
         todo!()
     }
     fn do_move(&mut self, m: GameMove) -> <Self as Position>::ReverseMove {
+        if let Color::Black = self.active_player {
+            self.move_num += 1;
+        }
+        self.active_player = !self.active_player;
+        let src_index = m.src_index();
         if m.is_place_move() {
-            todo!()
+            let piece = m.place_piece();
+            self.board[src_index].push(piece);
+            if piece.is_cap() {
+                self.caps_left[piece.owner() as usize] -= 1;
+            } else {
+                self.flats_left[piece.owner() as usize] -= 1;
+            }
+            m
         } else {
-            let iter = m.forward_iter(self.board_size());
-            let src = m.src_index();
-            let mut take = m.number() as usize;
-            let src_tile = &mut self.board[src];
-            self.stack_cache
-                .extend(src_tile.drain(src_tile.len() - take..).rev());
-            for data in iter {
-                for _ in 0..data.pieces {
-                    let last = self.stack_cache.pop().unwrap();
-                    let tile = self.tile_mut(data.row, data.col);
-                    tile.push(last);
-                }
-                take -= data.pieces;
-                if m.crush() && take == 0 {
-                    let tile = self.tile_mut(data.row, data.col);
-                    let len = tile.len();
-                    match tile[tile.len() - 2] {
-                        Piece::WhiteWall => tile[len - 2] = Piece::WhiteFlat,
-                        Piece::BlackWall => tile[len - 2] = Piece::BlackFlat,
-                        _ => unimplemented!(),
-                    }
+            let num_pieces = m.number() as usize;
+            let stack_move = m.forward_iter(self.board_size());
+            let src_stack = &mut self.board[src_index];
+            // Todo remove allocation with split_at_mut
+            let take_stack: Vec<_> = src_stack.split_off(src_stack.len() - num_pieces);
+            let mut last_square = 0;
+            for (piece, sq) in take_stack.into_iter().zip(stack_move) {
+                debug_assert!(sq != src_index);
+                self.board[sq].push(piece);
+                last_square = sq;
+            }
+            let len = self.board[last_square].len();
+            let last_square = &mut self.board[last_square];
+            if len >= 2 {
+                if let Some(piece) = last_square[len - 2].crush() {
+                    last_square[len - 2] = piece;
+                    return m.set_crush();
                 }
             }
-            debug_assert!(self.stack_cache.is_empty());
             m
         }
     }
@@ -337,5 +364,31 @@ mod test {
 
         assert_eq!(board.scan_active_stacks(Color::White).len(), 4);
         assert_eq!(board.scan_active_stacks(Color::Black).len(), 5);
+    }
+    #[test]
+    pub fn test_forward_move() {
+        let s = "2,2,2,21,12,x/x4,2,x/x4,2C,x/1,2,12,122211C,x2/x2,1S,1,12,1/x3,2S,1,1 1 19";
+        let do_move = |ptn: &str, tps: &str| {
+            let mut board = Board6::try_from_tps(s).unwrap();
+            let parsed = GameMove::try_from_ptn(ptn, &board).unwrap();
+            board.do_move(parsed);
+            assert_eq!(board, Board6::try_from_tps(tps).unwrap());
+        };
+        do_move(
+            "a2",
+            "2,2,2,21,12,x/x4,2,x/x4,2C,x/1,2,12,122211C,x2/1,x,1S,1,12,1/x3,2S,1,1 2 19",
+        );
+        do_move(
+            "c2+",
+            "2,2,2,21,12,x/x4,2,x/x4,2C,x/1,2,121S,122211C,x2/x3,1,12,1/x3,2S,1,1 2 19",
+        );
+        do_move(
+            "5d3<41",
+            "2,2,2,21,12,x/x4,2,x/x4,2C,x/1,21C,122221,1,x2/x2,1S,1,12,1/x3,2S,1,1 2 19",
+        );
+        do_move(
+            "5d3-41*",
+            "2,2,2,21,12,x/x4,2,x/x4,2C,x/1,2,12,1,x2/x2,1S,12221,12,1/x3,21C,1,1 2 19",
+        );
     }
 }
