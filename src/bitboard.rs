@@ -1,12 +1,12 @@
 use super::{Board6, Piece};
 use board_game_traits::Color;
 
-#[derive(Default)]
+#[derive(Default, PartialEq)]
 pub struct BitboardStorage<T> {
-    white_flat_cap: T,
-    black_flat_cap: T,
-    white_wall: T,
-    black_wall: T,
+    pub white_flat_cap: T,
+    pub black_flat_cap: T,
+    pub white_wall: T,
+    pub black_wall: T,
 }
 
 impl<T> BitboardStorage<T>
@@ -20,7 +20,7 @@ where
         };
         BitIndexIterator { bits }
     }
-    fn build_6(board: &Board6) -> Self {
+    pub fn build_6(board: &Board6) -> Self {
         assert!(board.board_size() == T::size());
         let mut storage = Self::default();
         for (idx, stack) in board.board.iter().enumerate() {

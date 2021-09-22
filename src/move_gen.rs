@@ -1,4 +1,5 @@
 use super::{Board6, Piece};
+use anyhow::{bail, ensure, Result};
 use board_game_traits::Color;
 use std::fmt;
 
@@ -48,8 +49,6 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     }
 }
 
-const PLACEMENT_THRESHOLD: u64 = 0x20000000000;
-
 /// 0011 1111 Src Tile
 /// 1100 0000 Direction
 /// 000000000F00 Number Picked Up
@@ -66,24 +65,33 @@ const PLACEMENT_THRESHOLD: u64 = 0x20000000000;
 pub struct GameMove(u64);
 
 impl GameMove {
+    // const XXXXXXXXXXXXXXXXXXX: u64 = 0x10000000018;
+    const PLACEMENT_THRESHOLD: u64 = 0x20000000000;
     fn from_placement(piece: Piece, index: usize) -> Self {
-        let bits = ((piece as u64) << 40) | index as u64;
+        let bits = ((piece as u64) << 44) | index as u64;
         Self(bits)
     }
-    fn is_place_move(self) -> bool {
-        self.0 >= PLACEMENT_THRESHOLD
+    pub fn is_place_move(self) -> bool {
+        self.0 >= Self::PLACEMENT_THRESHOLD
+    }
+    fn slide_bits(self) -> u64 {
+        let bits = self.0 & 0xFFFFFFF000;
+        bits >> 12
     }
     fn place_piece(self) -> Piece {
-        Piece::from_index(self.0 >> 40)
+        Piece::from_index(self.0 >> 44)
     }
     fn is_stack_move(self) -> bool {
-        self.0 < PLACEMENT_THRESHOLD
+        self.0 < Self::PLACEMENT_THRESHOLD
     }
-    fn src_index(self) -> usize {
+    pub fn src_index(self) -> usize {
         self.0 as usize & 0x3F
     }
     fn direction(self) -> u64 {
         (self.0 & 0xC0) >> 6
+    }
+    fn set_index(self, index: u64) -> Self {
+        Self(self.0 | index)
     }
     /// North, East, South, West respectively
     fn set_direction(self, dir: u64) -> Self {
@@ -92,8 +100,11 @@ impl GameMove {
     fn set_number(self, num: u64) -> Self {
         GameMove(self.0 | (num << 8))
     }
-    fn number(self) -> u64 {
+    pub fn number(self) -> u64 {
         (self.0 & 0xF00) >> 8
+    }
+    pub fn forward_iter(self, board_size: usize) -> StackMoveIterator {
+        StackMoveIterator::new(self, board_size)
     }
     fn set_tile(self, tile_num: usize, count: u64) -> Self {
         match tile_num {
@@ -128,8 +139,18 @@ impl GameMove {
     fn set_tile7(self, count: u64) -> Self {
         Self(self.0 | (count << 36))
     }
+    fn chain_crush(self, cond: bool) -> Self {
+        if cond {
+            self.set_crush()
+        } else {
+            self
+        }
+    }
     fn set_crush(self) -> Self {
         Self(self.0 | 0x10000000000)
+    }
+    pub fn crush(&self) -> bool {
+        (self.0 & 0x10000000000) > 0
     }
     fn to_ptn(self) -> String {
         let square = tile_ptn(self.src_index());
@@ -153,17 +174,153 @@ impl GameMove {
         } else {
             format!("{}", self.number())
         };
+        let crush_str = if self.crush() { "*" } else { "" };
         if format!("{}", self.number()) == format!("{:X}", spread) {
-            format!("{}{}{}", num_string, square, dir)
+            format!("{}{}{}{}", num_string, square, dir, crush_str)
         } else {
-            format!("{}{}{}{:X}", num_string, square, dir, spread)
+            format!("{}{}{}{:X}{}", num_string, square, dir, spread, crush_str)
+        }
+    }
+    // fn try_from_ptn(s: &str, size: usize) -> Result<Self>
+    fn try_from_ptn(s: &str, board: &Board6) -> Option<Self> {
+        let mut iter = s.chars().take_while(|&c| c != '*');
+        let first = iter.next()?;
+        let pieces = first.to_digit(10);
+        let (row, col) = if pieces.is_some() || first == 'C' || first == 'S' {
+            // The next two tiles are the square
+            let col = iter.next()?;
+            let row = iter.next()?;
+            (row, col)
+        } else {
+            // The first tile was the square, so we only need the row
+            let row = iter.next()?;
+            (row, first)
+        };
+        let col = match col {
+            'a' => 0,
+            'b' => 1,
+            'c' => 2,
+            'd' => 3,
+            'e' => 4,
+            'f' => 5,
+            'g' => 6,
+            'h' => 7,
+            _ => return None,
+        };
+        // ensure!(col < size, "Board column out of range");
+        let row = board.board_size() - row.to_digit(10)? as usize;
+        // ensure!(row < size, "Board row out of range");
+        let square = row * board.board_size() + col;
+
+        if let Some(dir) = iter.next() {
+            // Stack Move
+            // let stack_move = Self(square);
+            let pieces = pieces.unwrap_or(1) as u64;
+            let dir = match dir {
+                '+' => 0,
+                '>' => 1,
+                '-' => 2,
+                '<' => 3,
+                _ => return None,
+            };
+            let crush = s.ends_with("*");
+            let mut slide_bits = 0u64;
+            // Unfortunately we need to read the slide in reversed order
+            let mut slide_iter = s.chars().rev().filter(|&c| c != '*').enumerate();
+            while let Some((counter, ch)) = slide_iter.next() {
+                if let Some(num) = ch.to_digit(16) {
+                    let value = (num as u64) << (4 * counter);
+                    slide_bits |= value;
+                } else {
+                    break;
+                }
+            }
+            if slide_bits == 0 {
+                slide_bits = pieces;
+            }
+            Some(
+                Self(slide_bits << 12)
+                    .set_number(pieces)
+                    .set_direction(dir)
+                    .chain_crush(crush)
+                    .set_index(square as u64),
+            )
+        } else {
+            // Placement
+            let color = board.active_player;
+            let piece = if first == 'S' {
+                Piece::wall(color)
+            } else if first == 'C' {
+                Piece::cap(color)
+            } else {
+                Piece::flat(color)
+            };
+            Some(Self::from_placement(piece, square))
         }
     }
 }
 
 impl fmt::Debug for GameMove {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "StackMovement({:#X})", self.0)
+        if self.is_stack_move() {
+            write!(f, "StackMovement({:#X})", self.0)
+        } else {
+            write!(f, "Placement({:#X})", self.0)
+        }
+    }
+}
+
+pub struct StackMoveTile {
+    pub row: usize,
+    pub col: usize,
+    pub pieces: usize,
+}
+
+impl StackMoveTile {
+    pub fn new(row: usize, col: usize, pieces: usize) -> Self {
+        Self { row, col, pieces }
+    }
+}
+
+pub struct StackMoveIterator {
+    slide_bits: u64,
+    direction: u8,
+    row: usize,
+    col: usize,
+}
+
+impl StackMoveIterator {
+    fn new(game_move: GameMove, board_size: usize) -> Self {
+        let slide_bits = game_move.slide_bits();
+        let direction = game_move.direction() as u8;
+        let index = game_move.src_index();
+        let row = index / board_size;
+        let col = index % board_size;
+        Self {
+            slide_bits,
+            direction,
+            row,
+            col,
+        }
+    }
+}
+
+impl Iterator for StackMoveIterator {
+    type Item = StackMoveTile;
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        let bits = self.slide_bits & 0xF;
+        if bits == 0 {
+            return None;
+        }
+        self.slide_bits = self.slide_bits >> 4;
+        match self.direction {
+            0 => self.row -= 1,
+            1 => self.col += 1,
+            2 => self.row += 1,
+            3 => self.col -= 1,
+            _ => unimplemented!(),
+        }
+        Some(StackMoveTile::new(self.row, self.col, bits as usize))
     }
 }
 
@@ -444,5 +601,18 @@ mod test {
         let board = Board6::try_from_tps(s).unwrap();
         let moves = all_moves_allocate(&board);
         assert_eq!(moves.len(), 228);
+    }
+    #[test]
+    pub fn ptn_equivalence() {
+        let s = "2,2,2,21,12,x/x4,2,x/x4,2C,x/1,2,12,122211C,x2/x2,1S,1,12,1/x3,2S,1,1 1 19";
+        let board = Board6::try_from_tps(s).unwrap();
+        // The last move is not legal, but we're not checking for that here
+        let ptn = &[
+            "a2", "c2+", "d2>", "f2<", "a3-", "5d3<41", "5d3-41*", "6d3+", "Sf6", "Ca1",
+        ];
+        for p in ptn {
+            let m = GameMove::try_from_ptn(p, &board).unwrap();
+            assert_eq!(p, &m.to_ptn())
+        }
     }
 }

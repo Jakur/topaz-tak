@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, ensure, Result};
-use bitboard::{Bitboard, Bitboard6};
+use bitboard::{Bitboard, Bitboard6, BitboardStorage};
 use board_game_traits::{Color, GameResult, Position};
 use move_gen::{generate_all_moves, GameMove};
 
@@ -57,6 +57,24 @@ impl Piece {
             _ => true,
         }
     }
+    fn wall(color: Color) -> Self {
+        match color {
+            Color::White => Piece::WhiteWall,
+            Color::Black => Piece::BlackWall,
+        }
+    }
+    fn flat(color: Color) -> Self {
+        match color {
+            Color::White => Piece::WhiteFlat,
+            Color::Black => Piece::BlackFlat,
+        }
+    }
+    fn cap(color: Color) -> Self {
+        match color {
+            Color::White => Piece::WhiteCap,
+            Color::Black => Piece::BlackFlat,
+        }
+    }
 }
 
 pub struct Board6 {
@@ -65,6 +83,7 @@ pub struct Board6 {
     move_num: usize,
     flats_left: [usize; 2],
     caps_left: [usize; 2],
+    stack_cache: Vec<Piece>,
 }
 
 impl Board6 {
@@ -77,6 +96,7 @@ impl Board6 {
             move_num: 1,
             flats_left: [30, 30],
             caps_left: [1, 1],
+            stack_cache: Vec::with_capacity(Self::size()),
         }
     }
     const fn size() -> usize {
@@ -197,7 +217,11 @@ impl Board6 {
         }
     }
     fn road(&self, player: Color) -> bool {
-        todo!()
+        let bitboards = BitboardStorage::<Bitboard6>::build_6(self);
+        match player {
+            Color::White => bitboards.white_flat_cap.check_road(),
+            Color::Black => bitboards.black_flat_cap.check_road(),
+        }
     }
 }
 
@@ -253,8 +277,36 @@ impl Position for Board6 {
     fn reverse_move(&mut self, _: <Self as Position>::ReverseMove) {
         todo!()
     }
-    fn do_move(&mut self, _: <Self as Position>::Move) -> <Self as Position>::ReverseMove {
-        todo!()
+    fn do_move(&mut self, m: GameMove) -> <Self as Position>::ReverseMove {
+        if m.is_place_move() {
+            todo!()
+        } else {
+            let iter = m.forward_iter(self.board_size());
+            let src = m.src_index();
+            let mut take = m.number() as usize;
+            let src_tile = &mut self.board[src];
+            self.stack_cache
+                .extend(src_tile.drain(src_tile.len() - take..).rev());
+            for data in iter {
+                for _ in 0..data.pieces {
+                    let last = self.stack_cache.pop().unwrap();
+                    let tile = self.tile_mut(data.row, data.col);
+                    tile.push(last);
+                }
+                take -= data.pieces;
+                if m.crush() && take == 0 {
+                    let tile = self.tile_mut(data.row, data.col);
+                    let len = tile.len();
+                    match tile[tile.len() - 2] {
+                        Piece::WhiteWall => tile[len - 2] = Piece::WhiteFlat,
+                        Piece::BlackWall => tile[len - 2] = Piece::BlackFlat,
+                        _ => unimplemented!(),
+                    }
+                }
+            }
+            debug_assert!(self.stack_cache.is_empty());
+            m
+        }
     }
 }
 
