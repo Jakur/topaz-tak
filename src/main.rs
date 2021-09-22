@@ -5,7 +5,6 @@ use move_gen::{generate_all_moves, GameMove};
 
 mod bitboard;
 mod move_gen;
-
 fn main() {
     let x = Bitboard6::new(0x20103c407e00);
     println!("Road: {}", x.check_road());
