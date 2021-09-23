@@ -51,7 +51,7 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct RevGameMove {
     pub game_move: GameMove,
     pub dest_sq: usize,
@@ -241,7 +241,11 @@ pub struct RevStackMoveIterator {
 impl RevStackMoveIterator {
     fn new(rev_move: RevGameMove, board_size: usize) -> Self {
         let game_move = rev_move.game_move;
-        let slide_bits = game_move.slide_bits().swap_bytes();
+        let slide = game_move.slide_bits();
+        let zeros = slide.leading_zeros();
+        let offset = zeros % 4;
+        let shift = zeros - offset;
+        let slide_bits = slide << shift;
         let direction = game_move.direction() as u8;
         let index = rev_move.dest_sq;
         Self {

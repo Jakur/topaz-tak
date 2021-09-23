@@ -81,6 +81,13 @@ impl Piece {
             _ => None,
         }
     }
+    fn uncrush(self) -> Option<Piece> {
+        match self {
+            Piece::WhiteFlat => Some(Piece::WhiteWall),
+            Piece::BlackFlat => Some(Piece::BlackWall),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Debug for Piece {
@@ -308,6 +315,13 @@ impl Position for Board6 {
                 self.flats_left[piece.owner() as usize] += 1;
             }
         } else {
+            if rev_m.game_move.crush() {
+                // Stand the wall back up
+                let dest_tile = &mut self.board[rev_m.dest_sq];
+                let wall_idx = dest_tile.len() - 2;
+                let piece = dest_tile[wall_idx].uncrush().unwrap();
+                dest_tile[wall_idx] = piece;
+            }
             let iter = rev_m.rev_iter(self.board_size());
             // We need to get a mutable reference to multiple areas of the array. Hold on.
             let (origin, rest, offset): (&mut Vec<Piece>, &mut [Vec<Piece>], usize) = {
@@ -316,11 +330,13 @@ impl Position for Board6 {
                     let (split_left, split_right) = self.board.split_at_mut(src_index);
                     (&mut split_right[0], split_left, 0)
                 } else {
-                    todo!()
+                    // Should not go out of bounds since src index < dest_sq
+                    let (split_left, split_right) = self.board.split_at_mut(src_index + 1);
+                    (&mut split_left[src_index], split_right, src_index + 1)
                 }
             };
             for idx in iter {
-                let piece = rest[idx].pop().unwrap();
+                let piece = rest[idx - offset].pop().unwrap();
                 origin.push(piece); // This will need to be reversed later
             }
             let pieces_moved = rev_m.game_move.number() as usize;
@@ -428,10 +444,26 @@ mod test {
     pub fn test_make_unmake_move() {
         let s = "2,2,2,21,12,x/x4,2,x/x4,2C,x/1,2,12,122211C,x2/x2,1S,1,12,1/x3,2S,1,1 1 19";
         let mut board = Board6::try_from_tps(s).unwrap();
-        let ptn = "5d3<41";
-        let parsed = GameMove::try_from_ptn(ptn, &board).unwrap();
-        let rev_move = board.do_move(parsed);
-        board.reverse_move(rev_move);
-        assert_eq!(board, Board6::try_from_tps(s).unwrap())
+        let check_move = |tps: &str, ptn: &str, board: &mut Board6| {
+            let parsed = GameMove::try_from_ptn(ptn, board).unwrap();
+            let rev_move = board.do_move(parsed);
+            board.reverse_move(rev_move);
+            assert_eq!(*board, Board6::try_from_tps(tps).unwrap())
+        };
+        let ptns = &[
+            "a2", "c2+", "d2>", "f2<", "a3-", "5d3<41", "5d3-41*", "6d3+", "Sf6",
+        ];
+        for ptn in ptns {
+            check_move(s, ptn, &mut board);
+        }
+        let s2 = concat!(
+            "21,x,12211112C,2,1,1/1,2,22222221C,2,221,2/2,22221S,x2,1,",
+            "1112S/1,2,1,x,212S,1/x,2,1,2,1,1/x,2,1,x2,1 2 44"
+        );
+        let mut board2 = Board6::try_from_tps(s2).unwrap();
+        let ptns = &["3e3+12", "6c6<15", "a4+", "e1", "Sd4"];
+        for ptn in ptns {
+            check_move(s2, ptn, &mut board2)
+        }
     }
 }
