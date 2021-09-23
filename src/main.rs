@@ -6,8 +6,53 @@ use move_gen::{generate_all_moves, GameMove, RevGameMove};
 mod bitboard;
 mod move_gen;
 fn main() {
-    let x = Bitboard6::new(0x20103c407e00);
-    println!("Road: {}", x.check_road());
+    let ptn_moves = &[
+        "c2", "c3", "d3", "b3", "c4", "1c2+", "1d3<", "1b3>", "1c4-", "Cc2", "a1", "1c2+", "a2",
+    ];
+    let mut board = Board6::new();
+    let res = execute_moves_check_valid(&mut board, ptn_moves);
+    assert!(res.is_ok());
+
+    let p_res: Vec<_> = (0..3)
+        .map(|depth| perft(&mut board, depth as u16))
+        .collect();
+    assert_eq!(&p_res[..], &[1, 190, 20698]);
+}
+
+pub fn execute_moves_check_valid(board: &mut Board6, ptn_slice: &[&str]) -> Result<Vec<GameMove>> {
+    let mut moves = Vec::new();
+    let mut made_moves = Vec::new();
+    for m_str in ptn_slice {
+        moves.clear();
+        let m =
+            GameMove::try_from_ptn(m_str, board).ok_or_else(|| anyhow!("Invalid ptn string"))?;
+        generate_all_moves(board, &mut moves);
+        ensure!(
+            moves.iter().find(|&&x| x == m).is_some(),
+            "Illegal move attempted"
+        );
+        board.do_move(m);
+        made_moves.push(m);
+    }
+    Ok(made_moves)
+}
+
+pub fn perft<P: Position>(board: &mut P, depth: u16) -> u64 {
+    if depth == 0 {
+        1
+    } else {
+        let mut moves = vec![];
+        board.generate_moves(&mut moves);
+        moves
+            .into_iter()
+            .map(|mv| {
+                let reverse_move = board.do_move(mv);
+                let num_moves = perft(board, depth - 1);
+                board.reverse_move(reverse_move);
+                num_moves
+            })
+            .sum()
+    }
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -71,7 +116,7 @@ impl Piece {
     fn cap(color: Color) -> Self {
         match color {
             Color::White => Piece::WhiteCap,
-            Color::Black => Piece::BlackFlat,
+            Color::Black => Piece::BlackCap,
         }
     }
     fn crush(self) -> Option<Piece> {
@@ -86,6 +131,16 @@ impl Piece {
             Piece::WhiteFlat => Some(Piece::WhiteWall),
             Piece::BlackFlat => Some(Piece::BlackWall),
             _ => None,
+        }
+    }
+    fn swap_color(self) -> Self {
+        match self {
+            Piece::WhiteFlat => Piece::BlackFlat,
+            Piece::BlackFlat => Piece::WhiteFlat,
+            Piece::WhiteCap => Piece::BlackCap,
+            Piece::BlackCap => Piece::WhiteCap,
+            Piece::WhiteWall => Piece::BlackWall,
+            Piece::BlackWall => Piece::WhiteWall,
         }
     }
 }
@@ -346,13 +401,17 @@ impl Position for Board6 {
         }
     }
     fn do_move(&mut self, m: GameMove) -> <Self as Position>::ReverseMove {
+        let swap_pieces = self.move_num == 1;
         if let Color::Black = self.active_player {
             self.move_num += 1;
         }
         self.active_player = !self.active_player;
         let src_index = m.src_index();
         if m.is_place_move() {
-            let piece = m.place_piece();
+            let mut piece = m.place_piece();
+            if swap_pieces {
+                piece = piece.swap_color();
+            }
             self.board[src_index].push(piece);
             if piece.is_cap() {
                 self.caps_left[piece.owner() as usize] -= 1;

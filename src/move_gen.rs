@@ -13,6 +13,17 @@ pub fn generate_all_moves(board: &Board6, moves: &mut Vec<GameMove>) {
 /// Generates all legal placements of flats, walls, and caps for the active player.
 pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     let start_locs = board.scan_empty_tiles();
+    if board.move_num == 1 {
+        // Force flats. Handle swapping of the pieces in the do_move function
+        let piece = match board.active_player {
+            Color::White => Piece::WhiteFlat,
+            Color::Black => Piece::BlackFlat,
+        };
+        for index in start_locs {
+            moves.push(GameMove::from_placement(piece, index));
+        }
+        return;
+    }
     let (flat, wall, cap) = match board.active_player {
         Color::White => (Piece::WhiteFlat, Piece::WhiteWall, Piece::WhiteCap),
         Color::Black => (Piece::BlackFlat, Piece::BlackWall, Piece::BlackCap),
