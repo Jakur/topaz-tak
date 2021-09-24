@@ -6,19 +6,20 @@ use move_gen::{generate_all_moves, GameMove, RevGameMove};
 mod bitboard;
 mod eval;
 mod move_gen;
-fn main() {
-    let ptn_moves = &[
-        "c2", "c3", "d3", "b3", "c4", "1c2+", "1d3<", "1b3>", "1c4-", "Cc2", "a1", "1c2+", "a2",
-    ];
-    let mut board = Board6::new();
-    let res = execute_moves_check_valid(&mut board, ptn_moves);
-    assert!(res.is_ok());
+mod search;
+// fn main() {
+//     let ptn_moves = &[
+//         "c2", "c3", "d3", "b3", "c4", "1c2+", "1d3<", "1b3>", "1c4-", "Cc2", "a1", "1c2+", "a2",
+//     ];
+//     let mut board = Board6::new();
+//     let res = execute_moves_check_valid(&mut board, ptn_moves);
+//     assert!(res.is_ok());
 
-    let p_res: Vec<_> = (0..3)
-        .map(|depth| perft(&mut board, depth as u16))
-        .collect();
-    assert_eq!(&p_res[..], &[1, 190, 20698]);
-}
+//     let p_res: Vec<_> = (0..3)
+//         .map(|depth| perft(&mut board, depth as u16))
+//         .collect();
+//     assert_eq!(&p_res[..], &[1, 190, 20698]);
+// }
 
 pub fn execute_moves_check_valid(board: &mut Board6, ptn_slice: &[&str]) -> Result<Vec<GameMove>> {
     let mut moves = Vec::new();
@@ -170,7 +171,7 @@ pub struct Board6 {
 }
 
 impl Board6 {
-    fn new() -> Self {
+    pub fn new() -> Self {
         const SIZE: usize = 36;
         const INIT: Vec<Piece> = Vec::new();
         Self {

@@ -1,7 +1,7 @@
 use super::{Board6, Piece};
 use board_game_traits::{Color, GameResult, Position};
 
-trait Evaluate {
+pub trait Evaluate: Position {
     fn evaluate(&self) -> i32;
 }
 

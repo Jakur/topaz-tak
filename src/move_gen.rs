@@ -94,6 +94,9 @@ pub struct GameMove(u64);
 
 impl GameMove {
     const PLACEMENT_THRESHOLD: u64 = 0x20000000000;
+    pub fn null_move() -> Self {
+        Self(0xF000_0000_0000_0000)
+    }
     fn from_placement(piece: Piece, index: usize) -> Self {
         let bits = ((piece as u64) << 44) | index as u64;
         Self(bits)
