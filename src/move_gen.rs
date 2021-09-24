@@ -49,15 +49,21 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
         for dir in 0..4 {
             let dir_move = start_move.set_direction(dir as u64);
             let max_steps = limits.steps[dir];
+            let max_pieces = std::cmp::min(board.board_size(), stack_height);
+            if limits.can_crush[dir] {
+                directional_crush_moves(moves, dir_move, max_steps, max_pieces - 1);
+            }
             if max_steps == 0 {
                 continue;
             }
-            let max_pieces = std::cmp::min(board.board_size(), stack_height);
             directional_stack_moves(moves, dir_move, max_steps, max_pieces);
 
-            if limits.can_crush[dir] {
-                directional_crush_moves(moves, dir_move, max_steps, max_pieces);
-            }
+            // if limits.can_crush[dir]
+            //     && max_pieces > max_steps
+            //     && max_pieces + 1 < board.board_size()
+            // {
+            //     directional_crush_moves(moves, dir_move, max_steps, max_pieces);
+            // }
         }
     }
 }
@@ -407,16 +413,21 @@ pub fn directional_stack_moves(
 pub fn directional_crush_moves(
     moves: &mut Vec<GameMove>,
     init_move: GameMove,
-    max_move: usize,
+    max_steps: usize,
     pieces_available: usize,
 ) {
-    let init_move = init_move.set_crush().set_tile(max_move + 1, 1);
-    for take_pieces in max_move as u64..pieces_available as u64 + 1 {
+    let init_move = init_move.set_crush().set_tile(max_steps + 1, 1);
+    if max_steps == 0 {
+        moves.push(init_move.set_number(1));
+        return;
+    }
+    // Todo figure out upper bound for number of pieces to take to save some cycles?
+    for take_pieces in max_steps as u64..pieces_available as u64 + 1 {
         recursive_crush_moves(
             moves,
             init_move.set_number(take_pieces + 1),
             1,
-            max_move,
+            max_steps,
             take_pieces,
         );
     }
@@ -453,13 +464,13 @@ pub fn recursive_crush_moves(
     moves_left: usize,
     pieces_left: u64,
 ) {
-    if moves_left == 1 || pieces_left == 1 {
+    if moves_left == 1 && pieces_left > 0 {
         let last_move = in_progress.set_tile(tile_num, pieces_left);
         moves.push(last_move);
         return;
     }
-    let max_placement = 1 + pieces_left - moves_left as u64; // Todo figure out if this is right
-    for piece_count in 1..max_placement {
+    // Todo figure out max placement to save some cycles?
+    for piece_count in 1..pieces_left {
         recursive_crush_moves(
             moves,
             in_progress.set_tile(tile_num, piece_count),
@@ -472,6 +483,8 @@ pub fn recursive_crush_moves(
 
 #[cfg(test)]
 mod test {
+    use board_game_traits::Position;
+
     use super::*;
     #[test]
     pub fn single_direction_move() {
@@ -523,11 +536,18 @@ mod test {
         generate_all_moves(board, &mut vec);
         vec
     }
-    fn compare_move_lists(my_moves: Vec<String>, source_file: &str) {
+    fn compare_move_lists(my_moves: Vec<GameMove>, source_file: &str) {
         use std::collections::HashSet;
         let file_data = std::fs::read_to_string(source_file).unwrap();
-        let my_set: HashSet<_> = my_moves.iter().map(|s| s.as_ref()).collect();
-        let correct: HashSet<_> = file_data.lines().collect();
+        let my_set: HashSet<_> = my_moves
+            .iter()
+            .map(|m| {
+                let mut m = m.to_ptn();
+                m.retain(|c| c != '*');
+                m
+            })
+            .collect();
+        let correct: HashSet<_> = file_data.lines().map(|s| s.to_string()).collect();
         println!("<<<");
         for k in my_set.iter() {
             if !correct.contains(k) {
@@ -551,8 +571,33 @@ mod test {
     #[test]
     pub fn crush_moves() {
         let s = "1,1,2212S,x3/x2,1,x,1,x/2,211212C,11112,2,1S,22112S/221,x,221C,1,x,2/2,2,1,1,1,2/2,x,1,x2,2 2 35";
-        let board = Board6::try_from_tps(s).unwrap();
+        let mut board = Board6::try_from_tps(s).unwrap();
         let moves = all_moves_allocate(&board);
+        let crush_moves: Vec<_> = moves
+            .iter()
+            .copied()
+            .filter_map(|m| if m.crush() { Some(m.to_ptn()) } else { None })
+            .collect();
+        let real_crush_moves = [
+            "3b4>111*", "4b4>121*", "4b4>211*", "5b4>131*", "5b4>221*", "5b4>311*", "6b4>141*",
+            "6b4>231*", "6b4>321*", "6b4>411*",
+        ];
+        for c in crush_moves.into_iter() {
+            assert!(real_crush_moves.iter().find(|&&m| m == c).is_some());
+        }
+        for m in moves.iter().copied() {
+            let r = board.do_move(m);
+            board.reverse_move(r);
+        }
         assert_eq!(moves.len(), 228);
+        let s2 = "2,1,1,1,1,2S/1,12,1,2,x,111121C/x,2,2,212,2C,11121/2,21122,x,x,1,x/x,x,x,1,1,x/x,x,2,21,x,112S 1 35";
+        let mut board2 = Board6::try_from_tps(s2).unwrap();
+        let moves = all_moves_allocate(&board2);
+        for m in moves.iter().copied() {
+            let r = board2.do_move(m);
+            board2.reverse_move(r);
+        }
+
+        assert_eq!(moves.len(), 190);
     }
 }

@@ -2,11 +2,12 @@ use anyhow::{anyhow, bail, ensure, Result};
 use bitboard::{Bitboard, Bitboard6, BitboardStorage};
 use board_game_traits::{Color, GameResult, Position};
 use move_gen::{generate_all_moves, GameMove, RevGameMove};
+use std::fmt;
 
 mod bitboard;
-mod eval;
+pub mod eval;
 mod move_gen;
-mod search;
+pub mod search;
 // fn main() {
 //     let ptn_moves = &[
 //         "c2", "c3", "d3", "b3", "c4", "1c2+", "1d3<", "1b3>", "1c4-", "Cc2", "a1", "1c2+", "a2",
@@ -161,7 +162,7 @@ impl std::fmt::Debug for Piece {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 pub struct Board6 {
     board: [Vec<Piece>; 36],
     active_player: Color,
@@ -188,7 +189,7 @@ impl Board6 {
     const fn board_size(&self) -> usize {
         Self::size()
     }
-    fn try_from_tps(tps: &str) -> Result<Self> {
+    pub fn try_from_tps(tps: &str) -> Result<Self> {
         let data: Vec<_> = tps.split_whitespace().collect();
         ensure!(data.len() == 3, "Malformed tps string!");
         let rows: Vec<_> = data[0].split("/").collect();
@@ -426,6 +427,11 @@ impl Position for Board6 {
             let stack_move = m.forward_iter(self.board_size());
             let src_stack = &mut self.board[src_index];
             // Todo remove allocation with split_at_mut
+            if src_stack.len() < num_pieces {
+                dbg!(&self);
+                dbg!(m);
+                panic!("Bad Move encountered!");
+            }
             let take_stack: Vec<_> = src_stack.split_off(src_stack.len() - num_pieces);
             let mut last_idx = 0;
             for (piece, sq) in take_stack.into_iter().zip(stack_move) {
@@ -446,9 +452,45 @@ impl Position for Board6 {
     }
 }
 
+impl fmt::Debug for Board6 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let mut board_string = String::new();
+        for (i, stack) in self.board.iter().enumerate() {
+            for piece in stack {
+                let s = match piece {
+                    Piece::WhiteCap => "1C",
+                    Piece::BlackCap => "2C",
+                    Piece::WhiteWall => "1S",
+                    Piece::BlackWall => "2S",
+                    Piece::WhiteFlat => "1",
+                    Piece::BlackFlat => "2",
+                };
+                board_string.push_str(s);
+            }
+            if stack.is_empty() {
+                board_string.push_str("x");
+            }
+            if i > 0 && i % 6 == 5 {
+                board_string.push_str("/");
+            } else {
+                board_string.push_str(",")
+            }
+        }
+        board_string.pop(); // Trailing comma or slash
+        let side = if let Color::White = self.side_to_move() {
+            1
+        } else {
+            2
+        };
+
+        write!(f, "{} {} {}", board_string, side, self.move_num)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+
     #[test]
     pub fn test_read_tps() {
         let example_tps = "x6/x2,2,x3/x3,2C,x2/x2,211S,x2,2/x6/x,1,1,2,2,1 2 7";

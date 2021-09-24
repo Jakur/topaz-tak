@@ -13,8 +13,8 @@ fn win_color(res: GameResult) -> Option<Color> {
     }
 }
 
-const WIN_SCORE: i32 = 10_000;
-const LOSE_SCORE: i32 = -1 * WIN_SCORE;
+pub const WIN_SCORE: i32 = 10_000;
+pub const LOSE_SCORE: i32 = -1 * WIN_SCORE;
 
 #[rustfmt::skip]
 const LOCATION_WEIGHT: [i32; 36] = [
