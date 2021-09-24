@@ -4,6 +4,7 @@ use board_game_traits::{Color, GameResult, Position};
 use move_gen::{generate_all_moves, GameMove, RevGameMove};
 
 mod bitboard;
+mod eval;
 mod move_gen;
 fn main() {
     let ptn_moves = &[
@@ -159,7 +160,7 @@ impl std::fmt::Debug for Piece {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Board6 {
     board: [Vec<Piece>; 36],
     active_player: Color,
