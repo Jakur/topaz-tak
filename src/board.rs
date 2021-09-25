@@ -1,7 +1,7 @@
 use crate::move_gen::generate_all_moves;
 use crate::{GameMove, RevGameMove};
 use anyhow::{anyhow, bail, ensure, Result};
-pub use bitboard::{Bitboard, Bitboard6, BitboardStorage};
+pub use bitboard::{BitIndexIterator, Bitboard, Bitboard6, BitboardStorage};
 use board_game_traits::{Color, GameResult, Position};
 use std::fmt;
 
@@ -116,25 +116,11 @@ impl Board6 {
     pub fn tile_mut(&mut self, row: usize, col: usize) -> &mut Stack {
         &mut self.board[row * 6 + col]
     }
-    pub fn scan_active_stacks(&self, player: Color) -> Vec<usize> {
-        self.board
-            .iter()
-            .enumerate()
-            .filter_map(|(i, vec)| match vec.last() {
-                Some(piece) if piece.owner() == player => Some(i),
-                _ => None,
-            })
-            .collect()
+    pub fn active_stacks(&self, player: Color) -> BitIndexIterator<Bitboard6> {
+        self.bits.iter_stacks(player)
     }
-    pub fn scan_empty_tiles(&self) -> Vec<usize> {
-        self.board
-            .iter()
-            .enumerate()
-            .filter_map(|(i, vec)| match vec.last() {
-                Some(_) => None,
-                None => Some(i),
-            })
-            .collect()
+    pub fn empty_tiles(&self) -> BitIndexIterator<Bitboard6> {
+        self.bits.iter_empty()
     }
     pub fn pieces_reserve(&self, player: Color) -> usize {
         self.flats_left[player as usize]
@@ -143,18 +129,11 @@ impl Board6 {
         self.caps_left[player as usize]
     }
     fn board_fill(&self) -> bool {
-        self.board.iter().all(|stack| !stack.is_empty())
+        self.bits.board_fill()
     }
     fn flat_game(&self) -> GameResult {
-        let mut white_score = 0;
-        let mut black_score = 0;
-        for stack in self.board.iter() {
-            match stack.last() {
-                Some(Piece::WhiteFlat) => white_score += 1,
-                Some(Piece::BlackFlat) => black_score += 1,
-                _ => {}
-            }
-        }
+        let white_score = self.bits.flat_score(Color::White);
+        let black_score = self.bits.flat_score(Color::Black);
         if white_score > black_score {
             GameResult::WhiteWin
         } else if black_score > white_score {
@@ -164,8 +143,7 @@ impl Board6 {
         }
     }
     fn road(&self, player: Color) -> bool {
-        let bitboards = BitboardStorage::<Bitboard6>::build_6(&self.board);
-        bitboards.check_road(player)
+        self.bits.check_road(player)
     }
 }
 
@@ -339,9 +317,22 @@ impl fmt::Debug for Board6 {
 }
 
 #[cfg(test)]
+impl Board6 {
+    pub fn scan_active_stacks(&self, player: Color) -> Vec<usize> {
+        self.board
+            .iter()
+            .enumerate()
+            .filter_map(|(i, vec)| match vec.last() {
+                Some(piece) if piece.owner() == player => Some(i),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
 mod test {
     use super::*;
-
     #[test]
     pub fn test_read_tps() {
         let example_tps = "x6/x2,2,x3/x3,2C,x2/x2,211S,x2,2/x6/x,1,1,2,2,1 2 7";
@@ -368,6 +359,7 @@ mod test {
 
         assert_eq!(board.scan_active_stacks(Color::White).len(), 4);
         assert_eq!(board.scan_active_stacks(Color::Black).len(), 5);
+        assert_eq!(board.flat_game(), GameResult::BlackWin);
     }
     #[test]
     pub fn test_forward_move() {

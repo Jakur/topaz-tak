@@ -14,11 +14,24 @@ impl<T> BitboardStorage<T>
 where
     T: Bitboard,
 {
-    fn iter_stacks(&self, color: Color) -> BitIndexIterator<T> {
+    pub fn iter_stacks(&self, color: Color) -> BitIndexIterator<T> {
         let bits = match color {
             Color::White => self.white,
             Color::Black => self.black,
         };
+        BitIndexIterator { bits }
+    }
+    pub fn flat_score(&self, player: Color) -> u32 {
+        match player {
+            Color::White => (self.white & self.flat).pop_count(),
+            Color::Black => (self.black & self.flat).pop_count(),
+        }
+    }
+    pub fn board_fill(&self) -> bool {
+        (self.white | self.black).all_ones()
+    }
+    pub fn iter_empty(&self) -> BitIndexIterator<T> {
+        let bits = !(self.white | self.black);
         BitIndexIterator { bits }
     }
     pub fn check_road(&self, color: Color) -> bool {
@@ -74,11 +87,16 @@ pub trait Bitboard:
     + std::ops::BitOrAssign
     + std::ops::BitOr<Output = Self>
     + std::ops::BitAnd<Output = Self>
+    + std::ops::Sub<Output = Self>
+    + std::ops::SubAssign
+    + std::ops::Not<Output = Self>
 {
     fn adjacent(self) -> Self;
     fn check_road(self) -> bool;
     fn pop_lowest(&mut self) -> Self;
     fn nonzero(&self) -> bool;
+    fn pop_count(self) -> u32;
+    fn all_ones(self) -> bool;
     fn lowest_index(self) -> usize;
     fn index_to_bit(index: usize) -> Self;
     fn size() -> usize;
@@ -126,6 +144,19 @@ impl std::ops::BitOrAssign for Bitboard6 {
 impl std::ops::BitAndAssign for Bitboard6 {
     fn bitand_assign(&mut self, other: Self) {
         self.0 &= other.0;
+    }
+}
+
+impl std::ops::Sub for Bitboard6 {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl std::ops::SubAssign for Bitboard6 {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0 -= rhs.0;
     }
 }
 
@@ -226,9 +257,15 @@ impl Bitboard for Bitboard6 {
     fn size() -> usize {
         6
     }
+    fn all_ones(self) -> bool {
+        self.0 == u64::MAX
+    }
+    fn pop_count(self) -> u32 {
+        (self.0).count_ones()
+    }
 }
 
-struct BitIndexIterator<T> {
+pub struct BitIndexIterator<T> {
     bits: T,
 }
 
