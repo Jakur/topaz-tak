@@ -270,15 +270,16 @@ mod test {
     }
     #[test]
     pub fn bitboard_creation() {
+        use board_game_traits::Position;
         let tps =
             "2,x4,1/2,2,x2,1,x/2,212C,x,1,1,x/2,1,x,2S,12S,x/12,12221C,x,12,1,1/1S,12,x,1,1,x 1 22";
         let board = Board6::try_from_tps(tps).unwrap();
         let bitboards = BitboardStorage::<Bitboard6>::build_6(&board.board);
-        let stacks1: Vec<_> = bitboards.iter_stacks(board.active_player).collect();
-        let stacks2 = board.scan_active_stacks(board.active_player);
+        let stacks1: Vec<_> = bitboards.iter_stacks(board.side_to_move()).collect();
+        let stacks2 = board.scan_active_stacks(board.side_to_move());
         assert_eq!(stacks1, stacks2);
-        let stacks3: Vec<_> = bitboards.iter_stacks(!board.active_player).collect();
-        let stacks4 = board.scan_active_stacks(!board.active_player);
+        let stacks3: Vec<_> = bitboards.iter_stacks(!board.side_to_move()).collect();
+        let stacks4 = board.scan_active_stacks(!board.side_to_move());
         assert_eq!(stacks3, stacks4);
     }
 }

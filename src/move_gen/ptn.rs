@@ -100,7 +100,7 @@ impl GameMove {
             )
         } else {
             // Placement
-            let color = board.active_player;
+            let color = board.active_player();
             let piece = if first == 'S' {
                 Piece::wall(color)
             } else if first == 'C' {

@@ -1,6 +1,6 @@
 use super::{Board6, Piece};
 use anyhow::{bail, ensure, Result};
-use board_game_traits::Color;
+use board_game_traits::{Color, Position};
 use std::fmt;
 
 pub mod ptn;
@@ -12,10 +12,11 @@ pub fn generate_all_moves(board: &Board6, moves: &mut Vec<GameMove>) {
 
 /// Generates all legal placements of flats, walls, and caps for the active player.
 pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
+    let side_to_move = board.side_to_move();
     let start_locs = board.scan_empty_tiles();
-    if board.move_num == 1 {
+    if board.move_num() == 1 {
         // Force flats. Handle swapping of the pieces in the do_move function
-        let piece = match board.active_player {
+        let piece = match side_to_move {
             Color::White => Piece::WhiteFlat,
             Color::Black => Piece::BlackFlat,
         };
@@ -24,11 +25,11 @@ pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
         }
         return;
     }
-    let (flat, wall, cap) = match board.active_player {
+    let (flat, wall, cap) = match side_to_move {
         Color::White => (Piece::WhiteFlat, Piece::WhiteWall, Piece::WhiteCap),
         Color::Black => (Piece::BlackFlat, Piece::BlackWall, Piece::BlackCap),
     };
-    if board.caps_reserve(board.active_player) > 0 {
+    if board.caps_reserve(side_to_move) > 0 {
         for index in start_locs.iter().copied() {
             moves.push(GameMove::from_placement(cap, index));
         }
@@ -41,7 +42,7 @@ pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
 
 /// Generates all legal sliding movements for the active player's stacks.
 pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
-    let start_locs = board.scan_active_stacks(board.active_player);
+    let start_locs = board.scan_active_stacks(board.side_to_move());
     for index in start_locs {
         let stack_height = board.board[index].len();
         let start_move = GameMove(index as u64);
