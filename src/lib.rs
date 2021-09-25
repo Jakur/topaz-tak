@@ -8,19 +8,6 @@ mod bitboard;
 pub mod eval;
 mod move_gen;
 pub mod search;
-// fn main() {
-//     let ptn_moves = &[
-//         "c2", "c3", "d3", "b3", "c4", "1c2+", "1d3<", "1b3>", "1c4-", "Cc2", "a1", "1c2+", "a2",
-//     ];
-//     let mut board = Board6::new();
-//     let res = execute_moves_check_valid(&mut board, ptn_moves);
-//     assert!(res.is_ok());
-
-//     let p_res: Vec<_> = (0..3)
-//         .map(|depth| perft(&mut board, depth as u16))
-//         .collect();
-//     assert_eq!(&p_res[..], &[1, 190, 20698]);
-// }
 
 pub fn execute_moves_check_valid(board: &mut Board6, ptn_slice: &[&str]) -> Result<Vec<GameMove>> {
     let mut moves = Vec::new();
@@ -148,6 +135,93 @@ impl Piece {
     }
 }
 
+#[derive(PartialEq, Clone, Debug)]
+pub struct Stack {
+    data: Vec<Piece>,
+    index: usize,
+}
+
+impl Stack {
+    pub const fn new() -> Self {
+        const VEC: Vec<Piece> = Vec::new();
+        const IDX: usize = 0;
+        Stack {
+            data: VEC,
+            index: IDX,
+        }
+    }
+    pub fn init(&mut self, index: usize) {
+        self.data.reserve(8);
+        self.index = index;
+    }
+    pub fn push<T: Bitboard>(&mut self, item: Piece, bitboards: &mut BitboardStorage<T>) {
+        self.data.push(item);
+    }
+    pub fn last(&self) -> Option<&Piece> {
+        self.data.last()
+    }
+    pub fn pop<T: Bitboard>(&mut self, bitboards: &mut BitboardStorage<T>) -> Option<Piece> {
+        self.data.pop()
+    }
+    pub fn iter(&self) -> std::slice::Iter<Piece> {
+        self.data.iter()
+    }
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+    /// Mimicking the Extend trait from std, but we need an extra parameter
+    pub fn extend<T, U>(&mut self, iter: T, bits: &mut BitboardStorage<U>)
+    where
+        T: IntoIterator<Item = Piece>,
+        U: Bitboard,
+    {
+        for item in iter {
+            self.push(item, bits);
+        }
+    }
+    pub fn try_crush_wall<T: Bitboard>(&mut self, bits: &mut BitboardStorage<T>) -> bool {
+        if self.len() >= 2 {
+            let wall_idx = self.len() - 2;
+            if let Some(crushed) = self.data[wall_idx].crush() {
+                self.data[wall_idx] = crushed;
+                return true;
+            }
+        }
+        false
+    }
+    pub fn uncrush_wall<T: Bitboard>(&mut self, bits: &mut BitboardStorage<T>) {
+        if self.len() >= 2 {
+            let wall_idx = self.len() - 2;
+            if let Some(uncrushed) = self.data[wall_idx].uncrush() {
+                self.data[wall_idx] = uncrushed;
+                return;
+            }
+        }
+        panic!("Could not find piece to uncrush!");
+    }
+    pub fn reverse_top<T: Bitboard>(&mut self, top_n: usize, bits: &mut BitboardStorage<T>) {
+        self.hash_out(top_n, bits);
+        let range_st = self.len() - top_n;
+        let slice = &mut self.data[range_st..];
+        slice.reverse();
+        self.hash_in(top_n, bits);
+    }
+    pub fn split_off<T: Bitboard>(
+        &mut self,
+        top_n: usize,
+        bits: &mut BitboardStorage<T>,
+    ) -> Vec<Piece> {
+        self.hash_out(top_n, bits);
+        let split_idx = self.len() - top_n;
+        self.data.split_off(split_idx)
+    }
+    fn hash_out<T: Bitboard>(&self, top_n: usize, bits: &mut BitboardStorage<T>) {}
+    fn hash_in<T: Bitboard>(&self, top_n: usize, bits: &mut BitboardStorage<T>) {}
+}
+
 impl std::fmt::Debug for Piece {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         let s = match self {
@@ -164,23 +238,30 @@ impl std::fmt::Debug for Piece {
 
 #[derive(PartialEq, Clone)]
 pub struct Board6 {
-    board: [Vec<Piece>; 36],
+    board: [Stack; 36],
     active_player: Color,
     move_num: usize,
     flats_left: [usize; 2],
     caps_left: [usize; 2],
+    bits: BitboardStorage<Bitboard6>,
 }
 
 impl Board6 {
     pub fn new() -> Self {
         const SIZE: usize = 36;
-        const INIT: Vec<Piece> = Vec::new();
+        const INIT: Stack = Stack::new();
+        let mut board = [INIT; SIZE];
+        for (idx, stack) in board.iter_mut().enumerate() {
+            stack.init(idx);
+        }
+        let bits = BitboardStorage::build_6(&board);
         Self {
-            board: [INIT; SIZE],
+            board,
             active_player: Color::White,
             move_num: 1,
             flats_left: [30, 30],
             caps_left: [1, 1],
+            bits,
         }
     }
     const fn size() -> usize {
@@ -210,7 +291,8 @@ impl Board6 {
                 } else {
                     let stack = parse_tps_stack(tile)?;
                     ensure!(col < 6, "Too many columns for this board size");
-                    board.board[r_idx * 6 + col as usize].extend(stack.into_iter());
+                    board.board[r_idx * 6 + col as usize]
+                        .extend(stack.into_iter(), &mut board.bits);
                     col += 1;
                 }
             }
@@ -240,17 +322,17 @@ impl Board6 {
     fn row_col_static(index: usize) -> (usize, usize) {
         (index / 6, index % 6)
     }
-    fn try_tile(&self, row: usize, col: usize) -> Option<&Vec<Piece>> {
+    fn try_tile(&self, row: usize, col: usize) -> Option<&Stack> {
         if row >= 6 || col >= 6 {
             None
         } else {
             Some(&self.board[row * 6 + col])
         }
     }
-    fn tile(&self, row: usize, col: usize) -> &Vec<Piece> {
+    fn tile(&self, row: usize, col: usize) -> &Stack {
         &self.board[row * 6 + col]
     }
-    fn tile_mut(&mut self, row: usize, col: usize) -> &mut Vec<Piece> {
+    fn tile_mut(&mut self, row: usize, col: usize) -> &mut Stack {
         &mut self.board[row * 6 + col]
     }
     fn scan_active_stacks(&self, player: Color) -> Vec<usize> {
@@ -301,11 +383,8 @@ impl Board6 {
         }
     }
     fn road(&self, player: Color) -> bool {
-        let bitboards = BitboardStorage::<Bitboard6>::build_6(self);
-        match player {
-            Color::White => bitboards.white_flat_cap.check_road(),
-            Color::Black => bitboards.black_flat_cap.check_road(),
-        }
+        let bitboards = BitboardStorage::<Bitboard6>::build_6(&self.board);
+        bitboards.check_road(player)
     }
 }
 
@@ -366,7 +445,7 @@ impl Position for Board6 {
         let m = rev_m.game_move;
         let src_index = m.src_index();
         if m.is_place_move() {
-            let piece = self.board[src_index].pop().unwrap();
+            let piece = self.board[src_index].pop(&mut self.bits).unwrap();
             if piece.is_cap() {
                 self.caps_left[piece.owner() as usize] += 1;
             } else {
@@ -376,13 +455,11 @@ impl Position for Board6 {
             if rev_m.game_move.crush() {
                 // Stand the wall back up
                 let dest_tile = &mut self.board[rev_m.dest_sq];
-                let wall_idx = dest_tile.len() - 2;
-                let piece = dest_tile[wall_idx].uncrush().unwrap();
-                dest_tile[wall_idx] = piece;
+                dest_tile.uncrush_wall(&mut self.bits);
             }
             let iter = rev_m.rev_iter(self.board_size());
             // We need to get a mutable reference to multiple areas of the array. Hold on.
-            let (origin, rest, offset): (&mut Vec<Piece>, &mut [Vec<Piece>], usize) = {
+            let (origin, rest, offset): (&mut Stack, &mut [Stack], usize) = {
                 if src_index > rev_m.dest_sq {
                     // Easy case, because all indices remain the same
                     let (split_left, split_right) = self.board.split_at_mut(src_index);
@@ -394,13 +471,11 @@ impl Position for Board6 {
                 }
             };
             for idx in iter {
-                let piece = rest[idx - offset].pop().unwrap();
-                origin.push(piece); // This will need to be reversed later
+                let piece = rest[idx - offset].pop(&mut self.bits).unwrap();
+                origin.push(piece, &mut self.bits); // This will need to be reversed later
             }
             let pieces_moved = rev_m.game_move.number() as usize;
-            let range_st = origin.len() - pieces_moved;
-            let slice = &mut origin[range_st..];
-            slice.reverse();
+            origin.reverse_top(pieces_moved, &mut self.bits);
         }
     }
     fn do_move(&mut self, m: GameMove) -> <Self as Position>::ReverseMove {
@@ -415,7 +490,7 @@ impl Position for Board6 {
             if swap_pieces {
                 piece = piece.swap_color();
             }
-            self.board[src_index].push(piece);
+            self.board[src_index].push(piece, &mut self.bits);
             if piece.is_cap() {
                 self.caps_left[piece.owner() as usize] -= 1;
             } else {
@@ -427,23 +502,18 @@ impl Position for Board6 {
             let stack_move = m.forward_iter(self.board_size());
             let src_stack = &mut self.board[src_index];
             // Todo remove allocation with split_at_mut
-            if src_stack.len() < num_pieces {
-                dbg!(&self);
-                dbg!(m);
-                panic!("Bad Move encountered!");
-            }
-            let take_stack: Vec<_> = src_stack.split_off(src_stack.len() - num_pieces);
+            debug_assert!(src_stack.len() >= num_pieces);
+            let take_stack: Vec<_> = src_stack.split_off(num_pieces, &mut self.bits);
             let mut last_idx = 0;
             for (piece, sq) in take_stack.into_iter().zip(stack_move) {
                 debug_assert!(sq != src_index);
-                self.board[sq].push(piece);
+                self.board[sq].push(piece, &mut self.bits);
                 last_idx = sq;
             }
             let last_square = &mut self.board[last_idx];
             let len = last_square.len();
             if len >= 2 {
-                if let Some(piece) = last_square[len - 2].crush() {
-                    last_square[len - 2] = piece;
+                if last_square.try_crush_wall(&mut self.bits) {
                     return RevGameMove::new(m.set_crush(), last_idx);
                 }
             }
@@ -456,7 +526,7 @@ impl fmt::Debug for Board6 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         let mut board_string = String::new();
         for (i, stack) in self.board.iter().enumerate() {
-            for piece in stack {
+            for piece in stack.iter() {
                 let s = match piece {
                     Piece::WhiteCap => "1C",
                     Piece::BlackCap => "2C",
@@ -496,22 +566,23 @@ mod test {
         let example_tps = "x6/x2,2,x3/x3,2C,x2/x2,211S,x2,2/x6/x,1,1,2,2,1 2 7";
         let board = Board6::try_from_tps(example_tps);
         assert!(board.is_ok());
-        let board = board.unwrap();
+        let mut board = board.unwrap();
         assert_eq!(board.active_player, Color::Black);
         assert_eq!(board.move_num, 7);
         let mut b = Board6::new();
-        b.tile_mut(1, 2).push(Piece::BlackFlat);
-        b.tile_mut(2, 3).push(Piece::BlackCap);
-        let mut stack = vec![Piece::BlackFlat, Piece::WhiteFlat, Piece::WhiteWall];
+        b.tile_mut(1, 2).push(Piece::BlackFlat, &mut board.bits);
+        b.tile_mut(2, 3).push(Piece::BlackCap, &mut board.bits);
+        let stack = vec![Piece::BlackFlat, Piece::WhiteFlat, Piece::WhiteWall];
         // b.tile_mut(3, 2) = &mut stack;
-        std::mem::swap(b.tile_mut(3, 2), &mut stack);
-        b.tile_mut(3, 5).push(Piece::BlackFlat);
+        let stack_dest = b.tile_mut(3, 2);
+        stack_dest.extend(stack.into_iter(), &mut board.bits);
+        b.tile_mut(3, 5).push(Piece::BlackFlat, &mut board.bits);
 
-        b.tile_mut(5, 1).push(Piece::WhiteFlat);
-        b.tile_mut(5, 2).push(Piece::WhiteFlat);
-        b.tile_mut(5, 3).push(Piece::BlackFlat);
-        b.tile_mut(5, 4).push(Piece::BlackFlat);
-        b.tile_mut(5, 5).push(Piece::WhiteFlat);
+        b.tile_mut(5, 1).push(Piece::WhiteFlat, &mut board.bits);
+        b.tile_mut(5, 2).push(Piece::WhiteFlat, &mut board.bits);
+        b.tile_mut(5, 3).push(Piece::BlackFlat, &mut board.bits);
+        b.tile_mut(5, 4).push(Piece::BlackFlat, &mut board.bits);
+        b.tile_mut(5, 5).push(Piece::WhiteFlat, &mut board.bits);
         assert_eq!(board.board, b.board);
 
         assert_eq!(board.scan_active_stacks(Color::White).len(), 4);
@@ -571,11 +642,23 @@ mod test {
     }
     #[test]
     pub fn check_board_road() {
-        use crate::eval::Evaluate;
         let s = "2,1,1,1,1,2S/1,12,1,x2,111121C/x,2,2,212,2C,11121/2,2,1,1,12,2/x3,1,1,x/x2,2,21,x,112S 1 36";
         let board = Board6::try_from_tps(s).unwrap();
         assert!(!board.road(Color::White));
         assert!(board.road(Color::Black));
-        assert_eq!(board.evaluate(), crate::eval::LOSE_SCORE);
+    }
+    #[test]
+    pub fn basic_perft() {
+        let ptn_moves = &[
+            "c2", "c3", "d3", "b3", "c4", "1c2+", "1d3<", "1b3>", "1c4-", "Cc2", "a1", "1c2+", "a2",
+        ];
+        let mut board = Board6::new();
+        let res = execute_moves_check_valid(&mut board, ptn_moves);
+        assert!(res.is_ok());
+
+        let p_res: Vec<_> = (0..3)
+            .map(|depth| perft(&mut board, depth as u16))
+            .collect();
+        assert_eq!(&p_res[..], &[1, 190, 20698]);
     }
 }

@@ -1,43 +1,62 @@
-use super::{Board6, Piece};
+use super::{Board6, Piece, Stack};
 use board_game_traits::Color;
 
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Clone)]
 pub struct BitboardStorage<T> {
-    pub white_flat_cap: T,
-    pub black_flat_cap: T,
-    pub white_wall: T,
-    pub black_wall: T,
+    pub white: T,
+    pub black: T,
+    pub flat: T,
+    pub wall: T,
+    pub cap: T,
 }
 
 impl<T> BitboardStorage<T>
 where
-    T: Bitboard + std::ops::BitOr<Output = T>,
+    T: Bitboard,
 {
     fn iter_stacks(&self, color: Color) -> BitIndexIterator<T> {
         let bits = match color {
-            Color::White => self.white_flat_cap | self.white_wall,
-            Color::Black => self.black_flat_cap | self.black_wall,
+            Color::White => self.white,
+            Color::Black => self.black,
         };
         BitIndexIterator { bits }
     }
-    pub fn build_6(board: &Board6) -> Self {
-        assert!(board.board_size() == T::size());
+    pub fn check_road(&self, color: Color) -> bool {
+        let road_pieces = match color {
+            Color::White => (self.flat | self.cap) & self.white,
+            Color::Black => (self.flat | self.cap) & self.black,
+        };
+        road_pieces.check_road()
+    }
+    pub fn build_6(board: &[Stack; 36]) -> Self {
         let mut storage = Self::default();
-        for (idx, stack) in board.board.iter().enumerate() {
+        for (idx, stack) in board.iter().enumerate() {
             if let Some(piece) = stack.last() {
                 let bit_pattern = T::index_to_bit(idx);
                 match piece {
-                    Piece::WhiteFlat | Piece::WhiteCap => {
-                        storage.white_flat_cap |= bit_pattern;
+                    Piece::WhiteFlat => {
+                        storage.white |= bit_pattern;
+                        storage.flat |= bit_pattern;
                     }
-                    Piece::BlackFlat | Piece::BlackCap => {
-                        storage.black_flat_cap |= bit_pattern;
+                    Piece::BlackFlat => {
+                        storage.black |= bit_pattern;
+                        storage.flat |= bit_pattern;
                     }
                     Piece::WhiteWall => {
-                        storage.white_wall |= bit_pattern;
+                        storage.white |= bit_pattern;
+                        storage.wall |= bit_pattern;
                     }
                     Piece::BlackWall => {
-                        storage.black_wall |= bit_pattern;
+                        storage.black |= bit_pattern;
+                        storage.wall |= bit_pattern;
+                    }
+                    Piece::WhiteCap => {
+                        storage.white |= bit_pattern;
+                        storage.cap |= bit_pattern;
+                    }
+                    Piece::BlackCap => {
+                        storage.black |= bit_pattern;
+                        storage.cap |= bit_pattern;
                     }
                 }
             }
@@ -49,7 +68,13 @@ where
 // 09 10 11 12 13 14
 // 16 17 18 19 20 21
 
-pub trait Bitboard: Copy + Default + std::ops::BitOrAssign {
+pub trait Bitboard:
+    Copy
+    + Default
+    + std::ops::BitOrAssign
+    + std::ops::BitOr<Output = Self>
+    + std::ops::BitAnd<Output = Self>
+{
     fn adjacent(self) -> Self;
     fn check_road(self) -> bool;
     fn pop_lowest(&mut self) -> Self;
@@ -248,7 +273,7 @@ mod test {
         let tps =
             "2,x4,1/2,2,x2,1,x/2,212C,x,1,1,x/2,1,x,2S,12S,x/12,12221C,x,12,1,1/1S,12,x,1,1,x 1 22";
         let board = Board6::try_from_tps(tps).unwrap();
-        let bitboards = BitboardStorage::<Bitboard6>::build_6(&board);
+        let bitboards = BitboardStorage::<Bitboard6>::build_6(&board.board);
         let stacks1: Vec<_> = bitboards.iter_stacks(board.active_player).collect();
         let stacks2 = board.scan_active_stacks(board.active_player);
         assert_eq!(stacks1, stacks2);

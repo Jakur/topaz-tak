@@ -1,4 +1,4 @@
-use super::{Board6, Piece};
+use super::{Board6, Piece, Stack};
 use board_game_traits::{Color, GameResult, Position};
 
 pub trait Evaluate: Position {
@@ -47,8 +47,9 @@ impl Evaluate for Board6 {
         let mut score = 0;
         for (idx, stack) in self.board.iter().enumerate() {
             if stack.len() == 1 {
-                let pw = piece_weight(stack[0]) + LOCATION_WEIGHT[idx];
-                if let Color::White = stack[0].owner() {
+                let top = *stack.last().unwrap();
+                let pw = piece_weight(top) + LOCATION_WEIGHT[idx];
+                if let Color::White = top.owner() {
                     score += pw;
                 } else {
                     score -= pw;
@@ -74,7 +75,7 @@ impl Evaluate for Board6 {
     }
 }
 
-fn captive_friendly(stack: &Vec<Piece>, top: Piece) -> (i32, i32) {
+fn captive_friendly(stack: &Stack, top: Piece) -> (i32, i32) {
     let mut captive = 0;
     let mut friendly = 0;
     let controller = top.owner();
