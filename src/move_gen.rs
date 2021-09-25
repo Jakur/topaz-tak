@@ -57,13 +57,6 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
                 continue;
             }
             directional_stack_moves(moves, dir_move, max_steps, max_pieces);
-
-            // if limits.can_crush[dir]
-            //     && max_pieces > max_steps
-            //     && max_pieces + 1 < board.board_size()
-            // {
-            //     directional_crush_moves(moves, dir_move, max_steps, max_pieces);
-            // }
         }
     }
 }

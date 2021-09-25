@@ -44,17 +44,6 @@ fn stack_top_multiplier(p: Piece) -> (i32, i32) {
 
 impl Evaluate for Board6 {
     fn evaluate(&self) -> i32 {
-        if let Some(res) = self.game_result() {
-            if let Some(color) = win_color(res) {
-                if color == self.side_to_move() {
-                    return WIN_SCORE;
-                } else {
-                    return LOSE_SCORE;
-                }
-            } else {
-                return 0;
-            }
-        }
         let mut score = 0;
         for (idx, stack) in self.board.iter().enumerate() {
             if stack.len() == 1 {

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, ensure, Result};
 use bitboard::{Bitboard, Bitboard6, BitboardStorage};
 use board_game_traits::{Color, GameResult, Position};
-use move_gen::{generate_all_moves, GameMove, RevGameMove};
+pub use move_gen::{generate_all_moves, GameMove, RevGameMove};
 use std::fmt;
 
 mod bitboard;
@@ -568,5 +568,14 @@ mod test {
         for ptn in ptns {
             check_move(s2, ptn, &mut board2)
         }
+    }
+    #[test]
+    pub fn check_board_road() {
+        use crate::eval::Evaluate;
+        let s = "2,1,1,1,1,2S/1,12,1,x2,111121C/x,2,2,212,2C,11121/2,2,1,1,12,2/x3,1,1,x/x2,2,21,x,112S 1 36";
+        let board = Board6::try_from_tps(s).unwrap();
+        assert!(!board.road(Color::White));
+        assert!(board.road(Color::Black));
+        assert_eq!(board.evaluate(), crate::eval::LOSE_SCORE);
     }
 }
