@@ -8,6 +8,7 @@ use std::fmt;
 mod bitboard;
 mod piece;
 mod stack;
+mod zobrist;
 pub use piece::*;
 pub use stack::*;
 
@@ -89,6 +90,8 @@ impl Board6 {
         };
         board.active_player = active_player;
         board.move_num = data[2].parse()?;
+        let zobrist_hash = zobrist::TABLE.manual_build_hash(&board);
+        board.bits.set_zobrist(zobrist_hash);
         Ok(board)
     }
     pub fn row_col(&self, index: usize) -> (usize, usize) {
@@ -201,6 +204,7 @@ impl Position for Board6 {
             self.move_num -= 1;
         }
         self.active_player = !self.active_player;
+        self.bits.zobrist_color(self.active_player);
         let m = rev_m.game_move;
         let src_index = m.src_index();
         if m.is_place_move() {
@@ -243,6 +247,7 @@ impl Position for Board6 {
             self.move_num += 1;
         }
         self.active_player = !self.active_player;
+        self.bits.zobrist_color(self.active_player);
         let src_index = m.src_index();
         if m.is_place_move() {
             let mut piece = m.place_piece();

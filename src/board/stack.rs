@@ -1,4 +1,5 @@
 use super::bitboard::{Bitboard, BitboardStorage};
+use super::zobrist::TABLE;
 use super::Piece;
 
 #[derive(PartialEq, Clone, Debug)]
@@ -22,6 +23,7 @@ impl Stack {
     }
     pub fn push<T: Bitboard>(&mut self, item: Piece, bits: &mut BitboardStorage<T>) {
         self.hash_out_top(bits);
+        bits.zobrist_middle(item, self.index, self.len());
         self.data.push(item);
         self.hash_in_top(bits);
     }
@@ -31,6 +33,9 @@ impl Stack {
     pub fn pop<T: Bitboard>(&mut self, bits: &mut BitboardStorage<T>) -> Option<Piece> {
         self.hash_out_top(bits);
         let ret = self.data.pop();
+        if let Some(piece) = ret {
+            bits.zobrist_middle(piece, self.index, self.len());
+        }
         self.hash_in_top(bits);
         ret
     }
@@ -95,11 +100,25 @@ impl Stack {
         vec
     }
     fn hash_out_many<T: Bitboard>(&self, top_n: usize, bits: &mut BitboardStorage<T>) {
+        if self.len() == 0 {
+            return;
+        }
         self.hash_out_top(bits);
+        for i in self.len() - top_n..self.len() {
+            let piece = self.data[i];
+            bits.zobrist_middle(piece, self.index, i);
+        }
         // Todo zobrist operations
     }
     fn hash_in_many<T: Bitboard>(&self, top_n: usize, bits: &mut BitboardStorage<T>) {
+        if self.len() == 0 {
+            return;
+        }
         self.hash_in_top(bits);
+        for i in self.len() - top_n..self.len() {
+            let piece = self.data[i];
+            bits.zobrist_middle(piece, self.index, i);
+        }
         // Todo zobrist operations
     }
     fn hash_in_top<T: Bitboard>(&self, bits: &mut BitboardStorage<T>) {
@@ -108,26 +127,32 @@ impl Stack {
             Some(Piece::WhiteFlat) => {
                 bits.white |= bitboard;
                 bits.flat |= bitboard;
+                bits.zobrist_top(Piece::WhiteFlat, self.index);
             }
             Some(Piece::BlackFlat) => {
                 bits.black |= bitboard;
                 bits.flat |= bitboard;
+                bits.zobrist_top(Piece::BlackFlat, self.index);
             }
             Some(Piece::WhiteWall) => {
                 bits.white |= bitboard;
                 bits.wall |= bitboard;
+                bits.zobrist_top(Piece::WhiteWall, self.index);
             }
             Some(Piece::BlackWall) => {
                 bits.black |= bitboard;
                 bits.wall |= bitboard;
+                bits.zobrist_top(Piece::BlackWall, self.index);
             }
             Some(Piece::WhiteCap) => {
                 bits.white |= bitboard;
                 bits.cap |= bitboard;
+                bits.zobrist_top(Piece::WhiteCap, self.index);
             }
             Some(Piece::BlackCap) => {
                 bits.black |= bitboard;
                 bits.cap |= bitboard;
+                bits.zobrist_top(Piece::BlackCap, self.index);
             }
             _ => {}
         }
@@ -138,26 +163,32 @@ impl Stack {
             Some(Piece::WhiteFlat) => {
                 bits.white -= bitboard;
                 bits.flat -= bitboard;
+                bits.zobrist_top(Piece::WhiteFlat, self.index);
             }
             Some(Piece::BlackFlat) => {
                 bits.black -= bitboard;
                 bits.flat -= bitboard;
+                bits.zobrist_top(Piece::BlackFlat, self.index);
             }
             Some(Piece::WhiteWall) => {
                 bits.white -= bitboard;
                 bits.wall -= bitboard;
+                bits.zobrist_top(Piece::WhiteWall, self.index);
             }
             Some(Piece::BlackWall) => {
                 bits.black -= bitboard;
                 bits.wall -= bitboard;
+                bits.zobrist_top(Piece::BlackWall, self.index);
             }
             Some(Piece::WhiteCap) => {
                 bits.white -= bitboard;
                 bits.cap -= bitboard;
+                bits.zobrist_top(Piece::WhiteCap, self.index);
             }
             Some(Piece::BlackCap) => {
                 bits.black -= bitboard;
                 bits.cap -= bitboard;
+                bits.zobrist_top(Piece::BlackCap, self.index);
             }
             _ => {}
         }

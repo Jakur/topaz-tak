@@ -1,4 +1,5 @@
 use super::{Board6, Piece, Stack};
+use crate::board::zobrist::TABLE;
 use board_game_traits::Color;
 
 #[derive(Default, PartialEq, Clone)]
@@ -8,12 +9,29 @@ pub struct BitboardStorage<T> {
     pub flat: T,
     pub wall: T,
     pub cap: T,
+    zobrist: u64,
 }
 
 impl<T> BitboardStorage<T>
 where
     T: Bitboard,
 {
+    pub fn zobrist_top(&mut self, piece: Piece, sq_index: usize) {
+        self.zobrist ^= TABLE.top_hash(piece, sq_index);
+    }
+    pub fn zobrist_middle(&mut self, piece: Piece, sq_index: usize, stack_index: usize) {
+        self.zobrist ^= TABLE.stack_hash(piece, sq_index, stack_index);
+    }
+    pub fn zobrist_color(&mut self, color: Color) {
+        self.zobrist ^= TABLE.color_hash(color); // Hash in new color
+        self.zobrist ^= TABLE.color_hash(!color); // Hash out old color
+    }
+    pub fn set_zobrist(&mut self, hash: u64) {
+        self.zobrist = hash;
+    }
+    pub fn zobrist(&self) -> u64 {
+        self.zobrist
+    }
     pub fn iter_stacks(&self, color: Color) -> BitIndexIterator<T> {
         let bits = match color {
             Color::White => self.white,
@@ -43,6 +61,7 @@ where
     }
     pub fn build_6(board: &[Stack; 36]) -> Self {
         let mut storage = Self::default();
+        storage.set_zobrist(TABLE.color_hash(Color::White));
         for (idx, stack) in board.iter().enumerate() {
             if let Some(piece) = stack.last() {
                 let bit_pattern = T::index_to_bit(idx);
