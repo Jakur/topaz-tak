@@ -48,7 +48,7 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
         let start_move = GameMove(index as u64);
         let limits = find_move_limits(board, index);
         for dir in 0..4 {
-            let dir_move = start_move.set_direction(dir as u64);
+            let mut dir_move = start_move.set_direction(dir as u64);
             let max_steps = limits.steps[dir];
             let max_pieces = std::cmp::min(board.board_size(), stack_height);
             if limits.can_crush[dir] {
@@ -56,6 +56,23 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
             }
             if max_steps == 0 {
                 continue;
+            }
+            // Max steps is greater than zero, so we know we can move
+            let first_dest = match dir {
+                0 => index - board.board_size(),
+                1 => index + 1,
+                2 => index + board.board_size(),
+                3 => index - 1,
+                _ => unimplemented!(),
+            };
+            match board.board[first_dest].last() {
+                Some(piece) => {
+                    // Capture enemy piece first;
+                    if piece.owner() != board.side_to_move() {
+                        // dir_move = dir_move.add_score(3);
+                    }
+                }
+                _ => {}
             }
             directional_stack_moves(moves, dir_move, max_steps, max_pieces);
         }
@@ -89,30 +106,42 @@ impl RevGameMove {
 /// 00F000000000 Tile 7
 /// 010000000000 Wall Smash
 /// F00000000000 Placement Piece
+/// 64 - 52 = 12 bits for Score
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct GameMove(u64);
 
 impl GameMove {
-    const PLACEMENT_THRESHOLD: u64 = 0x20000000000;
-    pub fn null_move() -> Self {
-        Self(0xF000_0000_0000_0000)
-    }
+    const PLACEMENT_BITS: u64 = 0xF00000000000;
     fn from_placement(piece: Piece, index: usize) -> Self {
         let bits = ((piece as u64) << 44) | index as u64;
         Self(bits)
     }
+    pub fn null_move() -> Self {
+        Self(0)
+    }
+    pub fn score(self) -> i32 {
+        let bits = self.0 >> 52;
+        if self.is_place_move() {
+            (bits + 3) as i32
+        } else {
+            (bits + self.number() + 10 * self.is_stack_move() as u64) as i32
+        }
+    }
+    pub fn add_score(&mut self, score: u64) {
+        self.0 = self.0 + (score << 52)
+    }
     pub fn is_place_move(self) -> bool {
-        self.0 >= Self::PLACEMENT_THRESHOLD
+        (self.0 & Self::PLACEMENT_BITS) > 0
     }
     fn slide_bits(self) -> u64 {
         let bits = self.0 & 0xFFFFFFF000;
         bits >> 12
     }
     pub fn place_piece(self) -> Piece {
-        Piece::from_index(self.0 >> 44)
+        Piece::from_index((self.0 >> 44) & 0xF)
     }
     fn is_stack_move(self) -> bool {
-        self.0 < Self::PLACEMENT_THRESHOLD
+        (self.0 & Self::PLACEMENT_BITS) == 0
     }
     pub fn src_index(self) -> usize {
         self.0 as usize & 0x3F

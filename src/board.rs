@@ -94,6 +94,9 @@ impl Board6 {
         board.bits.set_zobrist(zobrist_hash);
         Ok(board)
     }
+    pub fn zobrist(&self) -> u64 {
+        self.bits.zobrist()
+    }
     pub fn row_col(&self, index: usize) -> (usize, usize) {
         Self::row_col_static(index)
     }

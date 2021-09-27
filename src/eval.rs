@@ -1,8 +1,12 @@
 use super::{Board6, Piece, Stack};
+use crate::{GameMove, RevGameMove};
 use board_game_traits::{Color, GameResult, Position};
 
-pub trait Evaluate: Position {
+pub trait Evaluate: Position<Move = GameMove, ReverseMove = RevGameMove> {
     fn evaluate(&self) -> i32;
+    fn hash(&self) -> u64;
+    fn legal_move(&self, game_move: GameMove) -> bool;
+    fn ply(&self) -> usize;
 }
 
 fn win_color(res: GameResult) -> Option<Color> {
@@ -71,6 +75,20 @@ impl Evaluate for Board6 {
             score
         } else {
             -1 * score
+        }
+    }
+    fn hash(&self) -> u64 {
+        self.zobrist()
+    }
+    fn legal_move(&self, game_move: GameMove) -> bool {
+        let mut vec = Vec::new();
+        self.generate_moves(&mut vec);
+        vec.into_iter().find(|&m| m == game_move).is_some()
+    }
+    fn ply(&self) -> usize {
+        match self.side_to_move() {
+            Color::White => self.move_num() * 2,
+            Color::Black => self.move_num() * 2 + 1,
         }
     }
 }
