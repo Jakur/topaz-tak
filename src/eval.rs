@@ -1,4 +1,4 @@
-use super::{Board6, Piece, Stack};
+use super::{Bitboard, Board6, Piece, Stack};
 use crate::{GameMove, RevGameMove};
 use board_game_traits::{Color, GameResult, Position};
 
@@ -71,6 +71,10 @@ impl Evaluate for Board6 {
                 }
             }
         }
+        let white_connectivity = (self.bits.white.adjacent() & self.bits.white).pop_count();
+        let black_connectivity = (self.bits.black.adjacent() & self.bits.black).pop_count();
+        score += white_connectivity as i32 * 20;
+        score -= black_connectivity as i32 * 20;
         if let Color::White = self.side_to_move() {
             score
         } else {

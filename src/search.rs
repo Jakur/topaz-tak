@@ -14,7 +14,7 @@ pub struct SearchInfo {
 }
 
 impl SearchInfo {
-    fn new(max_depth: usize) -> Self {
+    pub fn new(max_depth: usize) -> Self {
         Self {
             max_depth,
             nodes: 0,
@@ -27,15 +27,17 @@ impl SearchInfo {
     fn store_pv_move<E: Evaluate>(&mut self, position: &E, mv: GameMove) {
         self.pv_table.insert(position.hash(), mv);
     }
-    fn pv_move<E: Evaluate>(&self, position: &E) -> Option<GameMove> {
+    pub fn pv_move<E: Evaluate>(&self, position: &E) -> Option<GameMove> {
         self.pv_table.get(&position.hash()).copied()
     }
     fn full_pv<E: Evaluate>(&self, position: &mut E) -> Vec<GameMove> {
         let mut forward = Vec::new();
         let mut backward = Vec::new();
         while let Some(m) = self.pv_move(position) {
+            dbg!(m.to_ptn());
             if !position.legal_move(m) {
-                return forward;
+                dbg!("Illegal Move in Pv");
+                break;
             }
             let rev = position.do_move(m);
             backward.push(rev);

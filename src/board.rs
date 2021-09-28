@@ -19,7 +19,7 @@ pub struct Board6 {
     move_num: usize,
     flats_left: [usize; 2],
     caps_left: [usize; 2],
-    bits: BitboardStorage<Bitboard6>,
+    pub bits: BitboardStorage<Bitboard6>,
 }
 
 impl Board6 {

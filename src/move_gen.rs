@@ -7,7 +7,9 @@ pub mod ptn;
 
 pub fn generate_all_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     generate_all_place_moves(board, moves);
-    generate_all_stack_moves(board, moves);
+    if board.move_num() >= 2 {
+        generate_all_stack_moves(board, moves);
+    }
 }
 
 /// Generates all legal placements of flats, walls, and caps for the active player.
@@ -107,7 +109,7 @@ impl RevGameMove {
 /// 010000000000 Wall Smash
 /// F00000000000 Placement Piece
 /// 64 - 52 = 12 bits for Score
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Eq)]
 pub struct GameMove(u64);
 
 impl GameMove {
@@ -210,6 +212,13 @@ impl GameMove {
     }
     pub fn crush(&self) -> bool {
         (self.0 & 0x10000000000) > 0
+    }
+}
+
+impl std::cmp::PartialEq for GameMove {
+    fn eq(&self, rhs: &GameMove) -> bool {
+        const NON_SCORE_BITS: u64 = 0xFFFFFFFFFFFF;
+        (self.0 & NON_SCORE_BITS) == (rhs.0 & NON_SCORE_BITS)
     }
 }
 

@@ -15,6 +15,10 @@ rand_xoshiro = "0.6.0"
 [dev-dependencies]
 criterion = "0.3"
 
+[[bin]]
+name = "topaz"
+path = "src/topaz.rs"
+
 [[bench]]
 name = "benchmark"
 harness = false
