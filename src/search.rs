@@ -4,6 +4,8 @@ use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::GameMove;
 use std::collections::HashMap;
 
+const NULL_REDUCTION: usize = 2;
+
 pub struct SearchInfo {
     pub max_depth: usize,
     nodes: usize,
@@ -129,6 +131,24 @@ where
     if depth == 0 {
         return board.evaluate();
     }
+    if null_move && depth >= 1 + NULL_REDUCTION {
+        // Check if our position is so good that passing still gives opp a bad pos
+        board.null_move();
+        let score = -1
+            * alpha_beta(
+                -beta,
+                -beta + 1,
+                depth - 1 - NULL_REDUCTION,
+                board,
+                info,
+                false,
+            );
+        board.rev_null_move();
+        // If we beta cutoff from the null move, then we can stop searching
+        if score >= beta {
+            return beta;
+        }
+    }
     let mut moves = Vec::new();
     board.generate_moves(&mut moves);
     let mut best_move = None;
@@ -213,7 +233,6 @@ fn naive_minimax<E: Evaluate>(board: &mut E, depth: u16) -> i32 {
     if depth == 0 {
         board.evaluate()
     } else {
-        let side_to_move = board.side_to_move();
         let mut moves = vec![];
         board.generate_moves(&mut moves);
         let child_evaluations = moves.into_iter().map(|mv| {

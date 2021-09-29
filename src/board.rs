@@ -103,6 +103,10 @@ impl Board6 {
     pub fn active_player(&self) -> Color {
         self.active_player
     }
+    pub fn swap_active_player(&mut self) {
+        self.active_player = !self.active_player;
+        self.bits.zobrist_color(self.active_player);
+    }
     pub fn move_num(&self) -> usize {
         self.move_num
     }
@@ -206,8 +210,7 @@ impl Position for Board6 {
         if let Color::White = self.active_player {
             self.move_num -= 1;
         }
-        self.active_player = !self.active_player;
-        self.bits.zobrist_color(self.active_player);
+        self.swap_active_player();
         let m = rev_m.game_move;
         let src_index = m.src_index();
         if m.is_place_move() {
@@ -249,8 +252,7 @@ impl Position for Board6 {
         if let Color::Black = self.active_player {
             self.move_num += 1;
         }
-        self.active_player = !self.active_player;
-        self.bits.zobrist_color(self.active_player);
+        self.swap_active_player();
         let src_index = m.src_index();
         if m.is_place_move() {
             let mut piece = m.place_piece();

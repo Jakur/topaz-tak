@@ -7,6 +7,8 @@ pub trait Evaluate: Position<Move = GameMove, ReverseMove = RevGameMove> {
     fn hash(&self) -> u64;
     fn legal_move(&self, game_move: GameMove) -> bool;
     fn ply(&self) -> usize;
+    fn null_move(&mut self);
+    fn rev_null_move(&mut self);
 }
 
 fn win_color(res: GameResult) -> Option<Color> {
@@ -94,6 +96,12 @@ impl Evaluate for Board6 {
             Color::White => self.move_num() * 2,
             Color::Black => self.move_num() * 2 + 1,
         }
+    }
+    fn null_move(&mut self) {
+        self.swap_active_player();
+    }
+    fn rev_null_move(&mut self) {
+        self.swap_active_player();
     }
 }
 

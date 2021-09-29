@@ -50,7 +50,7 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
         let start_move = GameMove(index as u64);
         let limits = find_move_limits(board, index);
         for dir in 0..4 {
-            let mut dir_move = start_move.set_direction(dir as u64);
+            let dir_move = start_move.set_direction(dir as u64);
             let max_steps = limits.steps[dir];
             let max_pieces = std::cmp::min(board.board_size(), stack_height);
             if limits.can_crush[dir] {
