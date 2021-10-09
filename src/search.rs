@@ -5,6 +5,7 @@ use crate::move_gen::GameMove;
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
 use std::collections::HashMap;
+use std::time::Instant;
 
 const NULL_REDUCTION: usize = 2;
 
@@ -17,6 +18,8 @@ pub struct SearchInfo {
     fail_high: usize,
     stopped: bool,
     input: Option<Receiver<TeiCommand>>,
+    max_time: u64,
+    start_time: Instant,
 }
 
 impl SearchInfo {
@@ -30,15 +33,31 @@ impl SearchInfo {
             fail_high: 0,
             stopped: false,
             input: None,
+            max_time: 120, // Some large but not enormous default
+            start_time: Instant::now(),
         }
     }
-    pub fn set_input_stream(&mut self, r: Receiver<TeiCommand>) {
+    pub fn input_stream(mut self, r: Receiver<TeiCommand>) -> Self {
         self.input = Some(r);
+        self
+    }
+    pub fn max_time(mut self, time: u64) -> Self {
+        self.max_time = time;
+        self
+    }
+    pub fn start_search(&mut self) {
+        self.stopped = false;
+        self.nodes = 0;
+        self.start_time = Instant::now();
     }
     pub fn take_input_stream(&mut self) -> Option<Receiver<TeiCommand>> {
         self.input.take()
     }
     pub fn check_stop(&mut self) {
+        let secs = self.start_time.elapsed().as_secs();
+        if secs >= self.max_time {
+            self.stopped = true;
+        }
         if let Some(ref r) = self.input {
             if r.try_recv().is_ok() {
                 self.stopped = true;
@@ -98,28 +117,70 @@ impl KillerMoves {
     }
 }
 
-pub fn search<E: Evaluate>(board: &mut E, info: &mut SearchInfo) {
-    let mut best_score = i32::MIN;
+pub struct SearchOutcome {
+    score: i32,
+    time: u128,
+    pv: Vec<GameMove>,
+    nodes: usize,
+}
 
-    let mut pv_moves = Vec::new();
-    // let pv_numv = 0;
+impl SearchOutcome {
+    pub fn new(score: i32, pv: Vec<GameMove>, search_info: &SearchInfo) -> Self {
+        let nodes = search_info.nodes;
+        let time = search_info.start_time.elapsed().as_millis();
+        Self {
+            score,
+            pv,
+            nodes,
+            time,
+        }
+    }
+    pub fn best_move(&self) -> Option<String> {
+        self.pv.get(0).map(|m| m.to_ptn())
+    }
+}
 
+impl std::fmt::Display for SearchOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        let mut pv_string = String::new();
+        for m in self.pv.iter() {
+            pv_string.push_str(&m.to_ptn());
+            pv_string.push_str(" ");
+        }
+        pv_string.pop();
+        let nps = (self.nodes as u128) / self.time * 1000;
+        write!(
+            f,
+            "score cp {} time {} pv {} nodes {} nps {}",
+            self.score, self.time, pv_string, self.nodes, nps
+        )
+    }
+}
+
+pub fn search<E: Evaluate>(board: &mut E, info: &mut SearchInfo) -> Option<SearchOutcome> {
+    let mut outcome = None;
     for depth in 1..=info.max_depth {
-        best_score = alpha_beta(-1_000_000, 1_000_000, depth, board, info, true);
-        pv_moves = info.full_pv(board);
+        let best_score = alpha_beta(-1_000_000, 1_000_000, depth, board, info, true);
+        let pv_moves = info.full_pv(board);
         // Stop wasting time
-        if best_score > 9900 || best_score < -9900 {
-            return;
+        if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
+            return Some(SearchOutcome::new(best_score, pv_moves, info));
+        }
+        // If we had an incomplete depth search, use the previous depth's vals
+        if info.stopped {
+            break;
         }
         print!(
             "Depth: {} Score: {} Nodes: {} PV: ",
             depth, best_score, info.nodes
         );
+        outcome = Some(SearchOutcome::new(best_score, pv_moves.clone(), info));
         for ptn in pv_moves.into_iter().map(|m| m.to_ptn()) {
             print!("{} ", ptn);
         }
         println!("");
     }
+    outcome
 }
 
 fn alpha_beta<E>(
@@ -134,7 +195,7 @@ where
     E: Evaluate,
 {
     info.nodes += 1;
-    const FREQ: usize = (1 << 13) - 1;
+    const FREQ: usize = (1 << 16) - 1; // Per 65k nodes
     if (info.nodes & FREQ) == FREQ {
         info.check_stop();
     }
