@@ -11,6 +11,7 @@ anyhow = "1.0"
 board-game-traits = "0.2.1"
 rand_core = "0.6.3"
 rand_xoshiro = "0.6.0"
+crossbeam-channel = "0.5"
 
 [dev-dependencies]
 criterion = "0.3"

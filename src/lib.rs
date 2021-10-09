@@ -8,6 +8,14 @@ pub mod eval;
 mod move_gen;
 pub mod search;
 
+#[derive(Debug)]
+pub enum TeiCommand {
+    Stop,
+    Quit,
+    Go(String),
+    Position(String),
+}
+
 pub fn execute_moves_check_valid(board: &mut Board6, ptn_slice: &[&str]) -> Result<Vec<GameMove>> {
     let mut moves = Vec::new();
     let mut made_moves = Vec::new();

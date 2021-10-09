@@ -505,6 +505,7 @@ dependencies = [
  "anyhow",
  "board-game-traits",
  "criterion",
+ "crossbeam-channel",
  "rand_core",
  "rand_xoshiro",
 ]

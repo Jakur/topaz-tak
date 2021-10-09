@@ -2,6 +2,8 @@ use super::{Color, GameResult};
 use crate::eval::Evaluate;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::GameMove;
+use crate::TeiCommand;
+use crossbeam_channel::Receiver;
 use std::collections::HashMap;
 
 const NULL_REDUCTION: usize = 2;
@@ -13,6 +15,8 @@ pub struct SearchInfo {
     killer_moves: Vec<KillerMoves>,
     fail_high_first: usize,
     fail_high: usize,
+    stopped: bool,
+    input: Option<Receiver<TeiCommand>>,
 }
 
 impl SearchInfo {
@@ -24,6 +28,21 @@ impl SearchInfo {
             killer_moves: vec![KillerMoves::new(); max_depth + 1],
             fail_high_first: 0,
             fail_high: 0,
+            stopped: false,
+            input: None,
+        }
+    }
+    pub fn set_input_stream(&mut self, r: Receiver<TeiCommand>) {
+        self.input = Some(r);
+    }
+    pub fn take_input_stream(&mut self) -> Option<Receiver<TeiCommand>> {
+        self.input.take()
+    }
+    pub fn check_stop(&mut self) {
+        if let Some(ref r) = self.input {
+            if r.try_recv().is_ok() {
+                self.stopped = true;
+            }
         }
     }
     fn store_pv_move<E: Evaluate>(&mut self, position: &E, mv: GameMove) {
@@ -36,7 +55,6 @@ impl SearchInfo {
         let mut forward = Vec::new();
         let mut backward = Vec::new();
         while let Some(m) = self.pv_move(position) {
-            dbg!(m.to_ptn());
             if !position.legal_move(m) {
                 dbg!("Illegal Move in Pv");
                 break;
@@ -89,6 +107,10 @@ pub fn search<E: Evaluate>(board: &mut E, info: &mut SearchInfo) {
     for depth in 1..=info.max_depth {
         best_score = alpha_beta(-1_000_000, 1_000_000, depth, board, info, true);
         pv_moves = info.full_pv(board);
+        // Stop wasting time
+        if best_score > 9900 || best_score < -9900 {
+            return;
+        }
         print!(
             "Depth: {} Score: {} Nodes: {} PV: ",
             depth, best_score, info.nodes
@@ -112,6 +134,10 @@ where
     E: Evaluate,
 {
     info.nodes += 1;
+    const FREQ: usize = (1 << 13) - 1;
+    if (info.nodes & FREQ) == FREQ {
+        info.check_stop();
+    }
     match board.game_result() {
         Some(GameResult::WhiteWin) => {
             if let Color::White = board.side_to_move() {
@@ -168,13 +194,18 @@ where
         let rev_move = board.do_move(m);
         let score = -1 * alpha_beta(-beta, -alpha, depth - 1, board, info, true);
         board.reverse_move(rev_move);
+        if info.stopped {
+            return 0;
+        }
         if score > alpha {
             if score >= beta {
                 if count == 1 {
                     info.fail_high_first += 1;
                 }
                 info.fail_high += 1;
-                info.killer_moves[depth].add(m);
+                if m.is_place_move() {
+                    info.killer_moves[depth].add(m);
+                }
                 return beta;
             }
             alpha = score;
