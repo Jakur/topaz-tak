@@ -78,7 +78,7 @@ impl Evaluate for Board6 {
         score += white_connectivity as i32 * 20;
         score -= black_connectivity as i32 * 20;
         if let Color::White = self.side_to_move() {
-            score
+            score - 100
         } else {
             -1 * score
         }

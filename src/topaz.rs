@@ -43,7 +43,7 @@ fn play_game_cmd(mut computer_turn: bool) {
     while let None = board.game_result() {
         println!("{:?}", &board);
         if computer_turn {
-            let mut info = SearchInfo::new(6);
+            let mut info = SearchInfo::new(6, 5000);
             search(&mut board, &mut info);
             let pv_move = info.pv_move(&board).unwrap();
             println!("Computer Choose: {}", pv_move.to_ptn());
@@ -102,13 +102,14 @@ impl TimeLeft {
             Color::White => (self.wtime, self.winc),
             Color::Black => (self.btime, self.binc),
         };
-        let use_bank = time_bank / est_plies as u64 / 1000;
+        let use_bank = time_bank / (est_plies + 2) as u64 / 1000;
         use_bank + inc / 1000
     }
 }
 
 fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
     let mut board = Board6::new();
+    let mut info = SearchInfo::new(6, 1000000);
     loop {
         let message = receiver.recv()?;
         match message {
@@ -120,7 +121,9 @@ fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
                 let est_plies = low_flats * 2;
                 let time_left = TimeLeft::new(&s);
                 let use_time = time_left.use_time(est_plies, board.side_to_move());
-                let mut info = SearchInfo::new(6).max_time(use_time);
+                info = SearchInfo::new(6, 0)
+                    .take_table(&mut info)
+                    .max_time(use_time);
                 let res = search(&mut board, &mut info);
                 if let Some(outcome) = res {
                     println!("info {}", outcome);

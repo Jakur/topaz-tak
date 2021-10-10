@@ -4,7 +4,7 @@ use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::GameMove;
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
-use std::collections::HashMap;
+use lru::LruCache;
 use std::time::Instant;
 
 const NULL_REDUCTION: usize = 2;
@@ -12,7 +12,7 @@ const NULL_REDUCTION: usize = 2;
 pub struct SearchInfo {
     pub max_depth: usize,
     nodes: usize,
-    pv_table: HashMap<u64, GameMove>, // Todo replace with LRU cache
+    pv_table: LruCache<u64, HashEntry>, // Todo replace with LRU cache
     killer_moves: Vec<KillerMoves>,
     fail_high_first: usize,
     fail_high: usize,
@@ -20,22 +20,33 @@ pub struct SearchInfo {
     input: Option<Receiver<TeiCommand>>,
     max_time: u64,
     start_time: Instant,
+    start_ply: usize,
+    transposition_cutoffs: u64,
 }
 
 impl SearchInfo {
-    pub fn new(max_depth: usize) -> Self {
+    pub fn new(max_depth: usize, pv_size: usize) -> Self {
         Self {
             max_depth,
-            nodes: 0,
-            pv_table: HashMap::new(),
+            pv_table: LruCache::new(pv_size),
             killer_moves: vec![KillerMoves::new(); max_depth + 1],
             fail_high_first: 0,
             fail_high: 0,
+            transposition_cutoffs: 0,
+            nodes: 0,
             stopped: false,
             input: None,
             max_time: 120, // Some large but not enormous default
             start_time: Instant::now(),
+            start_ply: 0,
         }
+    }
+    pub fn take_table(mut self, other: &mut Self) -> Self {
+        std::mem::swap(&mut self.pv_table, &mut other.pv_table);
+        self
+    }
+    pub fn set_start_ply(&mut self, start_ply: usize) {
+        self.start_ply = start_ply;
     }
     pub fn input_stream(mut self, r: Receiver<TeiCommand>) -> Self {
         self.input = Some(r);
@@ -64,13 +75,16 @@ impl SearchInfo {
             }
         }
     }
-    fn store_pv_move<E: Evaluate>(&mut self, position: &E, mv: GameMove) {
-        self.pv_table.insert(position.hash(), mv);
+    fn store_move<E: Evaluate>(&mut self, position: &E, entry: HashEntry) {
+        self.pv_table.put(position.hash(), entry);
     }
-    pub fn pv_move<E: Evaluate>(&self, position: &E) -> Option<GameMove> {
-        self.pv_table.get(&position.hash()).copied()
+    fn lookup_move<E: Evaluate>(&mut self, position: &E) -> Option<&HashEntry> {
+        self.pv_table.get(&position.hash())
     }
-    fn full_pv<E: Evaluate>(&self, position: &mut E) -> Vec<GameMove> {
+    pub fn pv_move<E: Evaluate>(&mut self, position: &E) -> Option<GameMove> {
+        self.pv_table.get(&position.hash()).map(|e| e.game_move)
+    }
+    fn full_pv<E: Evaluate>(&mut self, position: &mut E) -> Vec<GameMove> {
         let mut forward = Vec::new();
         let mut backward = Vec::new();
         while let Some(m) = self.pv_move(position) {
@@ -86,6 +100,28 @@ impl SearchInfo {
             position.reverse_move(rev_m);
         }
         forward
+    }
+}
+
+enum ScoreCutoff {
+    Alpha(i32),
+    Beta(i32),
+    Exact(i32),
+}
+
+struct HashEntry {
+    game_move: GameMove,
+    score: ScoreCutoff,
+    depth: usize,
+}
+
+impl HashEntry {
+    fn new(game_move: GameMove, score: ScoreCutoff, depth: usize) -> Self {
+        Self {
+            game_move,
+            score,
+            depth,
+        }
     }
 }
 
@@ -122,17 +158,23 @@ pub struct SearchOutcome {
     time: u128,
     pv: Vec<GameMove>,
     nodes: usize,
+    depth: usize,
+    t_cuts: u64,
 }
 
 impl SearchOutcome {
-    pub fn new(score: i32, pv: Vec<GameMove>, search_info: &SearchInfo) -> Self {
+    pub fn new(score: i32, pv: Vec<GameMove>, depth: usize, search_info: &SearchInfo) -> Self {
         let nodes = search_info.nodes;
         let time = search_info.start_time.elapsed().as_millis();
+        // let t_cuts = search_info.transposition_cutoffs;
+        let t_cuts = search_info.transposition_cutoffs;
         Self {
             score,
             pv,
             nodes,
             time,
+            depth,
+            t_cuts,
         }
     }
     pub fn best_move(&self) -> Option<String> {
@@ -155,20 +197,21 @@ impl std::fmt::Display for SearchOutcome {
         };
         write!(
             f,
-            "score cp {} time {} pv {} nodes {} nps {}",
-            self.score, self.time, pv_string, self.nodes, nps
+            "score cp {} time {} pv {} nodes {} nps {} depth {} tcut {}",
+            self.score, self.time, pv_string, self.nodes, nps, self.depth, self.t_cuts
         )
     }
 }
 
 pub fn search<E: Evaluate>(board: &mut E, info: &mut SearchInfo) -> Option<SearchOutcome> {
     let mut outcome = None;
+    info.set_start_ply(board.ply());
     for depth in 1..=info.max_depth {
         let best_score = alpha_beta(-1_000_000, 1_000_000, depth, board, info, true);
         let pv_moves = info.full_pv(board);
         // Stop wasting time
         if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
-            return Some(SearchOutcome::new(best_score, pv_moves, info));
+            return Some(SearchOutcome::new(best_score, pv_moves, depth, info));
         }
         // If we had an incomplete depth search, use the previous depth's vals
         if info.stopped {
@@ -178,7 +221,12 @@ pub fn search<E: Evaluate>(board: &mut E, info: &mut SearchInfo) -> Option<Searc
             "Depth: {} Score: {} Nodes: {} PV: ",
             depth, best_score, info.nodes
         );
-        outcome = Some(SearchOutcome::new(best_score, pv_moves.clone(), info));
+        outcome = Some(SearchOutcome::new(
+            best_score,
+            pv_moves.clone(),
+            depth,
+            info,
+        ));
         for ptn in pv_moves.into_iter().map(|m| m.to_ptn()) {
             print!("{} ", ptn);
         }
@@ -206,15 +254,15 @@ where
     match board.game_result() {
         Some(GameResult::WhiteWin) => {
             if let Color::White = board.side_to_move() {
-                return WIN_SCORE - depth as i32;
+                return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
             }
-            return LOSE_SCORE + depth as i32;
+            return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32;
         }
         Some(GameResult::BlackWin) => {
             if let Color::White = board.side_to_move() {
-                return LOSE_SCORE - depth as i32;
+                return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32;
             }
-            return WIN_SCORE + depth as i32;
+            return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
         }
         Some(GameResult::Draw) => return 0,
         None => {}
@@ -222,6 +270,30 @@ where
     if depth == 0 {
         return board.evaluate();
     }
+
+    if let Some(data) = info.lookup_move(board) {
+        if data.depth >= depth {
+            match data.score {
+                ScoreCutoff::Alpha(score) => {
+                    if score <= alpha {
+                        info.transposition_cutoffs += 1;
+                        return alpha;
+                    }
+                }
+                ScoreCutoff::Beta(score) => {
+                    if score >= beta {
+                        info.transposition_cutoffs += 1;
+                        return beta;
+                    }
+                }
+                ScoreCutoff::Exact(score) => {
+                    info.transposition_cutoffs += 1;
+                    return score;
+                }
+            }
+        }
+    }
+
     if null_move && depth >= 1 + NULL_REDUCTION {
         // Check if our position is so good that passing still gives opp a bad pos
         board.null_move();
@@ -243,11 +315,13 @@ where
     let mut moves = Vec::new();
     board.generate_moves(&mut moves);
     let mut best_move = None;
+    let mut best_score = None;
     if let Some(pv_move) = info.pv_move(board) {
         if let Some(found) = moves.iter_mut().find(|m| **m == pv_move) {
             found.add_score(100);
         }
     }
+    let old_alpha = alpha;
     for count in 0..moves.len() {
         let (idx, m) = moves
             .iter()
@@ -271,15 +345,29 @@ where
                 if m.is_place_move() {
                     info.killer_moves[depth].add(m);
                 }
+                info.store_move(board, HashEntry::new(m, ScoreCutoff::Beta(beta), depth));
                 return beta;
             }
             alpha = score;
             best_move = Some(m);
+            best_score = Some(score);
         }
     }
 
     if let Some(best) = best_move {
-        info.store_pv_move(board, best);
+        if let Some(best_score) = best_score {
+            if alpha != old_alpha {
+                info.store_move(
+                    board,
+                    HashEntry::new(best, ScoreCutoff::Exact(best_score), depth),
+                );
+            } else {
+                info.store_move(
+                    board,
+                    HashEntry::new(best, ScoreCutoff::Alpha(alpha), depth),
+                )
+            }
+        }
     }
     alpha
 }
@@ -359,7 +447,7 @@ mod test {
     fn small_alpha_beta() {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let mut info = SearchInfo::new(4);
+        let mut info = SearchInfo::new(4, 50000);
         search(&mut board, &mut info);
     }
     // #[test]
