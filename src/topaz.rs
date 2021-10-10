@@ -126,7 +126,10 @@ fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
                     println!("info {}", outcome);
                     println!(
                         "bestmove {}",
-                        outcome.best_move().expect("Could not find best move!")
+                        outcome
+                            .best_move()
+                            .expect("Could not find best move!")
+                            .trim_end_matches('*')
                     );
                 } else {
                     println!("Something went wrong, search failed!");

@@ -148,7 +148,11 @@ impl std::fmt::Display for SearchOutcome {
             pv_string.push_str(" ");
         }
         pv_string.pop();
-        let nps = (self.nodes as u128) / self.time * 1000;
+        let nps = if self.time > 0 {
+            (self.nodes as u128) / self.time * 1000
+        } else {
+            0
+        };
         write!(
             f,
             "score cp {} time {} pv {} nodes {} nps {}",
