@@ -126,6 +126,9 @@ impl Board6 {
     pub fn tile_mut(&mut self, row: usize, col: usize) -> &mut Stack {
         &mut self.board[row * 6 + col]
     }
+    pub fn index(&self, i: usize) -> &Stack {
+        &self.board[i]
+    }
     pub fn active_stacks(&self, player: Color) -> BitIndexIterator<Bitboard6> {
         self.bits.iter_stacks(player)
     }
@@ -152,7 +155,7 @@ impl Board6 {
             GameResult::Draw
         }
     }
-    fn road(&self, player: Color) -> bool {
+    pub fn road(&self, player: Color) -> bool {
         self.bits.check_road(player)
     }
 }

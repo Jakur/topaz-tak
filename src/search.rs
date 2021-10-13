@@ -372,6 +372,7 @@ where
     alpha
 }
 
+/// A naive minimax function without pruning used for debugging and benchmarking
 pub fn root_minimax<E>(board: &mut E, depth: u16) -> (Option<GameMove>, i32)
 where
     E: Evaluate,
@@ -450,11 +451,11 @@ mod test {
         let mut info = SearchInfo::new(4, 50000);
         search(&mut board, &mut info);
     }
-    // #[test]
-    // fn unk_puzzle() {
-    //     let tps = "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27";
-    //     let mut board = Board6::try_from_tps(tps).unwrap();
-    //     let mut info = SearchInfo::new(6);
-    //     search(&mut board, &mut info);
-    // }
+    #[test]
+    fn unk_puzzle() {
+        let tps = "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27";
+        let mut board = Board6::try_from_tps(tps).unwrap();
+        let mut info = SearchInfo::new(6, 100000);
+        search(&mut board, &mut info);
+    }
 }

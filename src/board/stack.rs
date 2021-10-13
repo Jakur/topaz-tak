@@ -21,6 +21,13 @@ impl Stack {
         self.data.reserve(8);
         self.index = index;
     }
+    /// Indexes the stack from the top, assuming the highest piece in the stack has index 0
+    pub fn from_top(&self, index: usize) -> Option<Piece> {
+        if index >= self.data.len() {
+            return None;
+        }
+        Some(self.data[self.data.len() - 1 - index])
+    }
     pub fn push<T: Bitboard>(&mut self, item: Piece, bits: &mut BitboardStorage<T>) {
         self.hash_out_top(bits);
         bits.zobrist_middle(item, self.index, self.len());

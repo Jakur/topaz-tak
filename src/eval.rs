@@ -1,5 +1,6 @@
 use super::{Bitboard, Board6, Piece, Stack};
-use crate::{GameMove, RevGameMove};
+use crate::move_gen::generate_all_stack_moves;
+use crate::{Bitboard6, GameMove, RevGameMove};
 use board_game_traits::{Color, GameResult, Position};
 
 pub trait Evaluate: Position<Move = GameMove, ReverseMove = RevGameMove> {
@@ -9,6 +10,7 @@ pub trait Evaluate: Position<Move = GameMove, ReverseMove = RevGameMove> {
     fn ply(&self) -> usize;
     fn null_move(&mut self);
     fn rev_null_move(&mut self);
+    fn get_tak_threats(&mut self, legal_moves: &Vec<GameMove>) -> Vec<GameMove>;
 }
 
 fn win_color(res: GameResult) -> Option<Color> {
@@ -46,6 +48,38 @@ fn stack_top_multiplier(p: Piece) -> (i32, i32) {
         Piece::WhiteWall | Piece::BlackWall => (-30, 70),
         Piece::WhiteCap | Piece::BlackCap => (-20, 90),
     }
+}
+
+pub fn can_make_road(board: &mut Board6, storage: &mut Vec<GameMove>) -> bool {
+    let player = board.active_player();
+    let road_pieces = board.bits.road_pieces(player);
+    let mut attempt = road_pieces.adjacent() & board.bits.empty();
+    // Check flat placements
+    while attempt != Bitboard6::ZERO {
+        let check = attempt.pop_lowest() | road_pieces;
+        if check.check_road() {
+            return true;
+        }
+    }
+    // Check stack movements
+    generate_all_stack_moves(board, storage);
+    // Todo optimize this
+    for m in storage.iter().copied() {
+        let rev = board.do_move(m);
+        if board.road(player) {
+            storage.clear();
+            return true;
+        }
+        board.reverse_move(rev);
+    }
+    // for m in stack_moves {
+    //     let mut bits = Bitboard6::ZERO;
+    //     let mut offset = m.number() as usize;
+    //     let source = board.index(m.src_index());
+    //     source.from_top(offset)
+    // }
+    storage.clear();
+    false
 }
 
 impl Evaluate for Board6 {
@@ -102,6 +136,18 @@ impl Evaluate for Board6 {
     }
     fn rev_null_move(&mut self) {
         self.swap_active_player();
+    }
+    fn get_tak_threats(&mut self, legal_moves: &Vec<GameMove>) -> Vec<GameMove> {
+        let mut tak_threats = Vec::new();
+        let mut stack_moves = Vec::new();
+        for m in legal_moves.iter().copied() {
+            let rev = self.do_move(m);
+            if can_make_road(self, &mut stack_moves) {
+                tak_threats.push(m);
+            }
+            self.reverse_move(rev);
+        }
+        tak_threats
     }
 }
 

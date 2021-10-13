@@ -52,12 +52,18 @@ where
         let bits = !(self.white | self.black);
         BitIndexIterator { bits }
     }
-    pub fn check_road(&self, color: Color) -> bool {
+    pub fn empty(&self) -> T {
+        !(self.white | self.black)
+    }
+    pub fn road_pieces(&self, color: Color) -> T {
         let road_pieces = match color {
             Color::White => (self.flat | self.cap) & self.white,
             Color::Black => (self.flat | self.cap) & self.black,
         };
-        road_pieces.check_road()
+        road_pieces
+    }
+    pub fn check_road(&self, color: Color) -> bool {
+        self.road_pieces(color).check_road()
     }
     pub fn build_6(board: &[Stack; 36]) -> Self {
         let mut storage = Self::default();
@@ -110,6 +116,7 @@ pub trait Bitboard:
     + std::ops::SubAssign
     + std::ops::Not<Output = Self>
 {
+    const ZERO: Self;
     fn adjacent(self) -> Self;
     fn check_road(self) -> bool;
     fn pop_lowest(&mut self) -> Self;
@@ -216,6 +223,7 @@ impl Bitboard6 {
 }
 
 impl Bitboard for Bitboard6 {
+    const ZERO: Self = Bitboard6::new(0);
     fn adjacent(self) -> Self {
         let Bitboard6(data) = self;
         let up = data >> 8;
