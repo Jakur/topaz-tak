@@ -11,6 +11,7 @@ pub trait Evaluate: Position<Move = GameMove, ReverseMove = RevGameMove> {
     fn null_move(&mut self);
     fn rev_null_move(&mut self);
     fn get_tak_threats(&mut self, legal_moves: &Vec<GameMove>) -> Vec<GameMove>;
+    fn can_make_road(&mut self, storage: &mut Vec<GameMove>) -> Option<GameMove>;
 }
 
 fn win_color(res: GameResult) -> Option<Color> {
@@ -48,38 +49,6 @@ fn stack_top_multiplier(p: Piece) -> (i32, i32) {
         Piece::WhiteWall | Piece::BlackWall => (-30, 70),
         Piece::WhiteCap | Piece::BlackCap => (-20, 90),
     }
-}
-
-pub fn can_make_road(board: &mut Board6, storage: &mut Vec<GameMove>) -> bool {
-    let player = board.active_player();
-    let road_pieces = board.bits.road_pieces(player);
-    let mut attempt = road_pieces.adjacent() & board.bits.empty();
-    // Check flat placements
-    while attempt != Bitboard6::ZERO {
-        let check = attempt.pop_lowest() | road_pieces;
-        if check.check_road() {
-            return true;
-        }
-    }
-    // Check stack movements
-    generate_all_stack_moves(board, storage);
-    // Todo optimize this
-    for m in storage.iter().copied() {
-        let rev = board.do_move(m);
-        if board.road(player) {
-            storage.clear();
-            return true;
-        }
-        board.reverse_move(rev);
-    }
-    // for m in stack_moves {
-    //     let mut bits = Bitboard6::ZERO;
-    //     let mut offset = m.number() as usize;
-    //     let source = board.index(m.src_index());
-    //     source.from_top(offset)
-    // }
-    storage.clear();
-    false
 }
 
 impl Evaluate for Board6 {
@@ -142,12 +111,47 @@ impl Evaluate for Board6 {
         let mut stack_moves = Vec::new();
         for m in legal_moves.iter().copied() {
             let rev = self.do_move(m);
-            if can_make_road(self, &mut stack_moves) {
+            if self.can_make_road(&mut stack_moves).is_some() {
                 tak_threats.push(m);
             }
             self.reverse_move(rev);
+            stack_moves.clear();
         }
         tak_threats
+    }
+    fn can_make_road(&mut self, storage: &mut Vec<GameMove>) -> Option<GameMove> {
+        let player = self.active_player();
+        let road_pieces = self.bits.road_pieces(player);
+        let mut attempt = road_pieces.adjacent() & self.bits.empty();
+        // Check flat placements
+        while attempt != Bitboard6::ZERO {
+            let lowest = attempt.pop_lowest();
+            let check = lowest | road_pieces;
+            if check.check_road() {
+                return Some(GameMove::from_placement(
+                    Piece::flat(player),
+                    lowest.lowest_index(),
+                ));
+            }
+        }
+        // Check stack movements
+        generate_all_stack_moves(self, storage);
+        // Todo optimize this
+        for m in storage.iter().copied() {
+            let rev = self.do_move(m);
+            let road = self.road(player);
+            self.reverse_move(rev);
+            if road {
+                return Some(m);
+            }
+        }
+        // for m in stack_moves {
+        //     let mut bits = Bitboard6::ZERO;
+        //     let mut offset = m.number() as usize;
+        //     let source = board.index(m.src_index());
+        //     source.from_top(offset)
+        // }
+        None
     }
 }
 

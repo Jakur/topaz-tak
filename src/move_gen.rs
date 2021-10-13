@@ -114,7 +114,7 @@ pub struct GameMove(u64);
 
 impl GameMove {
     const PLACEMENT_BITS: u64 = 0xF00000000000;
-    fn from_placement(piece: Piece, index: usize) -> Self {
+    pub fn from_placement(piece: Piece, index: usize) -> Self {
         let bits = ((piece as u64) << 44) | index as u64;
         Self(bits)
     }

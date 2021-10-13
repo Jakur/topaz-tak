@@ -101,6 +101,9 @@ impl SearchInfo {
         }
         forward
     }
+    fn ply_depth<E: Evaluate>(&self, position: &E) -> usize {
+        position.ply() - self.start_ply
+    }
 }
 
 enum ScoreCutoff {
@@ -209,10 +212,6 @@ pub fn search<E: Evaluate>(board: &mut E, info: &mut SearchInfo) -> Option<Searc
     for depth in 1..=info.max_depth {
         let best_score = alpha_beta(-1_000_000, 1_000_000, depth, board, info, true);
         let pv_moves = info.full_pv(board);
-        // Stop wasting time
-        if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
-            return Some(SearchOutcome::new(best_score, pv_moves, depth, info));
-        }
         // If we had an incomplete depth search, use the previous depth's vals
         if info.stopped {
             break;
@@ -227,10 +226,14 @@ pub fn search<E: Evaluate>(board: &mut E, info: &mut SearchInfo) -> Option<Searc
             depth,
             info,
         ));
-        for ptn in pv_moves.into_iter().map(|m| m.to_ptn()) {
+        for ptn in pv_moves.iter().map(|m| m.to_ptn()) {
             print!("{} ", ptn);
         }
         println!("");
+        // Stop wasting time
+        if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
+            return Some(SearchOutcome::new(best_score, pv_moves, depth, info));
+        }
     }
     outcome
 }
@@ -267,8 +270,17 @@ where
         Some(GameResult::Draw) => return 0,
         None => {}
     }
+    // let mut road_move = None;
     if depth == 0 {
         return board.evaluate();
+        // let mut road_check = Vec::new();
+        // road_move = board.can_make_road(&mut road_check);
+        // if road_move.is_some() {
+        //     depth += 1;
+        // } else {
+        //     return board.evaluate();
+        // }
+        // road_check.clear();
     }
 
     if let Some(data) = info.lookup_move(board) {
@@ -295,6 +307,7 @@ where
     }
 
     if null_move && depth >= 1 + NULL_REDUCTION {
+        // && road_move.is_none() {
         // Check if our position is so good that passing still gives opp a bad pos
         board.null_move();
         let score = -1
@@ -319,6 +332,15 @@ where
     if let Some(pv_move) = info.pv_move(board) {
         if let Some(found) = moves.iter_mut().find(|m| **m == pv_move) {
             found.add_score(100);
+        }
+    }
+    // Do a slower, more thorough move ordering at the root
+    if info.ply_depth(board) == 0 {
+        let tak_threats = board.get_tak_threats(&moves);
+        for m in moves.iter_mut() {
+            if tak_threats.contains(m) {
+                m.add_score(50);
+            }
         }
     }
     let old_alpha = alpha;
@@ -455,7 +477,8 @@ mod test {
     fn unk_puzzle() {
         let tps = "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27";
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let mut info = SearchInfo::new(6, 100000);
+        dbg!(board.ply());
+        let mut info = SearchInfo::new(5, 100000);
         search(&mut board, &mut info);
     }
 }
