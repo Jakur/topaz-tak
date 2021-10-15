@@ -111,9 +111,11 @@ impl Evaluate for Board6 {
         let mut stack_moves = Vec::new();
         for m in legal_moves.iter().copied() {
             let rev = self.do_move(m);
+            self.null_move();
             if self.can_make_road(&mut stack_moves).is_some() {
                 tak_threats.push(m);
             }
+            self.rev_null_move();
             self.reverse_move(rev);
             stack_moves.clear();
         }
@@ -167,4 +169,22 @@ fn captive_friendly(stack: &Stack, top: Piece) -> (i32, i32) {
         }
     }
     (captive, friendly)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::generate_all_moves;
+    #[test]
+    fn check_tak_threats() {
+        let s = "x2,2,x2,1/x5,1/x,2,x,1,1,1/x,2,x2,1,x/x,2C,x4/x,2,x4 2 6";
+        let mut board = crate::Board6::try_from_tps(s).unwrap();
+        let mut moves = Vec::new();
+        generate_all_moves(&mut board, &mut moves);
+        let tak_threats = board.get_tak_threats(&moves);
+        for m in tak_threats.iter() {
+            dbg!(m.to_ptn());
+        }
+        assert_eq!(tak_threats.len(), 5);
+    }
 }
