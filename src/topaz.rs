@@ -4,6 +4,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::env;
 use std::io::{self, BufRead};
 use std::thread;
+use std::time::{Duration, Instant};
 use topaz_tak::eval::Evaluate;
 use topaz_tak::search::{search, SearchInfo};
 use topaz_tak::*;
@@ -16,6 +17,55 @@ pub fn main() {
             play_game_cmd(false);
         } else if color_str == "white" {
             play_game_cmd(true);
+        } else if color_str == "tinue" {
+            let time = Instant::now();
+            // let s = "2,x4,11/x5,221/x,2,2,2,x,221/2,1,12C,1,21C,2/2,x,2,x2,2/x,2,2,2,x,121 1 25";
+            // let s = "1,1,1,1,1112C,1/x,121C,x,1,2,1/1,2,x,12,1S,x/x,2,2,1221S,x,2/x3,121,x2/2,2,2,1,2,x 1 25";
+            // let s = "1221,1,1,x2,1/x3,111,x,2221C/2,2,12,111112C,11,1/2,x,1,1,112S,x/2,x,1,2,x2/2,x,2,1,x2 1 31";
+            // Alion's 5th puzzle contains a cycle
+            let alion5 =
+                "2,x4,11/x5,221/x,2,2,2,x,221/2,1,12C,1,21C,2/2,x,2,x2,2/x,2,2,2,x,121 1 25";
+            let alion4 =
+                "x,1,x4/2,2,1,1,1,1/2221,x,1,21C,x2/2,2,2C,1,2,x/2,2,1,1,1,2/2,x2,2,x,1 2 18";
+            // let morten = "x6/x,1,x,1,x2/21,x5/2,x2,1C,2,x/2,2212,21,21,2,x/x,221112C,x3,1 2 18"; // Type 2
+            let alion3 = "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27";
+            let alion2 = "2,212221C,2,2,2C,1/1,2,1,1,2,1/12,x,1S,2S,2,1/2,2,2,x2,1/1,2212121S,2,12,1,1S/x,2,2,2,x,1 1 30";
+            let alion1 = "2,1221122,1,1,1,2S/1,1,1,x,1C,1111212/x2,2,212,2C,11/2,2,x2,1,1/x3,1,1,x/x2,2,21,x,112S 2 32";
+            let mut board = Board6::try_from_tps(alion2).unwrap();
+            let mut search = crate::search::proof::TinueSearch::new(board);
+
+            // let subpos =
+            //     "2,x4,11/x5,221/x,2,2,2,x,2/2,1,12C,1,x,22121C/2,x,2,x2,221/x,2,2,2,x,1 2 36";
+            let tinue = search.is_tinue();
+            // let board2 = Board6::try_from_tps(alion5).unwrap();
+            // assert_eq!(board2.hash(), search.board.hash());
+            // let board6 = Board6::try_from_tps(subpos).unwrap();
+            // assert!(search.replies.get(&board6.hash()).is_some());
+            // let side_line = vec!["2e3>".to_string(), "f2-".to_string()];
+            // let side = search.side_variation(side_line);
+            // println!("Side Variation: ");
+            // for m in side.into_iter().map(|m| m.to_ptn()) {
+            //     println!("{}", m);
+            // }
+            assert!(tinue);
+            let pv = search.principal_variation();
+            for m in pv.into_iter().map(|m| m.to_ptn()) {
+                println!("{}", m);
+            }
+
+            // let side_line = vec!["2f5-".to_string(), "f3+".to_string()];
+            // let side = search.side_variation(side_line);
+            // println!("Side Variation: ");
+            // for m in side.into_iter().map(|m| m.to_ptn()) {
+            //     println!("{}", m);
+            // }
+            // let mut info = SearchInfo::new(10, 300000);
+            // search(&mut board, &mut info);
+            // let pv_move = info.pv_move(&board).unwrap();
+            // println!("{}", pv_move.to_ptn());
+            let seconds = time.elapsed().as_secs();
+            println!("Done in {} seconds", seconds);
+            return;
         } else {
             println!("Unknown argument: {}", color_str);
         }

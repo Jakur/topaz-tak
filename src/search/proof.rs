@@ -5,7 +5,7 @@ use crate::{Board6, Position, RevGameMove};
 use std::cmp::{max, min};
 use std::collections::HashMap;
 
-const INFINITY: u32 = 1_000_000;
+const INFINITY: u32 = 100_000_000;
 
 #[derive(Clone)]
 pub struct Child {
@@ -16,7 +16,7 @@ pub struct Child {
 }
 
 impl Child {
-    pub fn new(bounds: Bounds, game_move: GameMove, zobrist: u64) -> Self {
+    fn new(bounds: Bounds, game_move: GameMove, zobrist: u64) -> Self {
         Self {
             bounds,
             game_move,
@@ -24,19 +24,28 @@ impl Child {
             best_child: usize::MAX,
         }
     }
-    pub fn update_bounds(&mut self, bounds: Bounds, table: &mut HashMap<u64, Bounds>) {
+    fn update_best_child(
+        &mut self,
+        best_child: usize,
+        game_move: GameMove,
+        table: &mut HashMap<u64, GameMove>,
+    ) {
+        self.best_child = best_child;
+        table.insert(self.zobrist, game_move);
+    }
+    fn update_bounds(&mut self, bounds: Bounds, table: &mut HashMap<u64, Bounds>) {
         self.bounds = bounds;
         table.insert(self.zobrist, bounds);
     }
-    pub fn phi(&self) -> u32 {
+    fn phi(&self) -> u32 {
         self.bounds.phi
     }
-    pub fn delta(&self) -> u32 {
+    fn delta(&self) -> u32 {
         self.bounds.delta
     }
 }
 
-pub fn compute_bounds(children: &[Child]) -> Bounds {
+fn compute_bounds(children: &[Child]) -> Bounds {
     let mut out = Bounds {
         phi: INFINITY,
         delta: 0,
@@ -50,7 +59,7 @@ pub fn compute_bounds(children: &[Child]) -> Bounds {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Bounds {
+struct Bounds {
     phi: u32,
     delta: u32,
 }
@@ -91,48 +100,156 @@ impl Bounds {
 
 impl Default for Bounds {
     fn default() -> Self {
-        Self::unity()
+        Self {
+            phi: 100,
+            delta: 100,
+        }
     }
 }
 
-struct TinueSearch {
-    board: Board6,
+enum ProofNode {
+    Attack(GameMove, Box<ProofNode>),
+    Defense(Vec<GameMove>, Vec<ProofNode>),
+}
+
+#[derive(Clone)]
+struct TopMoves {
+    moves: [GameMove; Self::MAX_SIZE],
+    size: usize,
+}
+
+impl TopMoves {
+    const MAX_SIZE: usize = 3;
+    fn new() -> Self {
+        Self {
+            moves: [GameMove::null_move(); 3],
+            size: 0,
+        }
+    }
+    fn get_best(&self) -> &[GameMove] {
+        &self.moves[0..self.size]
+    }
+    fn add_move(&mut self, game_move: GameMove) {
+        if self.size == Self::MAX_SIZE {
+            // Just give up for now lol
+        } else {
+            if !self.moves.contains(&game_move) {
+                self.moves[self.size] = game_move;
+                self.size += 1;
+            }
+        }
+    }
+}
+
+pub struct TinueSearch {
+    pub board: Board6,
     bounds_table: HashMap<u64, Bounds>,
     rev_moves: Vec<RevGameMove>,
+    zobrist_hist: Vec<u64>,
     attacker: Color,
     nodes: usize,
+    top_moves: Vec<TopMoves>,
+    tinue_attempts: HashMap<u64, AttackerOutcome>,
+    pub replies: HashMap<u64, GameMove>,
+    tinue_cache_hits: usize,
+    tinue_cache_misses: usize,
 }
 
 impl TinueSearch {
-    fn is_tinue(board: Board6) -> bool {
+    pub fn new(board: Board6) -> Self {
         let attacker = board.side_to_move();
-        let mut search = Self {
+        Self {
             board,
             bounds_table: HashMap::new(),
             rev_moves: Vec::new(),
             attacker,
             nodes: 0,
-        };
-        let mut root = Child::new(Bounds::root(), GameMove::null_move(), search.board.hash());
-        search.MID(&mut root, 0);
-        dbg!(search.nodes);
+            top_moves: vec![TopMoves::new(); 30],
+            replies: HashMap::new(),
+            tinue_attempts: HashMap::new(),
+            tinue_cache_hits: 0,
+            tinue_cache_misses: 0,
+            zobrist_hist: Vec::new(),
+        }
+    }
+    pub fn is_tinue(&mut self) -> bool {
+        let mut root = Child::new(Bounds::root(), GameMove::null_move(), self.board.hash());
+        self.MID(&mut root, 0);
+        dbg!(self.nodes);
+        dbg!(self.tinue_cache_hits);
+        dbg!(self.tinue_cache_misses);
         if root.delta() == INFINITY {
             true
         } else {
             false
         }
     }
+    pub fn principal_variation(&mut self) -> Vec<GameMove> {
+        let mut hist = Vec::new();
+        let mut pv = Vec::new();
+        while let Some(&game_move) = self.replies.get(&self.board.hash()) {
+            pv.push(game_move);
+            let rev = self.board.do_move(game_move);
+            hist.push(rev);
+        }
+        for rev_move in hist.into_iter().rev() {
+            self.board.reverse_move(rev_move);
+        }
+        pv
+    }
+    pub fn side_variation(&mut self, start_with: Vec<String>) -> Vec<GameMove> {
+        let mut hist = Vec::new();
+        let mut pv = Vec::new();
+        for s in start_with.into_iter() {
+            let game_move = GameMove::try_from_ptn(&s, &self.board).unwrap();
+            pv.push(game_move);
+            let rev = self.board.do_move(game_move);
+            hist.push(rev);
+        }
+        while let Some(&game_move) = self.replies.get(&self.board.hash()) {
+            pv.push(game_move);
+            let rev = self.board.do_move(game_move);
+            hist.push(rev);
+        }
+        for rev_move in hist.into_iter().rev() {
+            self.board.reverse_move(rev_move);
+        }
+        pv
+    }
+    fn proof_tree(&mut self) -> ProofNode {
+        todo!();
+    }
     fn MID(&mut self, child: &mut Child, depth: usize) {
         self.nodes += 1;
         if child.game_move != GameMove::null_move() {
             let rev = self.board.do_move(child.game_move);
             self.rev_moves.push(rev);
+            self.zobrist_hist.push(self.board.hash());
         }
         assert_eq!(child.zobrist, self.board.hash());
         let side_to_move = self.board.side_to_move();
         let attacker = side_to_move == self.attacker;
+        if depth > 10 && attacker {
+            // Check Cycle
+            if self.zobrist_hist.contains(&self.board.hash()) {
+                let eval = Bounds::losing();
+                child.update_bounds(eval, &mut self.bounds_table);
+                self.undo_move();
+                return;
+            }
+        }
         let moves = if attacker {
-            match tinue_evaluate(&mut self.board) {
+            let tinue_eval = if let Some(cached_val) = self.tinue_attempts.get(&self.board.hash()) {
+                self.tinue_cache_hits += 1;
+                cached_val.clone()
+            } else {
+                self.tinue_cache_misses += 1;
+                let outcome = self.tinue_evaluate(depth);
+                self.tinue_attempts
+                    .insert(self.board.hash(), outcome.clone());
+                outcome
+            };
+            match tinue_eval {
                 AttackerOutcome::HasRoad(_m) => {
                     let eval = Bounds::winning();
                     child.update_bounds(eval, &mut self.bounds_table);
@@ -149,11 +266,22 @@ impl TinueSearch {
             }
         } else {
             let mut moves = Vec::new();
+            if let Some(m) = self
+                .board
+                .can_make_road(&mut moves, Some(self.top_moves[depth].get_best()))
+            {
+                self.top_moves[depth].add_move(m);
+                let eval = Bounds::winning();
+                child.update_bounds(eval, &mut self.bounds_table);
+                self.undo_move();
+                return;
+            }
             generate_all_moves(&mut self.board, &mut moves);
-            moves
+            let moves = moves
                 .into_iter()
                 .filter(|m| !m.is_place_move() || m.place_piece().is_blocker())
-                .collect()
+                .collect();
+            moves
         };
         assert!(!moves.is_empty());
 
@@ -171,6 +299,7 @@ impl TinueSearch {
                 return;
             }
             let (best_idx, second_best_bounds) = Self::select_child(&child_pns);
+            child.update_best_child(best_idx, child_pns[best_idx].game_move, &mut self.replies);
             let best_child = &mut child_pns[best_idx];
             // println!("Depth: {} Move: {}", depth, best_child.game_move.to_ptn());
             let updated_bounds = Bounds {
@@ -210,29 +339,35 @@ impl TinueSearch {
     fn undo_move(&mut self) -> Option<()> {
         let m = self.rev_moves.pop()?;
         self.board.reverse_move(m);
+        self.zobrist_hist.pop();
         Some(())
+    }
+    fn tinue_evaluate(&mut self, depth: usize) -> AttackerOutcome {
+        let pos = &mut self.board;
+        let mut moves = Vec::new();
+        if let Some(m) = pos.can_make_road(&mut moves, Some(self.top_moves[depth].get_best())) {
+            self.top_moves[depth].add_move(m);
+            return AttackerOutcome::HasRoad(m);
+        }
+        // Moves contains all stack moves due to the can_make_road call
+        crate::move_gen::generate_aggressive_place_moves(pos, &mut moves);
+        let tak_threats = pos.get_tak_threats(&moves, Some(self.top_moves[depth + 2].get_best()));
+        if tak_threats.is_empty() {
+            AttackerOutcome::NoTakThreats
+        } else {
+            for t in tak_threats.iter() {
+                self.top_moves[depth + 2].add_move(*t);
+            }
+            AttackerOutcome::TakThreats(tak_threats)
+        }
     }
 }
 
+#[derive(Clone)]
 enum AttackerOutcome {
     HasRoad(GameMove),
     TakThreats(Vec<GameMove>),
     NoTakThreats,
-}
-
-fn tinue_evaluate(pos: &mut Board6) -> AttackerOutcome {
-    let mut moves = Vec::new();
-    if let Some(m) = pos.can_make_road(&mut moves) {
-        return AttackerOutcome::HasRoad(m);
-    }
-    // Moves contains all stack moves due to the can_make_road call
-    crate::move_gen::generate_aggressive_place_moves(pos, &mut moves);
-    let tak_threats = pos.get_tak_threats(&moves);
-    if tak_threats.is_empty() {
-        AttackerOutcome::NoTakThreats
-    } else {
-        AttackerOutcome::TakThreats(tak_threats)
-    }
 }
 
 #[cfg(test)]
@@ -243,7 +378,8 @@ mod test {
         let s = "x2,2,x2,1/x5,1/x,2,x,1,1,1/x,2,x2,1,x/x,2C,x4/x,2,x4 2 6";
         let board = Board6::try_from_tps(s).unwrap();
         dbg!(&board);
-        assert!(TinueSearch::is_tinue(board));
+        let mut search = TinueSearch::new(board);
+        assert!(search.is_tinue());
     }
     #[test]
     fn simple2() {
@@ -251,8 +387,9 @@ mod test {
         let s2 =
             "1,1,1,1,1112C,1/x,x,x,1,2,1/1,2,x,12,1S,x/x,2,2,1221S,x,2/x3,121,x2/2,2,2,1,2,x 1 25";
         let board = Board6::try_from_tps(s).unwrap();
-        assert!(TinueSearch::is_tinue(board));
-
-        assert!(!TinueSearch::is_tinue(Board6::try_from_tps(s2).unwrap()));
+        let mut search = TinueSearch::new(board);
+        assert!(search.is_tinue());
+        let mut search2 = TinueSearch::new(Board6::try_from_tps(s2).unwrap());
+        assert!(!search2.is_tinue());
     }
 }
