@@ -115,6 +115,7 @@ pub trait Bitboard:
     + std::ops::Sub<Output = Self>
     + std::ops::SubAssign
     + std::ops::Not<Output = Self>
+    + std::ops::BitXor<Output = Self>
 {
     const ZERO: Self;
     fn adjacent(self) -> Self;
@@ -183,6 +184,13 @@ impl std::ops::Sub for Bitboard6 {
 impl std::ops::SubAssign for Bitboard6 {
     fn sub_assign(&mut self, rhs: Self) {
         self.0 -= rhs.0;
+    }
+}
+
+impl std::ops::BitXor for Bitboard6 {
+    type Output = Self;
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Self(self.0 ^ rhs.0)
     }
 }
 

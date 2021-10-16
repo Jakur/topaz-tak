@@ -88,6 +88,19 @@ impl Piece {
             Piece::BlackWall => Piece::WhiteWall,
         }
     }
+    pub fn road_piece(self, color: Color) -> bool {
+        if let Color::White = color {
+            match self {
+                Piece::WhiteFlat | Piece::WhiteCap => true,
+                _ => false,
+            }
+        } else {
+            match self {
+                Piece::BlackFlat | Piece::BlackCap => true,
+                _ => false,
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for Piece {

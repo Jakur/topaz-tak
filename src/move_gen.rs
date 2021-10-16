@@ -153,7 +153,7 @@ impl GameMove {
     pub fn is_place_move(self) -> bool {
         (self.0 & Self::PLACEMENT_BITS) > 0
     }
-    fn slide_bits(self) -> u64 {
+    pub fn slide_bits(self) -> u64 {
         let bits = self.0 & 0xFFFFFFF000;
         bits >> 12
     }
@@ -166,7 +166,7 @@ impl GameMove {
     pub fn src_index(self) -> usize {
         self.0 as usize & 0x3F
     }
-    fn direction(self) -> u64 {
+    pub fn direction(self) -> u64 {
         (self.0 & 0xC0) >> 6
     }
     fn set_index(self, index: u64) -> Self {

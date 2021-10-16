@@ -157,23 +157,29 @@ impl Evaluate for Board6 {
         if let Some(suggestions) = hint {
             for m in suggestions.iter().copied() {
                 if storage.contains(&m) {
-                    let rev = self.do_move(m);
-                    let road = self.road(player);
-                    self.reverse_move(rev);
-                    if road {
+                    if self.road_stack_throw(road_pieces, m) {
                         return Some(m);
                     }
+                    // let rev = self.do_move(m);
+                    // let road = self.road(player);
+                    // self.reverse_move(rev);
+                    // if road {
+                    //     return Some(m);
+                    // }
                 }
             }
         }
         // Todo optimize this
         for m in storage.iter().copied() {
-            let rev = self.do_move(m);
-            let road = self.road(player);
-            self.reverse_move(rev);
-            if road {
+            if self.road_stack_throw(road_pieces, m) {
                 return Some(m);
             }
+            // let rev = self.do_move(m);
+            // let road = self.road(player);
+            // self.reverse_move(rev);
+            // if road {
+            //     return Some(m);
+            // }
         }
         // for m in stack_moves {
         //     let mut bits = Bitboard6::ZERO;

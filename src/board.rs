@@ -158,6 +158,46 @@ impl Board6 {
     pub fn road(&self, player: Color) -> bool {
         self.bits.check_road(player)
     }
+    pub fn road_stack_throw(&self, road_pieces: Bitboard6, stack_move: GameMove) -> bool {
+        let color = self.active_player();
+        let src_sq = stack_move.src_index();
+        let dir = stack_move.direction();
+        let stack = &self.board[src_sq];
+        let mut pickup = stack_move.number();
+        let mut slide_bits = stack_move.slide_bits();
+        let mut update = Bitboard6::ZERO;
+        let mut index = src_sq;
+        let mut mask = Bitboard6::index_to_bit(index);
+        let val = stack
+            .from_top(pickup as usize)
+            .map(|p| p.road_piece(color))
+            .unwrap_or(false); // Could have taken all pieces
+        if val {
+            update |= Bitboard6::index_to_bit(index);
+        }
+        while slide_bits != 0 {
+            match dir {
+                0 => index -= self.board_size(),
+                1 => index += 1,
+                2 => index += self.board_size(),
+                3 => index -= 1,
+                _ => unimplemented!(),
+            }
+            pickup -= slide_bits & 0xF;
+            slide_bits = slide_bits >> 4;
+            let bb = Bitboard6::index_to_bit(index);
+            mask |= bb;
+            let val = stack
+                .from_top(pickup as usize)
+                .map(|p| p.road_piece(color))
+                .unwrap();
+            if val {
+                update |= bb;
+            }
+        }
+        let updated = road_pieces ^ (road_pieces ^ update) & mask;
+        updated.check_road()
+    }
 }
 
 fn parse_tps_stack(tile: &str) -> Result<Vec<Piece>> {

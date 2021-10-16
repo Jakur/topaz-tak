@@ -31,7 +31,9 @@ pub fn main() {
             let alion3 = "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27";
             let alion2 = "2,212221C,2,2,2C,1/1,2,1,1,2,1/12,x,1S,2S,2,1/2,2,2,x2,1/1,2212121S,2,12,1,1S/x,2,2,2,x,1 1 30";
             let alion1 = "2,1221122,1,1,1,2S/1,1,1,x,1C,1111212/x2,2,212,2C,11/2,2,x2,1,1/x3,1,1,x/x2,2,21,x,112S 2 32";
-            let mut board = Board6::try_from_tps(alion2).unwrap();
+            // Alion Benchmarks: 2s, 7m, 18m, 2s, X
+            // Alion Benchmarks: 0s, 5s, 16s, 0s, X
+            let board = Board6::try_from_tps(alion2).unwrap();
             let mut search = crate::search::proof::TinueSearch::new(board);
 
             // let subpos =
