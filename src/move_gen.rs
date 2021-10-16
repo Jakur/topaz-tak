@@ -42,6 +42,24 @@ pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     }
 }
 
+/// Generates all cap or flat placement moves. Used for Tinue checking
+pub fn generate_aggressive_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
+    let side_to_move = board.side_to_move();
+    let start_locs = board.empty_tiles();
+    let (flat, cap) = match side_to_move {
+        Color::White => (Piece::WhiteFlat, Piece::WhiteCap),
+        Color::Black => (Piece::BlackFlat, Piece::BlackCap),
+    };
+    if board.caps_reserve(side_to_move) > 0 {
+        for index in start_locs {
+            moves.push(GameMove::from_placement(cap, index));
+        }
+    }
+    for index in board.empty_tiles() {
+        moves.push(GameMove::from_placement(flat, index));
+    }
+}
+
 /// Generates all legal sliding movements for the active player's stacks.
 pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     let start_locs = board.active_stacks(board.side_to_move());

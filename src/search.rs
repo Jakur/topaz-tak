@@ -7,6 +7,8 @@ use crossbeam_channel::Receiver;
 use lru::LruCache;
 use std::time::Instant;
 
+mod proof;
+
 const NULL_REDUCTION: usize = 2;
 
 pub struct SearchInfo {
