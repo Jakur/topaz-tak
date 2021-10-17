@@ -4,7 +4,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::env;
 use std::io::{self, BufRead};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use topaz_tak::eval::Evaluate;
 use topaz_tak::search::{search, SearchInfo};
 use topaz_tak::*;

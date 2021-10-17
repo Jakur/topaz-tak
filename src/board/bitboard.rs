@@ -228,6 +228,28 @@ impl Bitboard6 {
         ];
         arr
     }
+    pub fn critical_squares(self) -> Self {
+        const TOP: Bitboard6 = Bitboard6::new(0x7e00);
+        const BOTTOM: Bitboard6 = Bitboard6::new(0x7e000000000000);
+        const LEFT: Bitboard6 = Bitboard6::new(0x2020202020200);
+        const RIGHT: Bitboard6 = Bitboard6::new(0x40404040404000);
+        let left = self.flood(LEFT);
+        let right = self.flood(RIGHT);
+        let mut out = left.adjacent() & right.adjacent();
+        let top = self.flood(TOP);
+        let bottom = self.flood(BOTTOM);
+        out |= top.adjacent() & bottom.adjacent();
+        out
+    }
+    fn flood(self, edge: Self) -> Self {
+        let mut prev = Bitboard6::new(0);
+        let mut edge_connected = self & edge;
+        while edge_connected != prev {
+            prev = edge_connected;
+            edge_connected |= edge_connected.adjacent() & self
+        }
+        edge_connected
+    }
 }
 
 impl Bitboard for Bitboard6 {
@@ -353,5 +375,32 @@ mod test {
         let stacks3: Vec<_> = bitboards.iter_stacks(!board.side_to_move()).collect();
         let stacks4 = board.scan_active_stacks(!board.side_to_move());
         assert_eq!(stacks3, stacks4);
+    }
+    #[test]
+    pub fn test_critical_squares() {
+        const TOP: Bitboard6 = Bitboard6::new(0x7e00);
+        const BOTTOM: Bitboard6 = Bitboard6::new(0x7e000000000000);
+        const LEFT: Bitboard6 = Bitboard6::new(0x2020202020200);
+        const RIGHT: Bitboard6 = Bitboard6::new(0x40404040404000);
+        let bb = Bitboard6::new(18144415765381120);
+        let top_flood = bb.flood(TOP);
+        let bottom_flood = bb.flood(BOTTOM);
+        let left_flood = bb.flood(LEFT);
+        let right_flood = bb.flood(RIGHT);
+        assert_eq!(top_flood.pop_count(), 2);
+        assert_eq!(bottom_flood.pop_count(), 5);
+        assert_eq!(left_flood.pop_count(), 3);
+        assert_eq!(right_flood.pop_count(), 7);
+        assert_eq!(
+            (top_flood.adjacent() & bottom_flood.adjacent()).pop_count(),
+            1
+        );
+        assert_eq!(
+            (left_flood.adjacent() & right_flood.adjacent()).pop_count(),
+            1
+        );
+        let critical = bb.critical_squares();
+        dbg!(critical.lowest_index());
+        assert_eq!(critical.pop_count(), 2);
     }
 }

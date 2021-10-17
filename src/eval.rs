@@ -140,17 +140,10 @@ impl Evaluate for Board6 {
     ) -> Option<GameMove> {
         let player = self.active_player();
         let road_pieces = self.bits.road_pieces(player);
-        let mut attempt = road_pieces.adjacent() & self.bits.empty();
-        // Check flat placements
-        while attempt != Bitboard6::ZERO {
-            let lowest = attempt.pop_lowest();
-            let check = lowest | road_pieces;
-            if check.check_road() {
-                return Some(GameMove::from_placement(
-                    Piece::flat(player),
-                    lowest.lowest_index(),
-                ));
-            }
+        // Check placement
+        let place_road = find_placement_road(player, road_pieces, self.bits.empty());
+        if place_road.is_some() {
+            return place_road;
         }
         // Check stack movements
         generate_all_stack_moves(self, storage);
@@ -160,33 +153,28 @@ impl Evaluate for Board6 {
                     if self.road_stack_throw(road_pieces, m) {
                         return Some(m);
                     }
-                    // let rev = self.do_move(m);
-                    // let road = self.road(player);
-                    // self.reverse_move(rev);
-                    // if road {
-                    //     return Some(m);
-                    // }
                 }
             }
         }
-        // Todo optimize this
         for m in storage.iter().copied() {
             if self.road_stack_throw(road_pieces, m) {
                 return Some(m);
             }
-            // let rev = self.do_move(m);
-            // let road = self.road(player);
-            // self.reverse_move(rev);
-            // if road {
-            //     return Some(m);
-            // }
         }
-        // for m in stack_moves {
-        //     let mut bits = Bitboard6::ZERO;
-        //     let mut offset = m.number() as usize;
-        //     let source = board.index(m.src_index());
-        //     source.from_top(offset)
-        // }
+        None
+    }
+}
+
+pub fn find_placement_road(
+    player: Color,
+    road_pieces: Bitboard6,
+    empty: Bitboard6,
+) -> Option<GameMove> {
+    let valid = road_pieces.critical_squares() & empty;
+    if valid != Bitboard6::ZERO {
+        let sq_index = valid.lowest_index();
+        Some(GameMove::from_placement(Piece::flat(player), sq_index))
+    } else {
         None
     }
 }
