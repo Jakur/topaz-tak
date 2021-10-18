@@ -4,6 +4,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::env;
 use std::io::{self, BufRead};
 use std::thread;
+use std::time::Instant;
 use topaz_tak::eval::Evaluate;
 use topaz_tak::search::{search, SearchInfo};
 use topaz_tak::*;
@@ -11,13 +12,58 @@ use topaz_tak::*;
 pub fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if let Some(color_str) = args.get(1) {
-        if color_str == "black" {
+    if let Some(arg1) = args.get(1) {
+        if arg1 == "black" {
             play_game_cmd(false);
-        } else if color_str == "white" {
+        } else if arg1 == "white" {
             play_game_cmd(true);
+        } else if arg1 == "tinue" {
+            let mut rest = String::new();
+            for s in args[2..].iter() {
+                rest.push_str(s);
+                rest.push_str(" ");
+            }
+            rest.pop();
+            let tps = match rest.as_str() {
+                "alion1" => "2,1221122,1,1,1,2S/1,1,1,x,1C,1111212/x2,2,212,2C,11/2,2,x2,1,1/x3,1,1,x/x2,2,21,x,112S 2 32",
+                "alion2" => "2,212221C,2,2,2C,1/1,2,1,1,2,1/12,x,1S,2S,2,1/2,2,2,x2,1/1,2212121S,2,12,1,1S/x,2,2,2,x,1 1 30",
+                "alion3" => "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27",
+                "alion4" => "x,1,x4/2,2,1,1,1,1/2221,x,1,21C,x2/2,2,2C,1,2,x/2,2,1,1,1,2/2,x2,2,x,1 2 18",
+                "alion5" => "2,x4,11/x5,221/x,2,2,2,x,221/2,1,12C,1,21C,2/2,x,2,x2,2/x,2,2,2,x,121 1 25",
+                _ => rest.as_str(),
+            };
+            let time = Instant::now();
+            let board = match Board6::try_from_tps(tps) {
+                Ok(b) => b,
+                Err(_) => {
+                    println!("Unable to create game with tps: \n{}", tps);
+                    return;
+                }
+            };
+            let mut search = crate::search::proof::TinueSearch::new(board);
+            let tinue = search.is_tinue();
+            if tinue {
+                println!("Tinue Found!")
+            } else {
+                println!("No Tinue Found.");
+            }
+            let pv = search.principal_variation();
+            for m in pv.into_iter().map(|m| m.to_ptn()) {
+                println!("{}", m);
+            }
+
+            // Todo Allow checking refuted sidelines from command line
+            // let side_line = side_line.into_iter().map(|s| s.to_string()).collect();
+            // let side = search.side_variation(side_line);
+            // println!("Side Variation: ");
+            // for m in side.into_iter().map(|m| m.to_ptn()) {
+            //     println!("{}", m);
+            // }
+            let seconds = time.elapsed().as_secs();
+            println!("Done in {} seconds", seconds);
+            return;
         } else {
-            println!("Unknown argument: {}", color_str);
+            println!("Unknown argument: {}", arg1);
         }
     }
     let mut buffer = String::new();
@@ -28,7 +74,7 @@ pub fn main() {
         let (s, r) = unbounded();
         tei_loop(s);
         identify();
-        play_game_tei(r);
+        let _ = play_game_tei(r);
     } else if buffer == "play white" {
         play_game_cmd(true)
     } else if buffer == "play black" {

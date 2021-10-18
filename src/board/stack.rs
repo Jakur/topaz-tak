@@ -1,5 +1,4 @@
 use super::bitboard::{Bitboard, BitboardStorage};
-use super::zobrist::TABLE;
 use super::Piece;
 
 #[derive(PartialEq, Clone, Debug)]

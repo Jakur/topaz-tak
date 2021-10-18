@@ -1,4 +1,4 @@
-use super::{Board6, Piece, Stack};
+use super::{Piece, Stack};
 use crate::board::zobrist::TABLE;
 use board_game_traits::Color;
 
@@ -115,6 +115,7 @@ pub trait Bitboard:
     + std::ops::Sub<Output = Self>
     + std::ops::SubAssign
     + std::ops::Not<Output = Self>
+    + std::ops::BitXor<Output = Self>
 {
     const ZERO: Self;
     fn adjacent(self) -> Self;
@@ -186,6 +187,13 @@ impl std::ops::SubAssign for Bitboard6 {
     }
 }
 
+impl std::ops::BitXor for Bitboard6 {
+    type Output = Self;
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Self(self.0 ^ rhs.0)
+    }
+}
+
 impl Bitboard6 {
     const BIT_TO_INDEX: [usize; 64] = Self::build_bit_to_index_table();
     const INDEX_TO_BIT: [u64; 36] = Self::build_index_to_bit_table();
@@ -219,6 +227,28 @@ impl Bitboard6 {
             49,	50,	51,	52,	53,	54,
         ];
         arr
+    }
+    pub fn critical_squares(self) -> Self {
+        const TOP: Bitboard6 = Bitboard6::new(0x7e00);
+        const BOTTOM: Bitboard6 = Bitboard6::new(0x7e000000000000);
+        const LEFT: Bitboard6 = Bitboard6::new(0x2020202020200);
+        const RIGHT: Bitboard6 = Bitboard6::new(0x40404040404000);
+        let left = self.flood(LEFT);
+        let right = self.flood(RIGHT);
+        let mut out = left.adjacent() & right.adjacent();
+        let top = self.flood(TOP);
+        let bottom = self.flood(BOTTOM);
+        out |= top.adjacent() & bottom.adjacent();
+        out
+    }
+    fn flood(self, edge: Self) -> Self {
+        let mut prev = Bitboard6::new(0);
+        let mut edge_connected = self & edge;
+        while edge_connected != prev {
+            prev = edge_connected;
+            edge_connected |= edge_connected.adjacent() & self
+        }
+        edge_connected
     }
 }
 
@@ -337,7 +367,7 @@ mod test {
         use board_game_traits::Position;
         let tps =
             "2,x4,1/2,2,x2,1,x/2,212C,x,1,1,x/2,1,x,2S,12S,x/12,12221C,x,12,1,1/1S,12,x,1,1,x 1 22";
-        let board = Board6::try_from_tps(tps).unwrap();
+        let board = crate::Board6::try_from_tps(tps).unwrap();
         let bitboards = BitboardStorage::<Bitboard6>::build_6(&board.board);
         let stacks1: Vec<_> = bitboards.iter_stacks(board.side_to_move()).collect();
         let stacks2 = board.scan_active_stacks(board.side_to_move());
@@ -345,5 +375,32 @@ mod test {
         let stacks3: Vec<_> = bitboards.iter_stacks(!board.side_to_move()).collect();
         let stacks4 = board.scan_active_stacks(!board.side_to_move());
         assert_eq!(stacks3, stacks4);
+    }
+    #[test]
+    pub fn test_critical_squares() {
+        const TOP: Bitboard6 = Bitboard6::new(0x7e00);
+        const BOTTOM: Bitboard6 = Bitboard6::new(0x7e000000000000);
+        const LEFT: Bitboard6 = Bitboard6::new(0x2020202020200);
+        const RIGHT: Bitboard6 = Bitboard6::new(0x40404040404000);
+        let bb = Bitboard6::new(18144415765381120);
+        let top_flood = bb.flood(TOP);
+        let bottom_flood = bb.flood(BOTTOM);
+        let left_flood = bb.flood(LEFT);
+        let right_flood = bb.flood(RIGHT);
+        assert_eq!(top_flood.pop_count(), 2);
+        assert_eq!(bottom_flood.pop_count(), 5);
+        assert_eq!(left_flood.pop_count(), 3);
+        assert_eq!(right_flood.pop_count(), 7);
+        assert_eq!(
+            (top_flood.adjacent() & bottom_flood.adjacent()).pop_count(),
+            1
+        );
+        assert_eq!(
+            (left_flood.adjacent() & right_flood.adjacent()).pop_count(),
+            1
+        );
+        let critical = bb.critical_squares();
+        dbg!(critical.lowest_index());
+        assert_eq!(critical.pop_count(), 2);
     }
 }

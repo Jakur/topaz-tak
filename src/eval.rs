@@ -10,8 +10,16 @@ pub trait Evaluate: Position<Move = GameMove, ReverseMove = RevGameMove> {
     fn ply(&self) -> usize;
     fn null_move(&mut self);
     fn rev_null_move(&mut self);
-    fn get_tak_threats(&mut self, legal_moves: &Vec<GameMove>) -> Vec<GameMove>;
-    fn can_make_road(&mut self, storage: &mut Vec<GameMove>) -> Option<GameMove>;
+    fn get_tak_threats(
+        &mut self,
+        legal_moves: &Vec<GameMove>,
+        hint: Option<&[GameMove]>,
+    ) -> Vec<GameMove>;
+    fn can_make_road(
+        &mut self,
+        storage: &mut Vec<GameMove>,
+        hint: Option<&[GameMove]>,
+    ) -> Option<GameMove>;
 }
 
 fn win_color(res: GameResult) -> Option<Color> {
@@ -106,13 +114,17 @@ impl Evaluate for Board6 {
     fn rev_null_move(&mut self) {
         self.swap_active_player();
     }
-    fn get_tak_threats(&mut self, legal_moves: &Vec<GameMove>) -> Vec<GameMove> {
+    fn get_tak_threats(
+        &mut self,
+        legal_moves: &Vec<GameMove>,
+        hint: Option<&[GameMove]>,
+    ) -> Vec<GameMove> {
         let mut tak_threats = Vec::new();
         let mut stack_moves = Vec::new();
         for m in legal_moves.iter().copied() {
             let rev = self.do_move(m);
             self.null_move();
-            if self.can_make_road(&mut stack_moves).is_some() {
+            if self.can_make_road(&mut stack_moves, hint).is_some() {
                 tak_threats.push(m);
             }
             self.rev_null_move();
@@ -121,38 +133,48 @@ impl Evaluate for Board6 {
         }
         tak_threats
     }
-    fn can_make_road(&mut self, storage: &mut Vec<GameMove>) -> Option<GameMove> {
+    fn can_make_road(
+        &mut self,
+        storage: &mut Vec<GameMove>,
+        hint: Option<&[GameMove]>,
+    ) -> Option<GameMove> {
         let player = self.active_player();
         let road_pieces = self.bits.road_pieces(player);
-        let mut attempt = road_pieces.adjacent() & self.bits.empty();
-        // Check flat placements
-        while attempt != Bitboard6::ZERO {
-            let lowest = attempt.pop_lowest();
-            let check = lowest | road_pieces;
-            if check.check_road() {
-                return Some(GameMove::from_placement(
-                    Piece::flat(player),
-                    lowest.lowest_index(),
-                ));
-            }
+        // Check placement
+        let place_road = find_placement_road(player, road_pieces, self.bits.empty());
+        if place_road.is_some() {
+            return place_road;
         }
         // Check stack movements
         generate_all_stack_moves(self, storage);
-        // Todo optimize this
+        if let Some(suggestions) = hint {
+            for m in suggestions.iter().copied() {
+                if storage.contains(&m) {
+                    if self.road_stack_throw(road_pieces, m) {
+                        return Some(m);
+                    }
+                }
+            }
+        }
         for m in storage.iter().copied() {
-            let rev = self.do_move(m);
-            let road = self.road(player);
-            self.reverse_move(rev);
-            if road {
+            if self.road_stack_throw(road_pieces, m) {
                 return Some(m);
             }
         }
-        // for m in stack_moves {
-        //     let mut bits = Bitboard6::ZERO;
-        //     let mut offset = m.number() as usize;
-        //     let source = board.index(m.src_index());
-        //     source.from_top(offset)
-        // }
+        None
+    }
+}
+
+pub fn find_placement_road(
+    player: Color,
+    road_pieces: Bitboard6,
+    empty: Bitboard6,
+) -> Option<GameMove> {
+    let valid = road_pieces.critical_squares() & empty;
+    if valid != Bitboard6::ZERO {
+        let sq_index = valid.lowest_index();
+        Some(GameMove::from_placement(Piece::flat(player), sq_index))
+    } else {
         None
     }
 }
@@ -181,7 +203,7 @@ mod test {
         let mut board = crate::Board6::try_from_tps(s).unwrap();
         let mut moves = Vec::new();
         generate_all_moves(&mut board, &mut moves);
-        let tak_threats = board.get_tak_threats(&moves);
+        let tak_threats = board.get_tak_threats(&moves, None);
         for m in tak_threats.iter() {
             dbg!(m.to_ptn());
         }

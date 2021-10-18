@@ -1,5 +1,4 @@
 use super::{Board6, Piece};
-use anyhow::{bail, ensure, Result};
 use board_game_traits::{Color, Position};
 use std::fmt;
 
@@ -39,6 +38,24 @@ pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
     for index in board.empty_tiles() {
         moves.push(GameMove::from_placement(flat, index));
         moves.push(GameMove::from_placement(wall, index));
+    }
+}
+
+/// Generates all cap or flat placement moves. Used for Tinue checking
+pub fn generate_aggressive_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
+    let side_to_move = board.side_to_move();
+    let start_locs = board.empty_tiles();
+    let (flat, cap) = match side_to_move {
+        Color::White => (Piece::WhiteFlat, Piece::WhiteCap),
+        Color::Black => (Piece::BlackFlat, Piece::BlackCap),
+    };
+    if board.caps_reserve(side_to_move) > 0 {
+        for index in start_locs {
+            moves.push(GameMove::from_placement(cap, index));
+        }
+    }
+    for index in board.empty_tiles() {
+        moves.push(GameMove::from_placement(flat, index));
     }
 }
 
@@ -135,7 +152,7 @@ impl GameMove {
     pub fn is_place_move(self) -> bool {
         (self.0 & Self::PLACEMENT_BITS) > 0
     }
-    fn slide_bits(self) -> u64 {
+    pub fn slide_bits(self) -> u64 {
         let bits = self.0 & 0xFFFFFFF000;
         bits >> 12
     }
@@ -148,7 +165,7 @@ impl GameMove {
     pub fn src_index(self) -> usize {
         self.0 as usize & 0x3F
     }
-    fn direction(self) -> u64 {
+    pub fn direction(self) -> u64 {
         (self.0 & 0xC0) >> 6
     }
     fn set_index(self, index: u64) -> Self {

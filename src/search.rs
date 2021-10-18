@@ -7,6 +7,8 @@ use crossbeam_channel::Receiver;
 use lru::LruCache;
 use std::time::Instant;
 
+pub mod proof;
+
 const NULL_REDUCTION: usize = 2;
 
 pub struct SearchInfo {
@@ -336,7 +338,7 @@ where
     }
     // Do a slower, more thorough move ordering at the root
     if info.ply_depth(board) == 0 {
-        let tak_threats = board.get_tak_threats(&moves);
+        let tak_threats = board.get_tak_threats(&moves, None);
         for m in moves.iter_mut() {
             if tak_threats.contains(m) {
                 m.add_score(50);
