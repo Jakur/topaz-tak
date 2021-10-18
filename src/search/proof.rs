@@ -2,7 +2,7 @@ use super::*;
 use crate::eval::Evaluate;
 use crate::generate_all_moves;
 use crate::{Board6, Position, RevGameMove};
-use std::cmp::{max, min};
+use std::cmp::min;
 use std::collections::HashMap;
 
 const INFINITY: u32 = 100_000_000;
@@ -78,11 +78,6 @@ impl Bounds {
             delta: 0,
         }
     }
-
-    pub fn unity() -> Self {
-        Bounds { phi: 1, delta: 1 }
-    }
-
     pub fn infinity() -> Self {
         Bounds {
             phi: INFINITY,
@@ -105,11 +100,6 @@ impl Default for Bounds {
             delta: 100,
         }
     }
-}
-
-enum ProofNode {
-    Attack(GameMove, Box<ProofNode>),
-    Defense(Vec<GameMove>, Vec<ProofNode>),
 }
 
 #[derive(Clone)]
@@ -174,7 +164,7 @@ impl TinueSearch {
     }
     pub fn is_tinue(&mut self) -> bool {
         let mut root = Child::new(Bounds::root(), GameMove::null_move(), self.board.hash());
-        self.MID(&mut root, 0);
+        self.mid(&mut root, 0);
         dbg!(self.nodes);
         dbg!(self.tinue_cache_hits);
         dbg!(self.tinue_cache_misses);
@@ -216,10 +206,7 @@ impl TinueSearch {
         }
         pv
     }
-    fn proof_tree(&mut self) -> ProofNode {
-        todo!();
-    }
-    fn MID(&mut self, child: &mut Child, depth: usize) {
+    fn mid(&mut self, child: &mut Child, depth: usize) {
         self.nodes += 1;
         if child.game_move != GameMove::null_move() {
             let rev = self.board.do_move(child.game_move);
@@ -307,7 +294,7 @@ impl TinueSearch {
                 delta: min(child.phi(), second_best_bounds.delta + 1),
             };
             best_child.update_bounds(updated_bounds, &mut self.bounds_table);
-            self.MID(best_child, depth + 1);
+            self.mid(best_child, depth + 1);
         }
     }
     fn select_child(children: &[Child]) -> (usize, Bounds) {

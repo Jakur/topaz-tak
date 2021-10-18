@@ -1,5 +1,4 @@
 use super::{Board6, Piece};
-use anyhow::{bail, ensure, Result};
 use board_game_traits::{Color, Position};
 use std::fmt;
 
