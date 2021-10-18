@@ -198,6 +198,13 @@ impl Board6 {
         let updated = road_pieces ^ (road_pieces ^ update) & mask;
         updated.check_road()
     }
+    pub fn make_ptn_moves(&mut self, moves: &[&str]) -> Option<()> {
+        for s in moves {
+            let m = GameMove::try_from_ptn(s, self)?;
+            self.do_move(m);
+        }
+        Some(())
+    }
 }
 
 fn parse_tps_stack(tile: &str) -> Result<Vec<Piece>> {

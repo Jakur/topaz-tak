@@ -53,8 +53,7 @@ pub fn main() {
             }
 
             // Todo Allow checking refuted sidelines from command line
-
-            // let side_line = vec!["2f5-".to_string(), "f3+".to_string()];
+            // let side_line = side_line.into_iter().map(|s| s.to_string()).collect();
             // let side = search.side_variation(side_line);
             // println!("Side Variation: ");
             // for m in side.into_iter().map(|m| m.to_ptn()) {

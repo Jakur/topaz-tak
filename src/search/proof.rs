@@ -211,20 +211,11 @@ impl TinueSearch {
         if child.game_move != GameMove::null_move() {
             let rev = self.board.do_move(child.game_move);
             self.rev_moves.push(rev);
-            self.zobrist_hist.push(self.board.hash());
         }
+        self.zobrist_hist.push(self.board.hash());
         assert_eq!(child.zobrist, self.board.hash());
         let side_to_move = self.board.side_to_move();
         let attacker = side_to_move == self.attacker;
-        if depth > 10 && attacker {
-            // Check Cycle
-            if self.zobrist_hist.contains(&self.board.hash()) {
-                let eval = Bounds::losing();
-                child.update_bounds(eval, &mut self.bounds_table);
-                self.undo_move();
-                return;
-            }
-        }
         let moves = if attacker {
             let tinue_eval = if let Some(cached_val) = self.tinue_attempts.get(&self.board.hash()) {
                 self.tinue_cache_hits += 1;
@@ -274,10 +265,10 @@ impl TinueSearch {
 
         if child.game_move == GameMove::null_move() {
             let debug_vec: Vec<_> = moves.iter().map(|m| m.to_ptn()).collect();
-            dbg!(&debug_vec); // Root moves?
+            println!("All Tak Threats at the Root: ");
+            dbg!(&debug_vec); // Root moves
         }
-        // generate_all_moves(&mut self.board, &mut moves);
-        let mut child_pns: Vec<_> = moves.into_iter().map(|m| self.init_pns(m)).collect();
+        let mut child_pns: Vec<_> = moves.into_iter().filter_map(|m| self.init_pns(m)).collect();
         loop {
             let limit = compute_bounds(&child_pns);
             if child.phi() <= limit.phi || child.delta() <= limit.delta {
@@ -288,7 +279,6 @@ impl TinueSearch {
             let (best_idx, second_best_bounds) = Self::select_child(&child_pns);
             child.update_best_child(best_idx, child_pns[best_idx].game_move, &mut self.replies);
             let best_child = &mut child_pns[best_idx];
-            // println!("Depth: {} Move: {}", depth, best_child.game_move.to_ptn());
             let updated_bounds = Bounds {
                 phi: child.delta() + best_child.phi() - limit.delta,
                 delta: min(child.phi(), second_best_bounds.delta + 1),
@@ -315,13 +305,18 @@ impl TinueSearch {
         }
         (c_best_idx, second_best)
     }
-    fn init_pns(&mut self, game_move: GameMove) -> Child {
+    fn init_pns(&mut self, game_move: GameMove) -> Option<Child> {
+        let side_to_move = self.board.side_to_move();
+        let attacker = side_to_move == self.attacker;
         let rev = self.board.do_move(game_move);
         let hash = self.board.hash();
         let bounds = self.bounds_table.entry(hash).or_default();
         let child = Child::new(bounds.clone(), game_move, hash);
         self.board.reverse_move(rev);
-        child
+        if attacker && self.zobrist_hist.contains(&hash) {
+            return None;
+        }
+        Some(child)
     }
     fn undo_move(&mut self) -> Option<()> {
         let m = self.rev_moves.pop()?;
