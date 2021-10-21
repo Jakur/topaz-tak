@@ -235,10 +235,10 @@ impl Bitboard6 {
         const RIGHT: Bitboard6 = Bitboard6::new(0x40404040404000);
         let left = self.flood(LEFT);
         let right = self.flood(RIGHT);
-        let mut out = left.adjacent() & right.adjacent();
+        let mut out = (left.adjacent() | LEFT) & (right.adjacent() | RIGHT);
         let top = self.flood(TOP);
         let bottom = self.flood(BOTTOM);
-        out |= top.adjacent() & bottom.adjacent();
+        out |= (top.adjacent() | TOP) & (bottom.adjacent() | BOTTOM);
         out
     }
     fn flood(self, edge: Self) -> Self {

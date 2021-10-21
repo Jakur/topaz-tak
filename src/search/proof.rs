@@ -154,7 +154,7 @@ impl TinueSearch {
             rev_moves: Vec::new(),
             attacker,
             nodes: 0,
-            top_moves: vec![TopMoves::new(); 30],
+            top_moves: vec![TopMoves::new(); 100],
             replies: HashMap::new(),
             tinue_attempts: HashMap::new(),
             tinue_cache_hits: 0,
@@ -345,7 +345,7 @@ impl TinueSearch {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 enum AttackerOutcome {
     HasRoad(GameMove),
     TakThreats(Vec<GameMove>),
@@ -373,5 +373,13 @@ mod test {
         assert!(search.is_tinue());
         let mut search2 = TinueSearch::new(Board6::try_from_tps(s2).unwrap());
         assert!(!search2.is_tinue());
+    }
+    #[test]
+    fn see_edge_placement_road() {
+        let s = "1,x,1S,x3/1,x,1,x3/x6/212,2,22212C,x,1C,x/x2,2,2,222221,x/21,1,x,2,12,x 2 21";
+        let board = Board6::try_from_tps(s).unwrap();
+        let m = GameMove::try_from_ptn("f1", &board).unwrap();
+        let mut search = TinueSearch::new(board);
+        assert_eq!(search.tinue_evaluate(0), AttackerOutcome::HasRoad(m));
     }
 }
