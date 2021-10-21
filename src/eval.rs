@@ -4,7 +4,7 @@ use crate::{Bitboard6, GameMove, RevGameMove};
 use board_game_traits::{Color, GameResult, Position};
 
 pub trait Evaluate: Position<Move = GameMove, ReverseMove = RevGameMove> {
-    fn evaluate(&self) -> i32;
+    fn evaluate(&self, depth: usize) -> i32;
     fn hash(&self) -> u64;
     fn legal_move(&self, game_move: GameMove) -> bool;
     fn ply(&self) -> usize;
@@ -60,7 +60,7 @@ fn stack_top_multiplier(p: Piece) -> (i32, i32) {
 }
 
 impl Evaluate for Board6 {
-    fn evaluate(&self) -> i32 {
+    fn evaluate(&self, depth: usize) -> i32 {
         let mut score = 0;
         for (idx, stack) in self.board.iter().enumerate() {
             if stack.len() == 1 {
@@ -89,9 +89,17 @@ impl Evaluate for Board6 {
         score += white_connectivity as i32 * 20;
         score -= black_connectivity as i32 * 20;
         if let Color::White = self.side_to_move() {
-            score - 100
+            if depth % 2 == 0 {
+                score
+            } else {
+                score - 50
+            }
         } else {
-            -1 * score
+            if depth % 2 == 0 {
+                -1 * score
+            } else {
+                -1 * score + 50
+            }
         }
     }
     fn hash(&self) -> u64 {

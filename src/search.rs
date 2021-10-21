@@ -274,7 +274,8 @@ where
     }
     // let mut road_move = None;
     if depth == 0 {
-        return board.evaluate();
+        let ply_depth = info.ply_depth(board);
+        return board.evaluate(ply_depth);
         // let mut road_check = Vec::new();
         // road_move = board.can_make_road(&mut road_check);
         // if road_move.is_some() {
@@ -339,9 +340,11 @@ where
     // Do a slower, more thorough move ordering at the root
     if info.ply_depth(board) == 0 {
         let tak_threats = board.get_tak_threats(&moves, None);
-        for m in moves.iter_mut() {
-            if tak_threats.contains(m) {
-                m.add_score(50);
+        if tak_threats.len() > 0 {
+            for m in moves.iter_mut() {
+                if tak_threats.contains(m) {
+                    m.add_score(50);
+                }
             }
         }
     }
@@ -440,7 +443,7 @@ fn naive_minimax<E: Evaluate>(board: &mut E, depth: u16) -> i32 {
         None => (),
     }
     if depth == 0 {
-        board.evaluate()
+        board.evaluate(0)
     } else {
         let mut moves = vec![];
         board.generate_moves(&mut moves);

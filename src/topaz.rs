@@ -17,6 +17,16 @@ pub fn main() {
             play_game_cmd(false);
         } else if arg1 == "white" {
             play_game_cmd(true);
+        } else if arg1 == "test" {
+            let time = Instant::now();
+            let s = "2,x4,1/x4,1,x/x,2,12C,1,1,x/x,1,2,21C,x2/x,2,2,x3/x2,2,1,x2 1 10";
+            let mut board = Board6::try_from_tps(s).unwrap();
+            let mut info = SearchInfo::new(6, 10000);
+            search(&mut board, &mut info);
+            let pv_move = info.pv_move(&board).unwrap();
+            println!("Computer Choose: {}", pv_move.to_ptn());
+            println!("Time: {} ms", time.elapsed().as_millis());
+            return;
         } else if arg1 == "tinue" {
             let mut rest = String::new();
             for s in args[2..].iter() {
