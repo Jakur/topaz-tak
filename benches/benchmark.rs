@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use topaz_tak::eval::{find_placement_road, LOSE_SCORE};
+use topaz_tak::eval::{find_placement_road, Evaluate, LOSE_SCORE};
 use topaz_tak::search::root_minimax;
 use topaz_tak::{execute_moves_check_valid, perft, Bitboard6, Board6, Color, GameMove};
 
@@ -7,9 +7,8 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     // c.bench_function("small perft", |b| {
     //     b.iter(|| execute_small_perft(black_box(3)))
     // });
-    c.bench_function("placement road", |b| {
-        b.iter(|| placement_road(black_box(())))
-    });
+    let pos = get_positions();
+    c.bench_function("eval", |b| b.iter(|| evaluate_positions(black_box(&pos))));
 }
 
 fn execute_small_perft(depth: usize) {
@@ -25,6 +24,26 @@ fn execute_small_perft(depth: usize) {
         .collect();
     // assert_eq!(&p_res[..], &[1, 190, 20698]);
     assert_eq!(&p_res[..], &[1, 190, 20698]);
+}
+
+fn get_positions() -> Vec<Board6> {
+    ["x4,2,1/2,x2,21S,12,1/2,1,1,2,1,2/1221C,1,2,112C,1,1/2,1,2,1,2,1/2,x,2,2,1,x 1 22",
+    "x,1,x4/2S,1,x,2,x2/2,121C,212S,x,2C,x/1,211121S,1S,112,11112,x/2221,x,2,1,2,1S/2222221,x,2,2,2,2 2 43",
+    "x3,2,1,1/x3,21,1,21/x,2,121S,2,2,11/1,1,1,2,2,21/x2,2221C,12C,2,2/2,2,21,x,2,x 2 25",
+    "2,x4,1/x,2,x,2,2S,1/x,1,2,1112C,1,1/1,2,x,2221C,x,1/2,1,1,x,12,2/x4,1,x 2 18",
+    "1,x,2,112S,1,1/2,1,21,x,1,1/2,2,2,1,1,12S/2,x,2111122C,2,12,1/2,1,22221S,1,2,211112S/21,2221C,1,1,2,x 1 42",
+    "2,2,221S,121S,x,12/x,2S,2,x,12S,12S/1,2,112C,22121C,1,1/x2,2,1,1,x/1,1,12,x,1,x/x2,2,x,1,x 1 28"]
+        .iter()
+        .map(|s| Board6::try_from_tps(s).unwrap())
+        .collect()
+}
+
+fn evaluate_positions(positions: &[Board6]) -> i32 {
+    let mut sum = 0;
+    for pos in positions.iter() {
+        sum += pos.evaluate(1);
+    }
+    return sum;
 }
 
 fn small_minimax(depth: u16) {
