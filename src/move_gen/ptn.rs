@@ -1,4 +1,5 @@
 use super::{Board6, GameMove, Piece};
+use crate::eval::TakBoard;
 
 impl GameMove {
     pub fn to_ptn(self) -> String {
@@ -114,7 +115,7 @@ impl GameMove {
 }
 
 fn tile_ptn(index: usize) -> String {
-    let size = Board6::size();
+    let size = Board6::SIZE;
     let (row, col) = Board6::row_col_static(index);
     let col = match col {
         0 => "a",

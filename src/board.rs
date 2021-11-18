@@ -1,3 +1,4 @@
+use crate::eval::TakBoard;
 use crate::move_gen::generate_all_moves;
 use crate::{GameMove, RevGameMove};
 use anyhow::{anyhow, bail, ensure, Result};
@@ -19,12 +20,12 @@ pub struct Board6 {
     move_num: usize,
     flats_left: [usize; 2],
     caps_left: [usize; 2],
-    pub bits: BitboardStorage<Bitboard6>,
+    pub bits: BitboardStorage<<Self as TakBoard>::Bits>,
 }
 
 impl Board6 {
     pub fn new() -> Self {
-        const SIZE: usize = 36;
+        const SIZE: usize = Board6::SIZE * Board6::SIZE;
         const INIT: Stack = Stack::new();
         let mut board = [INIT; SIZE];
         for (idx, stack) in board.iter_mut().enumerate() {
@@ -40,17 +41,17 @@ impl Board6 {
             bits,
         }
     }
-    pub const fn size() -> usize {
-        6
-    }
+}
+
+impl Board6 {
     pub const fn board_size(&self) -> usize {
-        Self::size()
+        Self::SIZE
     }
     pub fn try_from_tps(tps: &str) -> Result<Self> {
         let data: Vec<_> = tps.split_whitespace().collect();
         ensure!(data.len() == 3, "Malformed tps string!");
         let rows: Vec<_> = data[0].split("/").collect();
-        ensure!(rows.len() == 6, "Wrong board size for tps");
+        ensure!(rows.len() == Self::SIZE, "Wrong board size for tps");
         let mut board = Self::new();
         for (r_idx, row) in rows.into_iter().enumerate() {
             let mut col = 0;
@@ -66,8 +67,11 @@ impl Board6 {
                     }
                 } else {
                     let stack = parse_tps_stack(tile)?;
-                    ensure!(col < 6, "Too many columns for this board size");
-                    board.board[r_idx * 6 + col as usize]
+                    ensure!(
+                        col < Self::SIZE as u32,
+                        "Too many columns for this board size"
+                    );
+                    board.board[r_idx * Self::SIZE + col as usize]
                         .extend(stack.into_iter(), &mut board.bits);
                     col += 1;
                 }
@@ -111,20 +115,20 @@ impl Board6 {
         self.move_num
     }
     pub fn row_col_static(index: usize) -> (usize, usize) {
-        (index / 6, index % 6)
+        (index / Self::SIZE, index % Self::SIZE)
     }
     pub fn try_tile(&self, row: usize, col: usize) -> Option<&Stack> {
-        if row >= 6 || col >= 6 {
+        if row >= Self::SIZE || col >= Self::SIZE {
             None
         } else {
-            Some(&self.board[row * 6 + col])
+            Some(&self.board[row * Self::SIZE + col])
         }
     }
     pub fn tile(&self, row: usize, col: usize) -> &Stack {
-        &self.board[row * 6 + col]
+        &self.board[row * Self::SIZE + col]
     }
     pub fn tile_mut(&mut self, row: usize, col: usize) -> &mut Stack {
-        &mut self.board[row * 6 + col]
+        &mut self.board[row * Self::SIZE + col]
     }
     pub fn index(&self, i: usize) -> &Stack {
         &self.board[i]
@@ -158,22 +162,26 @@ impl Board6 {
     pub fn road(&self, player: Color) -> bool {
         self.bits.check_road(player)
     }
-    pub fn road_stack_throw(&self, road_pieces: Bitboard6, stack_move: GameMove) -> bool {
+    pub fn road_stack_throw(
+        &self,
+        road_pieces: <Self as TakBoard>::Bits,
+        stack_move: GameMove,
+    ) -> bool {
         let color = self.active_player();
         let src_sq = stack_move.src_index();
         let dir = stack_move.direction();
         let stack = &self.board[src_sq];
         let mut pickup = stack_move.number();
         let mut slide_bits = stack_move.slide_bits();
-        let mut update = Bitboard6::ZERO;
+        let mut update = <Self as TakBoard>::Bits::ZERO;
         let mut index = src_sq;
-        let mut mask = Bitboard6::index_to_bit(index);
+        let mut mask = <Self as TakBoard>::Bits::index_to_bit(index);
         let val = stack
             .from_top(pickup as usize)
             .map(|p| p.road_piece(color))
             .unwrap_or(false); // Could have taken all pieces
         if val {
-            update |= Bitboard6::index_to_bit(index);
+            update |= <Self as TakBoard>::Bits::index_to_bit(index);
         }
         while slide_bits != 0 {
             match dir {
@@ -185,7 +193,7 @@ impl Board6 {
             }
             pickup -= slide_bits & 0xF;
             slide_bits = slide_bits >> 4;
-            let bb = Bitboard6::index_to_bit(index);
+            let bb = <Self as TakBoard>::Bits::index_to_bit(index);
             mask |= bb;
             let val = stack
                 .from_top(pickup as usize)
@@ -359,7 +367,7 @@ impl fmt::Debug for Board6 {
             if stack.is_empty() {
                 board_string.push_str("x");
             }
-            if i > 0 && i % 6 == 5 {
+            if i > 0 && i % Self::SIZE == (Self::SIZE - 1) {
                 board_string.push_str("/");
             } else {
                 board_string.push_str(",")

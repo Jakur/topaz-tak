@@ -1,5 +1,5 @@
 use super::*;
-use crate::eval::Evaluate;
+use crate::eval::TakBoard;
 use crate::generate_all_moves;
 use crate::{Board6, Position, RevGameMove};
 use std::cmp::min;

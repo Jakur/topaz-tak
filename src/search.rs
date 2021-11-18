@@ -1,5 +1,5 @@
 use super::{Color, GameResult};
-use crate::eval::Evaluate;
+use crate::eval::{Evaluator, TakBoard};
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::GameMove;
 use crate::TeiCommand;
@@ -77,16 +77,16 @@ impl SearchInfo {
             }
         }
     }
-    fn store_move<E: Evaluate>(&mut self, position: &E, entry: HashEntry) {
+    fn store_move<E: TakBoard>(&mut self, position: &E, entry: HashEntry) {
         self.pv_table.put(position.hash(), entry);
     }
-    fn lookup_move<E: Evaluate>(&mut self, position: &E) -> Option<&HashEntry> {
+    fn lookup_move<E: TakBoard>(&mut self, position: &E) -> Option<&HashEntry> {
         self.pv_table.get(&position.hash())
     }
-    pub fn pv_move<E: Evaluate>(&mut self, position: &E) -> Option<GameMove> {
+    pub fn pv_move<E: TakBoard>(&mut self, position: &E) -> Option<GameMove> {
         self.pv_table.get(&position.hash()).map(|e| e.game_move)
     }
-    fn full_pv<E: Evaluate>(&mut self, position: &mut E) -> Vec<GameMove> {
+    fn full_pv<E: TakBoard>(&mut self, position: &mut E) -> Vec<GameMove> {
         let mut forward = Vec::new();
         let mut backward = Vec::new();
         while let Some(m) = self.pv_move(position) {
@@ -103,7 +103,7 @@ impl SearchInfo {
         }
         forward
     }
-    fn ply_depth<E: Evaluate>(&self, position: &E) -> usize {
+    fn ply_depth<E: TakBoard>(&self, position: &E) -> usize {
         position.ply() - self.start_ply
     }
 }
@@ -208,11 +208,15 @@ impl std::fmt::Display for SearchOutcome {
     }
 }
 
-pub fn search<E: Evaluate>(board: &mut E, info: &mut SearchInfo) -> Option<SearchOutcome> {
+pub fn search<T, E>(board: &mut T, eval: &E, info: &mut SearchInfo) -> Option<SearchOutcome>
+where
+    T: TakBoard,
+    E: Evaluator<Game = T>,
+{
     let mut outcome = None;
     info.set_start_ply(board.ply());
     for depth in 1..=info.max_depth {
-        let best_score = alpha_beta(-1_000_000, 1_000_000, depth, board, info, true);
+        let best_score = alpha_beta(-1_000_000, 1_000_000, depth, board, eval, info, true);
         let pv_moves = info.full_pv(board);
         // If we had an incomplete depth search, use the previous depth's vals
         if info.stopped {
@@ -240,16 +244,18 @@ pub fn search<E: Evaluate>(board: &mut E, info: &mut SearchInfo) -> Option<Searc
     outcome
 }
 
-fn alpha_beta<E>(
+fn alpha_beta<T, E>(
     mut alpha: i32,
     beta: i32,
     depth: usize,
-    board: &mut E,
+    board: &mut T,
+    evaluator: &E,
     info: &mut SearchInfo,
     null_move: bool,
 ) -> i32
 where
-    E: Evaluate,
+    T: TakBoard,
+    E: Evaluator<Game = T>,
 {
     info.nodes += 1;
     const FREQ: usize = (1 << 16) - 1; // Per 65k nodes
@@ -275,7 +281,7 @@ where
     // let mut road_move = None;
     if depth == 0 {
         let ply_depth = info.ply_depth(board);
-        return board.evaluate(ply_depth);
+        return evaluator.evaluate(board, ply_depth);
         // let mut road_check = Vec::new();
         // road_move = board.can_make_road(&mut road_check);
         // if road_move.is_some() {
@@ -319,6 +325,7 @@ where
                 -beta + 1,
                 depth - 1 - NULL_REDUCTION,
                 board,
+                evaluator,
                 info,
                 false,
             );
@@ -358,7 +365,7 @@ where
         let m = *m;
         moves.swap_remove(idx);
         let rev_move = board.do_move(m);
-        let score = -1 * alpha_beta(-beta, -alpha, depth - 1, board, info, true);
+        let score = -1 * alpha_beta(-beta, -alpha, depth - 1, board, evaluator, info, true);
         board.reverse_move(rev_move);
         if info.stopped {
             return 0;
@@ -400,9 +407,10 @@ where
 }
 
 /// A naive minimax function without pruning used for debugging and benchmarking
-pub fn root_minimax<E>(board: &mut E, depth: u16) -> (Option<GameMove>, i32)
+pub fn root_minimax<T, E>(board: &mut T, eval: &E, depth: u16) -> (Option<GameMove>, i32)
 where
-    E: Evaluate,
+    T: TakBoard,
+    E: Evaluator<Game = T>,
 {
     let mut moves = vec![];
     board.generate_moves(&mut moves);
@@ -410,7 +418,7 @@ where
     let mut best_move = None;
     let child_evaluations = moves.into_iter().map(|mv| {
         let reverse_move = board.do_move(mv);
-        let eval = -1 * naive_minimax(board, depth - 1);
+        let eval = -1 * naive_minimax(board, eval, depth - 1);
         board.reverse_move(reverse_move);
         (mv, eval)
     });
@@ -423,7 +431,7 @@ where
     (best_move, best_eval)
 }
 
-fn naive_minimax<E: Evaluate>(board: &mut E, depth: u16) -> i32 {
+fn naive_minimax<T: TakBoard, E: Evaluator<Game = T>>(board: &mut T, eval: &E, depth: u16) -> i32 {
     match board.game_result() {
         Some(GameResult::WhiteWin) => {
             // dbg!("Found a winning position for white");
@@ -443,13 +451,13 @@ fn naive_minimax<E: Evaluate>(board: &mut E, depth: u16) -> i32 {
         None => (),
     }
     if depth == 0 {
-        board.evaluate(0)
+        eval.evaluate(board, 0)
     } else {
         let mut moves = vec![];
         board.generate_moves(&mut moves);
         let child_evaluations = moves.into_iter().map(|mv| {
             let reverse_move = board.do_move(mv);
-            let eval = -1 * naive_minimax(board, depth - 1);
+            let eval = -1 * naive_minimax(board, eval, depth - 1);
             board.reverse_move(reverse_move);
             eval
         });
@@ -459,13 +467,14 @@ fn naive_minimax<E: Evaluate>(board: &mut E, depth: u16) -> i32 {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::eval::LOSE_SCORE;
+    use crate::eval::{Evaluator6, LOSE_SCORE};
     use crate::Board6;
     #[test]
     fn small_minimax() {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let (mv, score) = root_minimax(&mut board, 2);
+        let eval = Evaluator6 {};
+        let (mv, score) = root_minimax(&mut board, &eval, 2);
         assert!(score != LOSE_SCORE);
         let only_move = GameMove::try_from_ptn("c5-", &board);
         assert_eq!(mv, only_move);
@@ -476,14 +485,16 @@ mod test {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut info = SearchInfo::new(4, 50000);
-        search(&mut board, &mut info);
+        let eval = Evaluator6 {};
+        search(&mut board, &eval, &mut info);
     }
     #[test]
     fn unk_puzzle() {
         let tps = "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27";
         let mut board = Board6::try_from_tps(tps).unwrap();
         dbg!(board.ply());
+        let eval = Evaluator6 {};
         let mut info = SearchInfo::new(5, 100000);
-        search(&mut board, &mut info);
+        search(&mut board, &eval, &mut info);
     }
 }

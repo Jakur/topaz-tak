@@ -3,8 +3,62 @@ use crate::move_gen::generate_all_stack_moves;
 use crate::{Bitboard6, GameMove, RevGameMove};
 use board_game_traits::{Color, GameResult, Position};
 
-pub trait Evaluate: Position<Move = GameMove, ReverseMove = RevGameMove> {
-    fn evaluate(&self, depth: usize) -> i32;
+pub trait Evaluator {
+    type Game: TakBoard;
+    fn evaluate(&self, game: &Self::Game, depth: usize) -> i32;
+}
+
+pub struct Evaluator6 {}
+
+impl Evaluator for Evaluator6 {
+    type Game = Board6;
+    fn evaluate(&self, game: &Self::Game, depth: usize) -> i32 {
+        let mut score = 0;
+        for (idx, stack) in game.board.iter().enumerate() {
+            if stack.len() == 1 {
+                let top = *stack.last().unwrap();
+                let pw = piece_weight(top) + LOCATION_WEIGHT[idx];
+                if let Color::White = top.owner() {
+                    score += pw;
+                } else {
+                    score -= pw;
+                }
+            } else if stack.len() > 1 {
+                let top = *stack.last().unwrap();
+                let pw = piece_weight(top) + LOCATION_WEIGHT[idx];
+                let (captive, friendly) = captive_friendly(&stack, top);
+                let (c_mul, f_mul) = stack_top_multiplier(top);
+                let stack_score = captive * c_mul + friendly * f_mul + pw;
+                if let Color::White = top.owner() {
+                    score += stack_score;
+                } else {
+                    score -= stack_score;
+                }
+            }
+        }
+        let white_connectivity = (game.bits.white.adjacent() & game.bits.white).pop_count();
+        let black_connectivity = (game.bits.black.adjacent() & game.bits.black).pop_count();
+        score += white_connectivity as i32 * 20;
+        score -= black_connectivity as i32 * 20;
+        if let Color::White = game.side_to_move() {
+            if depth % 2 == 0 {
+                score
+            } else {
+                score - 50
+            }
+        } else {
+            if depth % 2 == 0 {
+                -1 * score
+            } else {
+                -1 * score + 50
+            }
+        }
+    }
+}
+
+pub trait TakBoard: Position<Move = GameMove, ReverseMove = RevGameMove> {
+    type Bits: Bitboard;
+    const SIZE: usize;
     fn hash(&self) -> u64;
     fn legal_move(&self, game_move: GameMove) -> bool;
     fn ply(&self) -> usize;
@@ -33,6 +87,58 @@ fn win_color(res: GameResult) -> Option<Color> {
 pub const WIN_SCORE: i32 = 10_000;
 pub const LOSE_SCORE: i32 = -1 * WIN_SCORE;
 
+pub struct Weights6 {
+    location: [i32; 36],
+    connectivity: i32,
+    tempo_offset: i32,
+    piece: [i32; 3],
+    stack_top: [i32; 6],
+}
+
+impl Weights6 {
+    pub fn new(
+        location: [i32; 36],
+        connectivity: i32,
+        tempo_offset: i32,
+        piece: [i32; 3],
+        stack_top: [i32; 6],
+    ) -> Self {
+        Self {
+            location,
+            connectivity,
+            tempo_offset,
+            piece,
+            stack_top,
+        }
+    }
+    fn piece_weight(&self, p: Piece) -> i32 {
+        match p {
+            Piece::WhiteFlat | Piece::BlackFlat => self.piece[0],
+            Piece::WhiteWall | Piece::BlackWall => self.piece[1],
+            Piece::WhiteCap | Piece::BlackCap => self.piece[2],
+        }
+    }
+    fn stack_top_multiplier(&self, p: Piece) -> (i32, i32) {
+        match p {
+            Piece::WhiteFlat | Piece::BlackFlat => (-50, 60),
+            Piece::WhiteWall | Piece::BlackWall => (-30, 70),
+            Piece::WhiteCap | Piece::BlackCap => (-20, 90),
+        }
+    }
+}
+
+impl Default for Weights6 {
+    fn default() -> Self {
+        Self::new(
+            LOCATION_WEIGHT,
+            20,
+            50,
+            [100, 40, 80],
+            [-50, 60, -30, 70, -20, 90],
+        )
+    }
+}
+
 #[rustfmt::skip]
 const LOCATION_WEIGHT: [i32; 36] = [
     00, 05, 05, 05, 05, 00,
@@ -59,49 +165,9 @@ fn stack_top_multiplier(p: Piece) -> (i32, i32) {
     }
 }
 
-impl Evaluate for Board6 {
-    fn evaluate(&self, depth: usize) -> i32 {
-        let mut score = 0;
-        for (idx, stack) in self.board.iter().enumerate() {
-            if stack.len() == 1 {
-                let top = *stack.last().unwrap();
-                let pw = piece_weight(top) + LOCATION_WEIGHT[idx];
-                if let Color::White = top.owner() {
-                    score += pw;
-                } else {
-                    score -= pw;
-                }
-            } else if stack.len() > 1 {
-                let top = *stack.last().unwrap();
-                let pw = piece_weight(top) + LOCATION_WEIGHT[idx];
-                let (captive, friendly) = captive_friendly(&stack, top);
-                let (c_mul, f_mul) = stack_top_multiplier(top);
-                let stack_score = captive * c_mul + friendly * f_mul + pw;
-                if let Color::White = top.owner() {
-                    score += stack_score;
-                } else {
-                    score -= stack_score;
-                }
-            }
-        }
-        let white_connectivity = (self.bits.white.adjacent() & self.bits.white).pop_count();
-        let black_connectivity = (self.bits.black.adjacent() & self.bits.black).pop_count();
-        score += white_connectivity as i32 * 20;
-        score -= black_connectivity as i32 * 20;
-        if let Color::White = self.side_to_move() {
-            if depth % 2 == 0 {
-                score
-            } else {
-                score - 50
-            }
-        } else {
-            if depth % 2 == 0 {
-                -1 * score
-            } else {
-                -1 * score + 50
-            }
-        }
-    }
+impl TakBoard for Board6 {
+    type Bits = Bitboard6;
+    const SIZE: usize = 6;
     fn hash(&self) -> u64 {
         self.zobrist()
     }

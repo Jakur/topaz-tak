@@ -1,3 +1,4 @@
+use crate::eval::Evaluator6;
 use anyhow::Result;
 use board_game_traits::Position;
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -5,7 +6,7 @@ use std::env;
 use std::io::{self, BufRead};
 use std::thread;
 use std::time::Instant;
-use topaz_tak::eval::Evaluate;
+use topaz_tak::eval::TakBoard;
 use topaz_tak::search::{search, SearchInfo};
 use topaz_tak::*;
 
@@ -21,8 +22,9 @@ pub fn main() {
             let time = Instant::now();
             let s = "2,x4,1/x4,1,x/x,2,12C,1,1,x/x,1,2,21C,x2/x,2,2,x3/x2,2,1,x2 1 10";
             let mut board = Board6::try_from_tps(s).unwrap();
+            let eval = Evaluator6 {};
             let mut info = SearchInfo::new(6, 10000);
-            search(&mut board, &mut info);
+            search(&mut board, &eval, &mut info);
             let pv_move = info.pv_move(&board).unwrap();
             println!("Computer Choose: {}", pv_move.to_ptn());
             println!("Time: {} ms", time.elapsed().as_millis());
@@ -96,11 +98,12 @@ pub fn main() {
 
 fn play_game_cmd(mut computer_turn: bool) {
     let mut board = Board6::new();
+    let eval = Evaluator6 {};
     while let None = board.game_result() {
         println!("{:?}", &board);
         if computer_turn {
             let mut info = SearchInfo::new(6, 5000);
-            search(&mut board, &mut info);
+            search(&mut board, &eval, &mut info);
             let pv_move = info.pv_move(&board).unwrap();
             println!("Computer Choose: {}", pv_move.to_ptn());
             board.do_move(pv_move);
@@ -166,6 +169,7 @@ impl TimeLeft {
 fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
     let mut board = Board6::new();
     let mut info = SearchInfo::new(6, 1000000);
+    let eval = Evaluator6 {};
     loop {
         let message = receiver.recv()?;
         match message {
@@ -180,7 +184,7 @@ fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
                 info = SearchInfo::new(6, 0)
                     .take_table(&mut info)
                     .max_time(use_time);
-                let res = search(&mut board, &mut info);
+                let res = search(&mut board, &eval, &mut info);
                 if let Some(outcome) = res {
                     println!("info {}", outcome);
                     println!(

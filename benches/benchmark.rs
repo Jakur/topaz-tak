@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use topaz_tak::eval::{find_placement_road, Evaluate, LOSE_SCORE};
+use topaz_tak::eval::{find_placement_road, Evaluator, Evaluator6, LOSE_SCORE};
 use topaz_tak::search::root_minimax;
 use topaz_tak::{execute_moves_check_valid, perft, Bitboard6, Board6, Color, GameMove};
 
@@ -8,7 +8,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     //     b.iter(|| execute_small_perft(black_box(3)))
     // });
     let pos = get_positions();
-    c.bench_function("eval", |b| b.iter(|| evaluate_positions(black_box(&pos))));
+    let eval = Evaluator6 {};
+    c.bench_function("eval", |b| {
+        b.iter(|| evaluate_positions(black_box(&pos), black_box(&eval)))
+    });
 }
 
 fn execute_small_perft(depth: usize) {
@@ -38,10 +41,10 @@ fn get_positions() -> Vec<Board6> {
         .collect()
 }
 
-fn evaluate_positions(positions: &[Board6]) -> i32 {
+fn evaluate_positions<E: Evaluator<Game = Board6>>(positions: &[Board6], eval: &E) -> i32 {
     let mut sum = 0;
     for pos in positions.iter() {
-        sum += pos.evaluate(1);
+        sum += eval.evaluate(pos, 1);
     }
     return sum;
 }
@@ -49,7 +52,8 @@ fn evaluate_positions(positions: &[Board6]) -> i32 {
 fn small_minimax(depth: u16) {
     let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
     let mut board = Board6::try_from_tps(tps).unwrap();
-    let (mv, score) = root_minimax(&mut board, 2);
+    let eval = Evaluator6 {};
+    let (mv, score) = root_minimax(&mut board, &eval, 2);
     assert!(score != LOSE_SCORE);
     let only_move = GameMove::try_from_ptn("c5-", &board);
     assert_eq!(mv, only_move);
