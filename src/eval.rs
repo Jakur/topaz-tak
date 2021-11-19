@@ -10,6 +10,25 @@ pub trait Evaluator {
 
 pub struct Evaluator6 {}
 
+impl Evaluator6 {
+    const TEMPO_OFFSET: i32 = 50;
+    const CONNECTIVITY: i32 = 20;
+    const fn piece_weight(p: Piece) -> i32 {
+        match p {
+            Piece::WhiteFlat | Piece::BlackFlat => 100,
+            Piece::WhiteWall | Piece::BlackWall => 40,
+            Piece::WhiteCap | Piece::BlackCap => 80,
+        }
+    }
+    const fn stack_top_multiplier(p: Piece) -> (i32, i32) {
+        match p {
+            Piece::WhiteFlat | Piece::BlackFlat => (-50, 60),
+            Piece::WhiteWall | Piece::BlackWall => (-30, 70),
+            Piece::WhiteCap | Piece::BlackCap => (-20, 90),
+        }
+    }
+}
+
 impl Evaluator for Evaluator6 {
     type Game = Board6;
     fn evaluate(&self, game: &Self::Game, depth: usize) -> i32 {
@@ -17,7 +36,7 @@ impl Evaluator for Evaluator6 {
         for (idx, stack) in game.board.iter().enumerate() {
             if stack.len() == 1 {
                 let top = *stack.last().unwrap();
-                let pw = piece_weight(top) + LOCATION_WEIGHT[idx];
+                let pw = Self::piece_weight(top) + LOCATION_WEIGHT[idx];
                 if let Color::White = top.owner() {
                     score += pw;
                 } else {
@@ -25,9 +44,9 @@ impl Evaluator for Evaluator6 {
                 }
             } else if stack.len() > 1 {
                 let top = *stack.last().unwrap();
-                let pw = piece_weight(top) + LOCATION_WEIGHT[idx];
+                let pw = Self::piece_weight(top) + LOCATION_WEIGHT[idx];
                 let (captive, friendly) = captive_friendly(&stack, top);
-                let (c_mul, f_mul) = stack_top_multiplier(top);
+                let (c_mul, f_mul) = Self::stack_top_multiplier(top);
                 let stack_score = captive * c_mul + friendly * f_mul + pw;
                 if let Color::White = top.owner() {
                     score += stack_score;
@@ -38,19 +57,19 @@ impl Evaluator for Evaluator6 {
         }
         let white_connectivity = (game.bits.white.adjacent() & game.bits.white).pop_count();
         let black_connectivity = (game.bits.black.adjacent() & game.bits.black).pop_count();
-        score += white_connectivity as i32 * 20;
-        score -= black_connectivity as i32 * 20;
+        score += white_connectivity as i32 * Self::CONNECTIVITY;
+        score -= black_connectivity as i32 * Self::CONNECTIVITY;
         if let Color::White = game.side_to_move() {
             if depth % 2 == 0 {
                 score
             } else {
-                score - 50
+                score - Self::TEMPO_OFFSET
             }
         } else {
             if depth % 2 == 0 {
                 -1 * score
             } else {
-                -1 * score + 50
+                -1 * score + Self::TEMPO_OFFSET
             }
         }
     }
@@ -95,6 +114,52 @@ pub struct Weights6 {
     stack_top: [i32; 6],
 }
 
+impl Evaluator for Weights6 {
+    type Game = Board6;
+    fn evaluate(&self, game: &Self::Game, depth: usize) -> i32 {
+        let mut score = 0;
+        for (idx, stack) in game.board.iter().enumerate() {
+            if stack.len() == 1 {
+                let top = *stack.last().unwrap();
+                let pw = self.piece_weight(top) + self.location[idx];
+                if let Color::White = top.owner() {
+                    score += pw;
+                } else {
+                    score -= pw;
+                }
+            } else if stack.len() > 1 {
+                let top = *stack.last().unwrap();
+                let pw = self.piece_weight(top) + self.location[idx];
+                let (captive, friendly) = captive_friendly(&stack, top);
+                let (c_mul, f_mul) = self.stack_top_multiplier(top);
+                let stack_score = captive * c_mul + friendly * f_mul + pw;
+                if let Color::White = top.owner() {
+                    score += stack_score;
+                } else {
+                    score -= stack_score;
+                }
+            }
+        }
+        let white_connectivity = (game.bits.white.adjacent() & game.bits.white).pop_count();
+        let black_connectivity = (game.bits.black.adjacent() & game.bits.black).pop_count();
+        score += white_connectivity as i32 * self.connectivity;
+        score -= black_connectivity as i32 * self.connectivity;
+        if let Color::White = game.side_to_move() {
+            if depth % 2 == 0 {
+                score
+            } else {
+                score - self.tempo_offset
+            }
+        } else {
+            if depth % 2 == 0 {
+                -1 * score
+            } else {
+                -1 * score + self.tempo_offset
+            }
+        }
+    }
+}
+
 impl Weights6 {
     pub fn new(
         location: [i32; 36],
@@ -120,21 +185,29 @@ impl Weights6 {
     }
     fn stack_top_multiplier(&self, p: Piece) -> (i32, i32) {
         match p {
-            Piece::WhiteFlat | Piece::BlackFlat => (-50, 60),
-            Piece::WhiteWall | Piece::BlackWall => (-30, 70),
-            Piece::WhiteCap | Piece::BlackCap => (-20, 90),
+            Piece::WhiteFlat | Piece::BlackFlat => (self.stack_top[0], self.stack_top[1]),
+            Piece::WhiteWall | Piece::BlackWall => (self.stack_top[2], self.stack_top[3]),
+            Piece::WhiteCap | Piece::BlackCap => (self.stack_top[4], self.stack_top[5]),
         }
     }
 }
 
 impl Default for Weights6 {
     fn default() -> Self {
+        let piece_arr = [
+            Evaluator6::piece_weight(Piece::WhiteFlat),
+            Evaluator6::piece_weight(Piece::WhiteWall),
+            Evaluator6::piece_weight(Piece::WhiteCap),
+        ];
+        let st1 = Evaluator6::stack_top_multiplier(Piece::WhiteFlat);
+        let st2 = Evaluator6::stack_top_multiplier(Piece::WhiteWall);
+        let st3 = Evaluator6::stack_top_multiplier(Piece::WhiteCap);
         Self::new(
             LOCATION_WEIGHT,
-            20,
-            50,
-            [100, 40, 80],
-            [-50, 60, -30, 70, -20, 90],
+            Evaluator6::CONNECTIVITY,
+            Evaluator6::TEMPO_OFFSET,
+            piece_arr,
+            [st1.0, st1.1, st2.0, st2.1, st3.0, st3.1],
         )
     }
 }
@@ -148,22 +221,6 @@ const LOCATION_WEIGHT: [i32; 36] = [
     05, 10, 15, 15, 10, 05,
     00, 05, 05, 05, 05, 00, 
 ];
-
-fn piece_weight(p: Piece) -> i32 {
-    match p {
-        Piece::WhiteFlat | Piece::BlackFlat => 100,
-        Piece::WhiteWall | Piece::BlackWall => 40,
-        Piece::WhiteCap | Piece::BlackCap => 80,
-    }
-}
-
-fn stack_top_multiplier(p: Piece) -> (i32, i32) {
-    match p {
-        Piece::WhiteFlat | Piece::BlackFlat => (-50, 60),
-        Piece::WhiteWall | Piece::BlackWall => (-30, 70),
-        Piece::WhiteCap | Piece::BlackCap => (-20, 90),
-    }
-}
 
 impl TakBoard for Board6 {
     type Bits = Bitboard6;
