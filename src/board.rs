@@ -148,7 +148,15 @@ impl Board6 {
     fn board_fill(&self) -> bool {
         self.bits.board_fill()
     }
-    fn flat_game(&self) -> GameResult {
+    pub fn flat_game(&self) -> Option<GameResult> {
+        assert!(self.flats_left[0] < 1_000 && self.flats_left[1] < 1_000);
+        if self.flats_left[0] == 0 || self.flats_left[1] == 0 || self.board_fill() {
+            Some(self.flat_winner())
+        } else {
+            None
+        }
+    }
+    fn flat_winner(&self) -> GameResult {
         let white_score = self.bits.flat_score(Color::White);
         let black_score = self.bits.flat_score(Color::Black);
         if white_score > black_score {
@@ -258,11 +266,9 @@ impl Position for Board6 {
             return Some(GameResult::win_by(prev_player));
         } else if self.road(current_player) {
             return Some(GameResult::win_by(current_player));
+        } else {
+            self.flat_game()
         }
-        if self.flats_left[0] == 0 || self.flats_left[1] == 0 || self.board_fill() {
-            return Some(self.flat_game());
-        }
-        None
     }
     fn reverse_move(&mut self, rev_m: <Self as Position>::ReverseMove) {
         if let Color::White = self.active_player {
@@ -427,7 +433,7 @@ mod test {
 
         assert_eq!(board.scan_active_stacks(Color::White).len(), 4);
         assert_eq!(board.scan_active_stacks(Color::Black).len(), 5);
-        assert_eq!(board.flat_game(), GameResult::BlackWin);
+        assert_eq!(board.flat_winner(), GameResult::BlackWin);
     }
     #[test]
     pub fn test_forward_move() {

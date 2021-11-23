@@ -212,6 +212,13 @@ impl Default for Weights6 {
     }
 }
 
+// corner, offcorner, edge, edge, offcorner, corner,
+// offcorner, kosumi, ctouch, ctouch, kosumi, corner,
+// edge, ctouch, center, center, ctouch, edge,
+// edge, ctouch, center, center, ctouch, edge,
+// offcorner, kosumi, ctouch, ctouch, kosumi, corner,
+// corner, offcorner, edge, edge, offcorner, corner,
+
 #[rustfmt::skip]
 const LOCATION_WEIGHT: [i32; 36] = [
     00, 05, 05, 05, 05, 00,

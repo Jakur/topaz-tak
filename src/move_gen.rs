@@ -54,8 +54,10 @@ pub fn generate_aggressive_place_moves(board: &Board6, moves: &mut Vec<GameMove>
             moves.push(GameMove::from_placement(cap, index));
         }
     }
-    for index in board.empty_tiles() {
-        moves.push(GameMove::from_placement(flat, index));
+    if board.pieces_reserve(side_to_move) > 1 {
+        for index in board.empty_tiles() {
+            moves.push(GameMove::from_placement(flat, index));
+        }
     }
 }
 

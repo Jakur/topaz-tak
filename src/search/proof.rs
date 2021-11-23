@@ -208,6 +208,11 @@ impl TinueSearch {
     }
     fn mid(&mut self, child: &mut Child, depth: usize) {
         self.nodes += 1;
+        if depth == 1 {
+            dbg!(self.nodes);
+            dbg!(child.game_move.to_ptn());
+            dbg!(child.bounds);
+        }
         if child.game_move != GameMove::null_move() {
             let rev = self.board.do_move(child.game_move);
             self.rev_moves.push(rev);
@@ -216,6 +221,16 @@ impl TinueSearch {
         assert_eq!(child.zobrist, self.board.hash());
         let side_to_move = self.board.side_to_move();
         let attacker = side_to_move == self.attacker;
+        if self.board.flat_game().is_some() {
+            let eval = if attacker {
+                Bounds::losing()
+            } else {
+                Bounds::winning()
+            };
+            child.update_bounds(eval, &mut self.bounds_table);
+            self.undo_move();
+            return;
+        }
         let moves = if attacker {
             let tinue_eval = if let Some(cached_val) = self.tinue_attempts.get(&self.board.hash()) {
                 self.tinue_cache_hits += 1;
@@ -254,11 +269,22 @@ impl TinueSearch {
                 self.undo_move();
                 return;
             }
+            let enemy = !side_to_move;
+            let enemy_road_pieces = self.board.bits.road_pieces(enemy);
+            // Todo optimization: only check if there is only one flat threat
+            let placement =
+                crate::eval::find_placement_road(enemy, enemy_road_pieces, self.board.bits.empty());
             generate_all_moves(&mut self.board, &mut moves);
-            let moves = moves
+            let mut moves: Vec<GameMove> = moves
                 .into_iter()
                 .filter(|m| !m.is_place_move() || m.place_piece().is_blocker())
                 .collect();
+            if let Some(attack) = placement {
+                // Try to parry the flat placement with one's own flat placement
+                let sq = attack.src_index();
+                let piece = attack.place_piece().swap_color();
+                moves.push(GameMove::from_placement(piece, sq));
+            }
             moves
         };
         assert!(!moves.is_empty());
@@ -381,5 +407,12 @@ mod test {
         let m = GameMove::try_from_ptn("f1", &board).unwrap();
         let mut search = TinueSearch::new(board);
         assert_eq!(search.tinue_evaluate(0), AttackerOutcome::HasRoad(m));
+    }
+    #[test]
+    fn defender_counterattack() {
+        let s = "x3,1C,x2/x,1,x,1,x2/x,1,1,x,1,x/x3,1,x2/x3,1,x2/2C,2,22,x,2,x 1 9";
+        let board = Board6::try_from_tps(s).unwrap();
+        let mut search = TinueSearch::new(board);
+        assert!(!search.is_tinue());
     }
 }
