@@ -208,11 +208,11 @@ impl TinueSearch {
     }
     fn mid(&mut self, child: &mut Child, depth: usize) {
         self.nodes += 1;
-        if depth == 1 {
-            dbg!(self.nodes);
-            dbg!(child.game_move.to_ptn());
-            dbg!(child.bounds);
-        }
+        // if depth == 1 {
+        //     dbg!(self.nodes);
+        //     dbg!(child.game_move.to_ptn());
+        //     dbg!(child.bounds);
+        // }
         if child.game_move != GameMove::null_move() {
             let rev = self.board.do_move(child.game_move);
             self.rev_moves.push(rev);
@@ -336,7 +336,16 @@ impl TinueSearch {
         let attacker = side_to_move == self.attacker;
         let rev = self.board.do_move(game_move);
         let hash = self.board.hash();
-        let bounds = self.bounds_table.entry(hash).or_default();
+        // let default_bounds = Bounds::default();
+        let default_bounds = if attacker {
+            // Child is defensive node
+            Bounds { phi: 1, delta: 30 }
+        } else {
+            // Child is offensive node
+            Bounds { phi: 10, delta: 1 }
+        };
+        let bounds = self.bounds_table.entry(hash).or_insert(default_bounds);
+
         let child = Child::new(bounds.clone(), game_move, hash);
         self.board.reverse_move(rev);
         if attacker && self.zobrist_hist.contains(&hash) {
