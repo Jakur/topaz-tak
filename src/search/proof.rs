@@ -1,8 +1,7 @@
 use super::*;
 use crate::eval::TakBoard;
-use crate::generate_all_moves;
+use crate::move_gen::generate_all_place_moves;
 use crate::{Board6, Position, RevGameMove};
-use anyhow::Result;
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use termtree::Tree;
@@ -206,7 +205,8 @@ impl InteractiveSearch {
         let attempt = TinueSearch::defender_responses(&mut self.board, None);
         match attempt {
             DefenderOutcome::CanWin(m) => {
-                todo!();
+                let s = format!("{}'': Defender Road!", m.to_ptn());
+                root.push(Tree::root(s));
             }
             DefenderOutcome::Defenses(vec) => {
                 for m in vec {
@@ -388,7 +388,10 @@ impl TinueSearch {
             println!("All Tak Threats at the Root: ");
             dbg!(&debug_vec); // Root moves
         }
-        let mut child_pns: Vec<_> = moves.into_iter().filter_map(|m| self.init_pns(m)).collect();
+        let mut child_pns: Vec<_> = moves
+            .into_iter()
+            .filter_map(|m| self.init_pns(m, depth as u32))
+            .collect();
         loop {
             let limit = compute_bounds(&child_pns);
             if child.phi() <= limit.phi || child.delta() <= limit.delta {
@@ -417,7 +420,9 @@ impl TinueSearch {
         // Todo optimization: only check if there is only one flat threat
         let placement =
             crate::eval::find_placement_road(enemy, enemy_road_pieces, board.bits.empty());
-        generate_all_moves(&board, &mut moves);
+        assert!(moves.len() > 0); // All stack moves should already be generated
+        generate_all_place_moves(&board, &mut moves);
+        // generate_all_moves(&board, &mut moves); // In practice generating them twice helps??
         let mut moves: Vec<GameMove> = moves
             .into_iter()
             .filter(|m| !m.is_place_move() || m.place_piece().is_blocker())
@@ -448,7 +453,7 @@ impl TinueSearch {
         }
         (c_best_idx, second_best)
     }
-    fn init_pns(&mut self, game_move: GameMove) -> Option<Child> {
+    fn init_pns(&mut self, game_move: GameMove, depth: u32) -> Option<Child> {
         let side_to_move = self.board.side_to_move();
         let attacker = side_to_move == self.attacker;
         let rev = self.board.do_move(game_move);
@@ -456,10 +461,23 @@ impl TinueSearch {
         // let default_bounds = Bounds::default();
         let default_bounds = if attacker {
             // Child is defensive node
-            Bounds { phi: 1, delta: 30 }
+            Bounds {
+                phi: 1,
+                delta: 30 + depth * depth,
+            }
         } else {
             // Child is offensive node
-            Bounds { phi: 10, delta: 1 }
+            if game_move.is_stack_move() {
+                Bounds {
+                    phi: 10 + depth * depth,
+                    delta: 1,
+                }
+            } else {
+                Bounds {
+                    phi: 20 + depth * depth,
+                    delta: 1,
+                }
+            }
         };
         let bounds = self.bounds_table.entry(hash).or_insert(default_bounds);
 

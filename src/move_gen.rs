@@ -161,7 +161,7 @@ impl GameMove {
     pub fn place_piece(self) -> Piece {
         Piece::from_index((self.0 >> 44) & 0xF)
     }
-    fn is_stack_move(self) -> bool {
+    pub fn is_stack_move(self) -> bool {
         (self.0 & Self::PLACEMENT_BITS) == 0
     }
     pub fn src_index(self) -> usize {
