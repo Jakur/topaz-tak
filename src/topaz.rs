@@ -63,6 +63,9 @@ pub fn main() {
             for m in pv.into_iter().map(|m| m.to_ptn()) {
                 println!("{}", m);
             }
+            let mut interactive = crate::search::proof::InteractiveSearch::new(search);
+            interactive.expand_line(vec!["c1".to_string(), "b1>".to_string()]);
+            interactive.print_root();
 
             // Todo Allow checking refuted sidelines from command line
             // let side_line = side_line.into_iter().map(|s| s.to_string()).collect();

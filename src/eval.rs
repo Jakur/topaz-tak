@@ -89,7 +89,7 @@ pub trait TakBoard: Position<Move = GameMove, ReverseMove = RevGameMove> {
         hint: Option<&[GameMove]>,
     ) -> Vec<GameMove>;
     fn can_make_road(
-        &mut self,
+        &self,
         storage: &mut Vec<GameMove>,
         hint: Option<&[GameMove]>,
     ) -> Option<GameMove>;
@@ -272,7 +272,7 @@ impl TakBoard for Board6 {
         tak_threats
     }
     fn can_make_road(
-        &mut self,
+        &self,
         storage: &mut Vec<GameMove>,
         hint: Option<&[GameMove]>,
     ) -> Option<GameMove> {

@@ -2,8 +2,10 @@ use super::*;
 use crate::eval::TakBoard;
 use crate::generate_all_moves;
 use crate::{Board6, Position, RevGameMove};
+use anyhow::Result;
 use std::cmp::min;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use termtree::Tree;
 
 const INFINITY: u32 = 100_000_000;
 
@@ -129,6 +131,113 @@ impl TopMoves {
             }
         }
     }
+}
+
+pub struct InteractiveSearch {
+    pub board: Board6,
+    bounds_table: HashMap<u64, Bounds>,
+    tinue_attempts: HashMap<u64, AttackerOutcome>,
+    expand: HashSet<u64>,
+}
+
+impl InteractiveSearch {
+    pub fn new(search: TinueSearch) -> Self {
+        let mut expand = HashSet::new();
+        expand.insert(search.board.hash());
+        InteractiveSearch {
+            board: search.board,
+            bounds_table: search.bounds_table,
+            tinue_attempts: search.tinue_attempts,
+            expand,
+        }
+    }
+    pub fn expand_line(&mut self, moves: Vec<String>) {
+        let mut rev_moves = Vec::new();
+        for ptn in moves.iter() {
+            let m = GameMove::try_from_ptn(ptn, &self.board).unwrap();
+            let rev = self.board.do_move(m);
+            self.expand.insert(self.board.hash());
+            rev_moves.push(rev);
+        }
+        for rev in rev_moves.into_iter().rev() {
+            self.board.reverse_move(rev);
+        }
+    }
+    pub fn print_root(&mut self) {
+        let mut tree = Tree::root("ROOT".to_string());
+        self.recurse_attack(&mut tree);
+        println!("{}", tree);
+    }
+    pub fn recurse_attack(&mut self, root: &mut Tree<String>) {
+        let attempt = self.tinue_attempts.get(&self.board.hash());
+        match attempt {
+            Some(AttackerOutcome::TakThreats(moves)) => {
+                for m in moves.clone().into_iter() {
+                    // Children will be a defender node
+                    let rev = self.board.do_move(m);
+                    let bounds = self.bounds_table.get(&self.board.hash()).unwrap();
+                    let solved = if bounds.phi == INFINITY {
+                        Solved::Proved
+                    } else if bounds.phi == 0 {
+                        Solved::Disproved
+                    } else {
+                        Solved::Unknown
+                    };
+                    let s = format!("{}': {:?}", m.to_ptn(), solved);
+                    let mut child = Tree::root(s);
+                    if self.expand.contains(&self.board.hash()) {
+                        self.recurse_defend(&mut child);
+                    }
+                    root.push(child);
+                    self.board.reverse_move(rev);
+                }
+            }
+            Some(AttackerOutcome::NoTakThreats) => {
+                root.push(Tree::root("∅".to_string()));
+            }
+            Some(AttackerOutcome::HasRoad(m)) => {
+                let s = format!("{}''", m.to_ptn());
+                root.push(Tree::root(s));
+            }
+            None => todo!(),
+        }
+    }
+    pub fn recurse_defend(&mut self, root: &mut Tree<String>) {
+        let attempt = TinueSearch::defender_responses(&mut self.board, None);
+        match attempt {
+            DefenderOutcome::CanWin(m) => {
+                todo!();
+            }
+            DefenderOutcome::Defenses(vec) => {
+                for m in vec {
+                    // Children will be a attacker node
+                    let rev = self.board.do_move(m);
+                    let bounds = self.bounds_table.get(&self.board.hash()).unwrap();
+                    let solved = if bounds.phi == INFINITY {
+                        Solved::Disproved
+                    } else if bounds.phi == 0 {
+                        Solved::Proved
+                    } else {
+                        Solved::Unknown
+                    };
+                    let s = format!("{}: {:?}", m.to_ptn(), solved);
+                    let mut child = Tree::root(s);
+                    if self.expand.contains(&self.board.hash()) {
+                        self.recurse_attack(&mut child);
+                    }
+                    root.push(child);
+                    self.board.reverse_move(rev);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Solved {
+    Proved,
+    Disproved,
+    Unknown,
 }
 
 pub struct TinueSearch {
@@ -258,34 +367,19 @@ impl TinueSearch {
                 }
             }
         } else {
-            let mut moves = Vec::new();
-            if let Some(m) = self
-                .board
-                .can_make_road(&mut moves, Some(self.top_moves[depth].get_best()))
-            {
-                self.top_moves[depth].add_move(m);
-                let eval = Bounds::winning();
-                child.update_bounds(eval, &mut self.bounds_table);
-                self.undo_move();
-                return;
+            match Self::defender_responses(
+                &mut self.board,
+                self.top_moves.get(depth).map(|t| t.get_best()),
+            ) {
+                DefenderOutcome::CanWin(m) => {
+                    self.top_moves[depth].add_move(m);
+                    let eval = Bounds::winning();
+                    child.update_bounds(eval, &mut self.bounds_table);
+                    self.undo_move();
+                    return;
+                }
+                DefenderOutcome::Defenses(moves) => moves,
             }
-            let enemy = !side_to_move;
-            let enemy_road_pieces = self.board.bits.road_pieces(enemy);
-            // Todo optimization: only check if there is only one flat threat
-            let placement =
-                crate::eval::find_placement_road(enemy, enemy_road_pieces, self.board.bits.empty());
-            generate_all_moves(&mut self.board, &mut moves);
-            let mut moves: Vec<GameMove> = moves
-                .into_iter()
-                .filter(|m| !m.is_place_move() || m.place_piece().is_blocker())
-                .collect();
-            if let Some(attack) = placement {
-                // Try to parry the flat placement with one's own flat placement
-                let sq = attack.src_index();
-                let piece = attack.place_piece().swap_color();
-                moves.push(GameMove::from_placement(piece, sq));
-            }
-            moves
         };
         assert!(!moves.is_empty());
 
@@ -312,6 +406,29 @@ impl TinueSearch {
             best_child.update_bounds(updated_bounds, &mut self.bounds_table);
             self.mid(best_child, depth + 1);
         }
+    }
+    fn defender_responses(board: &mut Board6, hint: Option<&[GameMove]>) -> DefenderOutcome {
+        let mut moves = Vec::new();
+        if let Some(m) = board.can_make_road(&mut moves, hint) {
+            return DefenderOutcome::CanWin(m);
+        }
+        let enemy = !board.side_to_move();
+        let enemy_road_pieces = board.bits.road_pieces(enemy);
+        // Todo optimization: only check if there is only one flat threat
+        let placement =
+            crate::eval::find_placement_road(enemy, enemy_road_pieces, board.bits.empty());
+        generate_all_moves(&board, &mut moves);
+        let mut moves: Vec<GameMove> = moves
+            .into_iter()
+            .filter(|m| !m.is_place_move() || m.place_piece().is_blocker())
+            .collect();
+        if let Some(attack) = placement {
+            // Try to parry the flat placement with one's own flat placement
+            let sq = attack.src_index();
+            let piece = attack.place_piece().swap_color();
+            moves.push(GameMove::from_placement(piece, sq));
+        }
+        DefenderOutcome::Defenses(moves)
     }
     fn select_child(children: &[Child]) -> (usize, Bounds) {
         let mut c_best_idx = 0;
@@ -385,6 +502,12 @@ enum AttackerOutcome {
     HasRoad(GameMove),
     TakThreats(Vec<GameMove>),
     NoTakThreats,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+enum DefenderOutcome {
+    CanWin(GameMove),
+    Defenses(Vec<GameMove>),
 }
 
 #[cfg(test)]
