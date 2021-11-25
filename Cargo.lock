@@ -93,6 +93,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "colorful"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bca1619ff57dd7a56b58a8e25ef4199f123e78e503fe1653410350a1b98ae65"
+
+[[package]]
 name = "criterion"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -199,6 +205,15 @@ name = "either"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e78d4f1cc4ae33bbfc157ed5d5a5ef3bc29227303d595861deb238fcec4e9457"
+
+[[package]]
+name = "getopts"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14dbbfd5c71d70241ecf9e6f13737f7b5ce823821063188d7e46c41d371eebd5"
+dependencies = [
+ "unicode-width",
+]
 
 [[package]]
 name = "getrandom"
@@ -558,8 +573,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "board-game-traits",
+ "colorful",
  "criterion",
  "crossbeam-channel",
+ "getopts",
  "lru",
  "rand_core",
  "rand_xoshiro",

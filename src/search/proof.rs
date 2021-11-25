@@ -1,7 +1,8 @@
 use super::*;
 use crate::eval::TakBoard;
-use crate::move_gen::generate_all_place_moves;
+use crate::move_gen::{generate_all_moves, generate_all_place_moves};
 use crate::{Board6, Position, RevGameMove};
+use anyhow::{anyhow, Result};
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use termtree::Tree;
@@ -94,15 +95,6 @@ impl Bounds {
     }
 }
 
-impl Default for Bounds {
-    fn default() -> Self {
-        Self {
-            phi: 100,
-            delta: 100,
-        }
-    }
-}
-
 #[derive(Clone)]
 struct TopMoves {
     moves: [GameMove; Self::MAX_SIZE],
@@ -137,6 +129,7 @@ pub struct InteractiveSearch {
     bounds_table: HashMap<u64, Bounds>,
     tinue_attempts: HashMap<u64, AttackerOutcome>,
     expand: HashSet<u64>,
+    view_hist: Vec<(GameMove, RevGameMove)>,
 }
 
 impl InteractiveSearch {
@@ -148,9 +141,25 @@ impl InteractiveSearch {
             bounds_table: search.bounds_table,
             tinue_attempts: search.tinue_attempts,
             expand,
+            view_hist: Vec::new(),
         }
     }
-    pub fn expand_line(&mut self, moves: Vec<String>) {
+    pub fn change_view(&mut self, line: &str) -> Result<()> {
+        for ptn in line.split("/") {
+            let m = GameMove::try_from_ptn(ptn, &self.board)
+                .ok_or_else(|| anyhow!("Unable to parse ptn!"))?;
+            let mut legal_moves = Vec::new();
+            generate_all_moves(&self.board, &mut legal_moves);
+            if legal_moves.contains(&m) {
+                let rev = self.board.do_move(m);
+                self.view_hist.push((m, rev));
+            } else {
+                return Err(anyhow!("Attempted to execute illegal move, breaking!"));
+            }
+        }
+        Ok(())
+    }
+    pub fn expand_line(&mut self, moves: Vec<&str>) {
         let mut rev_moves = Vec::new();
         for ptn in moves.iter() {
             let m = GameMove::try_from_ptn(ptn, &self.board).unwrap();
@@ -162,12 +171,25 @@ impl InteractiveSearch {
             self.board.reverse_move(rev);
         }
     }
+    pub fn reset_view(&mut self) {
+        for (_, rev) in self.view_hist.drain(..).rev() {
+            self.board.reverse_move(rev);
+        }
+    }
+    pub fn reset_expansion(&mut self) {
+        self.expand.clear();
+    }
     pub fn print_root(&mut self) {
-        let mut tree = Tree::root("ROOT".to_string());
-        self.recurse_attack(&mut tree);
+        let line = self.view_hist.iter().map(|(m, _)| m.to_ptn()).collect();
+        let mut tree = Tree::root(Solved::Root(line));
+        if self.view_hist.len() % 2 == 0 {
+            self.recurse_attack(&mut tree);
+        } else {
+            self.recurse_defend(&mut tree);
+        }
         println!("{}", tree);
     }
-    pub fn recurse_attack(&mut self, root: &mut Tree<String>) {
+    fn recurse_attack(&mut self, root: &mut Tree<Solved>) {
         let attempt = self.tinue_attempts.get(&self.board.hash());
         match attempt {
             Some(AttackerOutcome::TakThreats(moves)) => {
@@ -176,14 +198,13 @@ impl InteractiveSearch {
                     let rev = self.board.do_move(m);
                     let bounds = self.bounds_table.get(&self.board.hash()).unwrap();
                     let solved = if bounds.phi == INFINITY {
-                        Solved::Proved
+                        Solved::Proved(m)
                     } else if bounds.phi == 0 {
-                        Solved::Disproved
+                        Solved::Disproved(m)
                     } else {
-                        Solved::Unknown
+                        Solved::Unknown(m)
                     };
-                    let s = format!("{}': {:?}", m.to_ptn(), solved);
-                    let mut child = Tree::root(s);
+                    let mut child = Tree::root(solved);
                     if self.expand.contains(&self.board.hash()) {
                         self.recurse_defend(&mut child);
                     }
@@ -192,21 +213,19 @@ impl InteractiveSearch {
                 }
             }
             Some(AttackerOutcome::NoTakThreats) => {
-                root.push(Tree::root("∅".to_string()));
+                root.push(Tree::root(Solved::AttackerNoMoves));
             }
             Some(AttackerOutcome::HasRoad(m)) => {
-                let s = format!("{}''", m.to_ptn());
-                root.push(Tree::root(s));
+                root.push(Tree::root(Solved::AttackerRoad(*m)));
             }
             None => todo!(),
         }
     }
-    pub fn recurse_defend(&mut self, root: &mut Tree<String>) {
+    fn recurse_defend(&mut self, root: &mut Tree<Solved>) {
         let attempt = TinueSearch::defender_responses(&mut self.board, None);
         match attempt {
             DefenderOutcome::CanWin(m) => {
-                let s = format!("{}'': Defender Road!", m.to_ptn());
-                root.push(Tree::root(s));
+                root.push(Tree::root(Solved::DefenderRoad(m)));
             }
             DefenderOutcome::Defenses(vec) => {
                 for m in vec {
@@ -214,14 +233,13 @@ impl InteractiveSearch {
                     let rev = self.board.do_move(m);
                     let bounds = self.bounds_table.get(&self.board.hash()).unwrap();
                     let solved = if bounds.phi == INFINITY {
-                        Solved::Disproved
+                        Solved::Disproved(m)
                     } else if bounds.phi == 0 {
-                        Solved::Proved
+                        Solved::Proved(m)
                     } else {
-                        Solved::Unknown
+                        Solved::Unknown(m)
                     };
-                    let s = format!("{}: {:?}", m.to_ptn(), solved);
-                    let mut child = Tree::root(s);
+                    let mut child = Tree::root(solved);
                     if self.expand.contains(&self.board.hash()) {
                         self.recurse_attack(&mut child);
                     }
@@ -233,11 +251,40 @@ impl InteractiveSearch {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Solved {
-    Proved,
-    Disproved,
-    Unknown,
+    Proved(GameMove),
+    Disproved(GameMove),
+    Unknown(GameMove),
+    AttackerRoad(GameMove),
+    DefenderRoad(GameMove),
+    AttackerNoMoves,
+    Root(Vec<String>),
+}
+
+impl std::fmt::Display for Solved {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        use colorful::Color;
+        use colorful::Colorful;
+        let s = match self {
+            Solved::Proved(m) => format!("{}", m.to_ptn()),
+            Solved::Disproved(m) => format!("{}", m.to_ptn()),
+            Solved::Unknown(m) => return write!(f, "{}", m.to_ptn()),
+            Solved::AttackerRoad(m) => format!("{}''", m.to_ptn()),
+            Solved::DefenderRoad(m) => format!("{}''", m.to_ptn()),
+            Solved::AttackerNoMoves => format!("∅"),
+            Solved::Root(vec) => {
+                let move_str = vec.join("/");
+                return write!(f, "ROOT({})", move_str);
+            }
+        };
+        let color = match self {
+            Solved::Proved(_) | Solved::AttackerRoad(_) => Color::Blue,
+            Solved::Disproved(_) | Solved::DefenderRoad(_) | Solved::AttackerNoMoves => Color::Red,
+            _ => unreachable!(),
+        };
+        write!(f, "{}", s.color(color))
+    }
 }
 
 pub struct TinueSearch {

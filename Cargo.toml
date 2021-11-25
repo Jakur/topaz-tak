@@ -14,6 +14,8 @@ rand_xoshiro = "0.6.0"
 crossbeam-channel = "0.5"
 lru = "0.7.0"
 termtree = "0.2.3"
+colorful = "0.2"
+getopts = "0.2.21"
 
 [profile.release]
 debug = true
