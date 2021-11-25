@@ -1,12 +1,14 @@
+use crate::eval::Evaluator6;
 use anyhow::Result;
 use board_game_traits::Position;
 use crossbeam_channel::{unbounded, Receiver, Sender};
+use getopts::Options;
 use std::env;
 use std::io::{self, BufRead};
 use std::thread;
 use std::time::Instant;
-use topaz_tak::eval::Evaluate;
-use topaz_tak::search::{search, SearchInfo};
+use topaz_tak::eval::TakBoard;
+use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
 
 pub fn main() {
@@ -21,8 +23,9 @@ pub fn main() {
             let time = Instant::now();
             let s = "2,x4,1/x4,1,x/x,2,12C,1,1,x/x,1,2,21C,x2/x,2,2,x3/x2,2,1,x2 1 10";
             let mut board = Board6::try_from_tps(s).unwrap();
+            let eval = Evaluator6 {};
             let mut info = SearchInfo::new(6, 10000);
-            search(&mut board, &mut info);
+            search(&mut board, &eval, &mut info);
             let pv_move = info.pv_move(&board).unwrap();
             println!("Computer Choose: {}", pv_move.to_ptn());
             println!("Time: {} ms", time.elapsed().as_millis());
@@ -62,15 +65,9 @@ pub fn main() {
                 println!("{}", m);
             }
 
-            // Todo Allow checking refuted sidelines from command line
-            // let side_line = side_line.into_iter().map(|s| s.to_string()).collect();
-            // let side = search.side_variation(side_line);
-            // println!("Side Variation: ");
-            // for m in side.into_iter().map(|m| m.to_ptn()) {
-            //     println!("{}", m);
-            // }
             let seconds = time.elapsed().as_secs();
             println!("Done in {} seconds", seconds);
+            proof_interactive(search).unwrap();
             return;
         } else {
             println!("Unknown argument: {}", arg1);
@@ -94,13 +91,70 @@ pub fn main() {
     }
 }
 
+fn proof_interactive(search: TinueSearch) -> Result<()> {
+    let mut interactive = crate::search::proof::InteractiveSearch::new(search);
+    let mut first = true;
+    interactive.print_root();
+    loop {
+        let mut opts = Options::new();
+        let mut buffer = String::new();
+        // opts.optopt("o", "", "set output file name", "NAME");
+        opts.optopt("m", "move", "Move the root of the tree", "PTN/PTN");
+        opts.optopt(
+            "e",
+            "expand",
+            "Expand the tree of a certain move",
+            "PTN/PTN",
+        );
+        // opts.optflag("v", "verbose", "Expand all children, even explored ones");
+        opts.optflag("h", "help", "Print the help text");
+        opts.optflag("q", "quit", "Quit");
+        opts.optflag(
+            "r",
+            "reset",
+            "Resets the view back to the default root view",
+        );
+        if first {
+            println!("{}", opts.usage(""));
+            first = false;
+        }
+        io::stdin().lock().read_line(&mut buffer)?;
+        let matches = opts.parse(buffer.split_whitespace())?;
+        if matches.opt_present("q") {
+            break;
+        }
+        if matches.opt_present("h") {
+            println!("{}", opts.usage(""));
+            continue;
+        }
+        if matches.opt_present("r") {
+            interactive.reset_expansion();
+            interactive.reset_view();
+        }
+        if let Some(v) = matches.opt_str("m") {
+            let res = interactive.change_view(&v);
+            if res.is_err() {
+                println!("Failed to change view, resetting to default!");
+                interactive.reset_view();
+            }
+        }
+        if let Some(s) = matches.opt_str("e") {
+            interactive.expand_line(s.split("/").collect());
+        }
+        // interactive.expand_line(vec!["c1".to_string(), "b1>".to_string()]);
+        interactive.print_root();
+    }
+    Ok(())
+}
+
 fn play_game_cmd(mut computer_turn: bool) {
     let mut board = Board6::new();
+    let eval = Evaluator6 {};
     while let None = board.game_result() {
         println!("{:?}", &board);
         if computer_turn {
             let mut info = SearchInfo::new(6, 5000);
-            search(&mut board, &mut info);
+            search(&mut board, &eval, &mut info);
             let pv_move = info.pv_move(&board).unwrap();
             println!("Computer Choose: {}", pv_move.to_ptn());
             board.do_move(pv_move);
@@ -166,6 +220,7 @@ impl TimeLeft {
 fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
     let mut board = Board6::new();
     let mut info = SearchInfo::new(6, 1000000);
+    let eval = Evaluator6 {};
     loop {
         let message = receiver.recv()?;
         match message {
@@ -180,7 +235,7 @@ fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
                 info = SearchInfo::new(6, 0)
                     .take_table(&mut info)
                     .max_time(use_time);
-                let res = search(&mut board, &mut info);
+                let res = search(&mut board, &eval, &mut info);
                 if let Some(outcome) = res {
                     println!("info {}", outcome);
                     println!(

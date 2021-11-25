@@ -54,8 +54,10 @@ pub fn generate_aggressive_place_moves(board: &Board6, moves: &mut Vec<GameMove>
             moves.push(GameMove::from_placement(cap, index));
         }
     }
-    for index in board.empty_tiles() {
-        moves.push(GameMove::from_placement(flat, index));
+    if board.pieces_reserve(side_to_move) > 1 {
+        for index in board.empty_tiles() {
+            moves.push(GameMove::from_placement(flat, index));
+        }
     }
 }
 
@@ -159,7 +161,7 @@ impl GameMove {
     pub fn place_piece(self) -> Piece {
         Piece::from_index((self.0 >> 44) & 0xF)
     }
-    fn is_stack_move(self) -> bool {
+    pub fn is_stack_move(self) -> bool {
         (self.0 & Self::PLACEMENT_BITS) == 0
     }
     pub fn src_index(self) -> usize {
