@@ -565,7 +565,7 @@ enum DefenderOutcome {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::Board6;
+    use crate::board::Board6;
     #[test]
     fn simple() {
         let s = "x2,2,x2,1/x5,1/x,2,x,1,1,1/x,2,x2,1,x/x,2C,x4/x,2,x4 2 6";

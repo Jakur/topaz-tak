@@ -21,7 +21,7 @@ pub fn main() {
         } else if arg1 == "test" {
             let time = Instant::now();
             let s = "2,x4,1/x4,1,x/x,2,12C,1,1,x/x,1,2,21C,x2/x,2,2,x3/x2,2,1,x2 1 10";
-            let mut board = Board6::try_from_tps(s).unwrap();
+            let mut board = crate::board::Board6::try_from_tps(s).unwrap();
             let eval = Evaluator6 {};
             let mut info = SearchInfo::new(6, 10000);
             search(&mut board, &eval, &mut info);
@@ -45,7 +45,7 @@ pub fn main() {
                 _ => rest.as_str(),
             };
             let time = Instant::now();
-            let board = match Board6::try_from_tps(tps) {
+            let board = match crate::board::Board6::try_from_tps(tps) {
                 Ok(b) => b,
                 Err(_) => {
                     println!("Unable to create game with tps: \n{}", tps);
@@ -147,7 +147,7 @@ fn proof_interactive<T: TakBoard>(search: TinueSearch<T>) -> Result<()> {
 }
 
 fn play_game_cmd(mut computer_turn: bool) {
-    let mut board = Board6::new();
+    let mut board = crate::board::Board6::new();
     let eval = Evaluator6 {};
     while let None = board.game_result() {
         println!("{:?}", &board);
@@ -217,7 +217,7 @@ impl TimeLeft {
 }
 
 fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
-    let mut board = Board6::new();
+    let mut board = crate::board::Board6::new();
     let mut info = SearchInfo::new(6, 1000000);
     let eval = Evaluator6 {};
     loop {
@@ -249,7 +249,7 @@ fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
                 }
             }
             TeiCommand::Position(s) => {
-                board = Board6::new();
+                board = crate::board::Board6::new();
                 for m in s.split_whitespace() {
                     if let Some(m) = GameMove::try_from_ptn(m, &board) {
                         board.do_move(m);

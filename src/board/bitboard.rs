@@ -462,7 +462,7 @@ mod test {
     #[test]
     pub fn bitboard_creation() {
         use board_game_traits::Position;
-        use crate::Board6;
+        use crate::board::Board6;
         let tps =
             "2,x4,1/2,2,x2,1,x/2,212C,x,1,1,x/2,1,x,2S,12S,x/12,12221C,x,12,1,1/1S,12,x,1,1,x 1 22";
         let board = Board6::try_from_tps(tps).unwrap();

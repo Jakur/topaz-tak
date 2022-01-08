@@ -468,8 +468,8 @@ fn naive_minimax<T: TakBoard, E: Evaluator<Game = T>>(board: &mut T, eval: &E, d
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::board::Board6;
     use crate::eval::{Evaluator6, LOSE_SCORE};
-    use crate::Board6;
     #[test]
     fn small_minimax() {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";

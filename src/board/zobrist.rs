@@ -1,5 +1,6 @@
+use crate::board::Board6;
+use crate::Piece;
 use crate::TakBoard;
-use crate::{Board6, Piece};
 use board_game_traits::Color;
 use rand_core::{RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -41,9 +42,9 @@ impl ZobristTable {
         let idx = color_offset + sq_index * 62 + stack_index;
         self.table[TOPS + idx]
     }
-    pub fn manual_build_hash(&self, board: &Board6) -> u64 {
+    pub fn manual_build_hash<T: TakBoard>(&self, board: &T) -> u64 {
         let mut hash = 0;
-        for (sq, stack) in board.board.iter().enumerate() {
+        for (sq, stack) in board.board().iter().enumerate() {
             for (stack_pos, piece) in stack.iter().enumerate() {
                 hash ^= self.stack_hash(*piece, sq, stack_pos);
             }

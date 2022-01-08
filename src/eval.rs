@@ -1,4 +1,5 @@
-use super::{Bitboard, Board6, Piece, Stack};
+use super::{Bitboard, Piece, Stack};
+use crate::board::Board6;
 use crate::board::TakBoard;
 use board_game_traits::{Color, Position};
 
@@ -221,7 +222,7 @@ mod test {
     #[test]
     fn check_tak_threats() {
         let s = "x2,2,x2,1/x5,1/x,2,x,1,1,1/x,2,x2,1,x/x,2C,x4/x,2,x4 2 6";
-        let mut board = crate::Board6::try_from_tps(s).unwrap();
+        let mut board = Board6::try_from_tps(s).unwrap();
         let mut moves = Vec::new();
         generate_all_moves(&mut board, &mut moves);
         let tak_threats = board.get_tak_threats(&moves, None);

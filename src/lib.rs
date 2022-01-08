@@ -1,5 +1,5 @@
 use anyhow::{anyhow, ensure, Result};
-pub use board::{Bitboard, Bitboard6, BitboardStorage, Board6, Piece, Stack, TakBoard};
+pub use board::{Bitboard, BitboardStorage, Piece, Stack, TakBoard};
 pub use board_game_traits::{Color, GameResult, Position};
 pub use move_gen::{generate_all_moves, GameMove, RevGameMove};
 
@@ -16,7 +16,10 @@ pub enum TeiCommand {
     Position(String),
 }
 
-pub fn execute_moves_check_valid(board: &mut Board6, ptn_slice: &[&str]) -> Result<Vec<GameMove>> {
+pub fn execute_moves_check_valid(
+    board: &mut crate::board::Board6,
+    ptn_slice: &[&str],
+) -> Result<Vec<GameMove>> {
     let mut moves = Vec::new();
     let mut made_moves = Vec::new();
     for m_str in ptn_slice {
