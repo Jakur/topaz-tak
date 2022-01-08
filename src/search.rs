@@ -1,5 +1,6 @@
 use super::{Color, GameResult};
-use crate::eval::{Evaluator, TakBoard};
+use crate::board::TakBoard;
+use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::GameMove;
 use crate::TeiCommand;

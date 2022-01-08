@@ -7,7 +7,6 @@ use std::env;
 use std::io::{self, BufRead};
 use std::thread;
 use std::time::Instant;
-use topaz_tak::eval::TakBoard;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
 
@@ -91,7 +90,7 @@ pub fn main() {
     }
 }
 
-fn proof_interactive(search: TinueSearch) -> Result<()> {
+fn proof_interactive<T: TakBoard>(search: TinueSearch<T>) -> Result<()> {
     let mut interactive = crate::search::proof::InteractiveSearch::new(search);
     let mut first = true;
     interactive.print_root();

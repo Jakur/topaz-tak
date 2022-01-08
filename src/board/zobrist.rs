@@ -1,3 +1,4 @@
+use crate::TakBoard;
 use crate::{Board6, Piece};
 use board_game_traits::Color;
 use rand_core::{RngCore, SeedableRng};
@@ -5,8 +6,8 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 
 pub const TABLE: ZobristTable = ZobristTable::new();
 
-const TOPS: usize = 7 * 37;
-const STACKS: usize = 62 * 36;
+const TOPS: usize = (Board6::SIZE + 1) * (Board6::SIZE * Board6::SIZE + 1);
+const STACKS: usize = (Board6::FLATS * 2 + 2) * (Board6::SIZE * Board6::SIZE);
 /// A Zobrist Table holding enough random values to support a size 6 board
 pub struct ZobristTable {
     white_to_move: u64,

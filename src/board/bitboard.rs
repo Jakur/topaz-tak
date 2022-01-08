@@ -1,6 +1,7 @@
 use super::{Piece, Stack};
 use crate::board::zobrist::TABLE;
 use board_game_traits::Color;
+use crate::TakBoard;
 
 #[derive(Default, PartialEq, Clone)]
 pub struct BitboardStorage<T> {
@@ -65,7 +66,8 @@ where
     pub fn check_road(&self, color: Color) -> bool {
         self.road_pieces(color).check_road()
     }
-    pub fn build_6(board: &[Stack; 36]) -> Self {
+    pub fn build<B: TakBoard>(board: &[Stack]) -> Self {
+        assert_eq!(board.len(), B::SIZE * B::SIZE);
         let mut storage = Self::default();
         storage.set_zobrist(TABLE.color_hash(Color::White));
         for (idx, stack) in board.iter().enumerate() {
@@ -109,6 +111,7 @@ where
 pub trait Bitboard:
     Copy
     + Default
+    + PartialEq
     + std::ops::BitOrAssign
     + std::ops::BitOr<Output = Self>
     + std::ops::BitAnd<Output = Self>
@@ -459,10 +462,11 @@ mod test {
     #[test]
     pub fn bitboard_creation() {
         use board_game_traits::Position;
+        use crate::Board6;
         let tps =
             "2,x4,1/2,2,x2,1,x/2,212C,x,1,1,x/2,1,x,2S,12S,x/12,12221C,x,12,1,1/1S,12,x,1,1,x 1 22";
-        let board = crate::Board6::try_from_tps(tps).unwrap();
-        let bitboards = BitboardStorage::<Bitboard6>::build_6(&board.board);
+        let board = Board6::try_from_tps(tps).unwrap();
+        let bitboards = BitboardStorage::<Bitboard6>::build::<Board6>(&board.board);
         let stacks1: Vec<_> = bitboards.iter_stacks(board.side_to_move()).collect();
         let stacks2 = board.scan_active_stacks(board.side_to_move());
         assert_eq!(stacks1, stacks2);

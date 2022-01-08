@@ -1,5 +1,7 @@
-use super::{Board6, GameMove, Piece};
-use crate::eval::TakBoard;
+use board_game_traits::Color;
+
+use super::{GameMove, Piece};
+use crate::board::{Board6, TakBoard};
 
 impl GameMove {
     pub fn to_ptn(self) -> String {
@@ -34,8 +36,10 @@ impl GameMove {
             format!("{}{}{}{}{}", num_string, square, dir, spread, crush_str)
         }
     }
-    // fn try_from_ptn(s: &str, size: usize) -> Result<Self>
-    pub fn try_from_ptn(s: &str, board: &Board6) -> Option<Self> {
+    pub fn try_from_ptn<T: TakBoard>(s: &str, board: &T) -> Option<Self> {
+        Self::try_from_ptn_m(s, T::SIZE, board.side_to_move())
+    }
+    pub fn try_from_ptn_m(s: &str, size: usize, active_player: Color) -> Option<Self> {
         let mut iter = s.chars().take_while(|&c| c != '*');
         let first = iter.next()?;
         let pieces = first.to_digit(10);
@@ -60,14 +64,11 @@ impl GameMove {
             'h' => 7,
             _ => return None,
         };
-        // ensure!(col < size, "Board column out of range");
-        let row = board.board_size() - row.to_digit(10)? as usize;
-        // ensure!(row < size, "Board row out of range");
-        let square = row * board.board_size() + col;
+        let row = size - row.to_digit(10)? as usize;
+        let square = row * size + col;
 
         if let Some(dir) = iter.next() {
             // Stack Move
-            // let stack_move = Self(square);
             let pieces = pieces.unwrap_or(1) as u64;
             let dir = match dir {
                 '+' => 0,
@@ -101,7 +102,7 @@ impl GameMove {
             )
         } else {
             // Placement
-            let color = board.active_player();
+            let color = active_player;
             let piece = if first == 'S' {
                 Piece::wall(color)
             } else if first == 'C' {

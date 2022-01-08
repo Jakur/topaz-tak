@@ -1,7 +1,7 @@
 use super::*;
-use crate::eval::TakBoard;
+use crate::board::TakBoard;
 use crate::move_gen::{generate_all_moves, generate_all_place_moves};
-use crate::{Board6, Position, RevGameMove};
+use crate::RevGameMove;
 use anyhow::{anyhow, Result};
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
@@ -124,16 +124,19 @@ impl TopMoves {
     }
 }
 
-pub struct InteractiveSearch {
-    pub board: Board6,
+pub struct InteractiveSearch<T> {
+    pub board: T,
     bounds_table: HashMap<u64, Bounds>,
     tinue_attempts: HashMap<u64, AttackerOutcome>,
     expand: HashSet<u64>,
     view_hist: Vec<(GameMove, RevGameMove)>,
 }
 
-impl InteractiveSearch {
-    pub fn new(search: TinueSearch) -> Self {
+impl<T> InteractiveSearch<T>
+where
+    T: TakBoard,
+{
+    pub fn new(search: TinueSearch<T>) -> Self {
         let mut expand = HashSet::new();
         expand.insert(search.board.hash());
         InteractiveSearch {
@@ -287,8 +290,8 @@ impl std::fmt::Display for Solved {
     }
 }
 
-pub struct TinueSearch {
-    pub board: Board6,
+pub struct TinueSearch<T> {
+    pub board: T,
     bounds_table: HashMap<u64, Bounds>,
     rev_moves: Vec<RevGameMove>,
     zobrist_hist: Vec<u64>,
@@ -301,8 +304,11 @@ pub struct TinueSearch {
     tinue_cache_misses: usize,
 }
 
-impl TinueSearch {
-    pub fn new(board: Board6) -> Self {
+impl<T> TinueSearch<T>
+where
+    T: TakBoard,
+{
+    pub fn new(board: T) -> Self {
         let attacker = board.side_to_move();
         Self {
             board,
@@ -333,25 +339,6 @@ impl TinueSearch {
     pub fn principal_variation(&mut self) -> Vec<GameMove> {
         let mut hist = Vec::new();
         let mut pv = Vec::new();
-        while let Some(&game_move) = self.replies.get(&self.board.hash()) {
-            pv.push(game_move);
-            let rev = self.board.do_move(game_move);
-            hist.push(rev);
-        }
-        for rev_move in hist.into_iter().rev() {
-            self.board.reverse_move(rev_move);
-        }
-        pv
-    }
-    pub fn side_variation(&mut self, start_with: Vec<String>) -> Vec<GameMove> {
-        let mut hist = Vec::new();
-        let mut pv = Vec::new();
-        for s in start_with.into_iter() {
-            let game_move = GameMove::try_from_ptn(&s, &self.board).unwrap();
-            pv.push(game_move);
-            let rev = self.board.do_move(game_move);
-            hist.push(rev);
-        }
         while let Some(&game_move) = self.replies.get(&self.board.hash()) {
             pv.push(game_move);
             let rev = self.board.do_move(game_move);
@@ -457,18 +444,18 @@ impl TinueSearch {
             self.mid(best_child, depth + 1);
         }
     }
-    fn defender_responses(board: &mut Board6, hint: Option<&[GameMove]>) -> DefenderOutcome {
+    fn defender_responses(board: &mut T, hint: Option<&[GameMove]>) -> DefenderOutcome {
         let mut moves = Vec::new();
         if let Some(m) = board.can_make_road(&mut moves, hint) {
             return DefenderOutcome::CanWin(m);
         }
         let enemy = !board.side_to_move();
-        let enemy_road_pieces = board.bits.road_pieces(enemy);
+        let enemy_road_pieces = board.bits().road_pieces(enemy);
         // Todo optimization: only check if there is only one flat threat
         let placement =
-            crate::eval::find_placement_road(enemy, enemy_road_pieces, board.bits.empty());
+            crate::board::find_placement_road(enemy, enemy_road_pieces, board.bits().empty());
         assert!(moves.len() > 0); // All stack moves should already be generated
-        generate_all_place_moves(&board, &mut moves);
+        generate_all_place_moves(board, &mut moves);
         // generate_all_moves(&board, &mut moves); // In practice generating them twice helps??
         let mut moves: Vec<GameMove> = moves
             .into_iter()
@@ -578,6 +565,7 @@ enum DefenderOutcome {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::Board6;
     #[test]
     fn simple() {
         let s = "x2,2,x2,1/x5,1/x,2,x,1,1,1/x,2,x2,1,x/x,2C,x4/x,2,x4 2 6";

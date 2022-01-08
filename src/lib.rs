@@ -1,9 +1,9 @@
 use anyhow::{anyhow, ensure, Result};
-pub use board::{Bitboard, Bitboard6, BitboardStorage, Board6, Piece, Stack};
+pub use board::{Bitboard, Bitboard6, BitboardStorage, Board6, Piece, Stack, TakBoard};
 pub use board_game_traits::{Color, GameResult, Position};
 pub use move_gen::{generate_all_moves, GameMove, RevGameMove};
 
-mod board;
+pub mod board;
 pub mod eval;
 mod move_gen;
 pub mod search;
