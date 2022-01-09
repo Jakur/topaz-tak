@@ -1,12 +1,33 @@
 use anyhow::{anyhow, ensure, Result};
-pub use board::{Bitboard, Bitboard6, BitboardStorage, Board6, Piece, Stack};
+pub use board::{Bitboard, BitboardStorage, Piece, Stack, TakBoard};
 pub use board_game_traits::{Color, GameResult, Position};
 pub use move_gen::{generate_all_moves, GameMove, RevGameMove};
 
-mod board;
+pub mod board;
 pub mod eval;
 mod move_gen;
 pub mod search;
+
+use crate::board::{Board5, Board6, Board7};
+
+#[non_exhaustive]
+pub enum TakGame {
+    Standard5(Board5),
+    Standard6(Board6),
+    Standard7(Board7),
+}
+
+impl TakGame {
+    pub fn try_from_tps(tps: &str) -> Result<Self> {
+        let size = tps.chars().filter(|&c| c == '/').count() + 1;
+        match size {
+            5 => Ok(TakGame::Standard5(Board5::try_from_tps(tps)?)),
+            6 => Ok(TakGame::Standard6(Board6::try_from_tps(tps)?)),
+            7 => Ok(TakGame::Standard7(Board7::try_from_tps(tps)?)),
+            _ => Err(anyhow!("Unknown game size: {}", size)),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum TeiCommand {

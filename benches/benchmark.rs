@@ -1,7 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use topaz_tak::eval::{find_placement_road, Evaluator, Evaluator6, LOSE_SCORE};
+use topaz_tak::board::find_placement_road;
+use topaz_tak::board::{Bitboard6, Board6};
+use topaz_tak::eval::{Evaluator, Evaluator6, LOSE_SCORE};
 use topaz_tak::search::root_minimax;
-use topaz_tak::{execute_moves_check_valid, perft, Bitboard6, Board6, Color, GameMove};
+use topaz_tak::{execute_moves_check_valid, perft, Color, GameMove};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     // c.bench_function("small perft", |b| {
@@ -65,7 +67,7 @@ fn placement_road(_x: ()) {
     let empty = Bitboard6::new(9570373622301696);
     let color = Color::White;
     assert_eq!(
-        find_placement_road(color, rp, empty).map(|s| s.to_ptn()),
+        find_placement_road(color, rp, empty).map(|s| s.to_ptn::<Board6>()),
         Some("f4".to_string())
     );
     // "x,1,x4/2,2,1,1,1,1/2221,x,1,21C,x2/2,2,2C,1,2,x/2,2,1,1,1,2/2,x2,2,x,1 2 18"

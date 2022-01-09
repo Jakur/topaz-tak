@@ -1,10 +1,11 @@
-use super::{Board6, Piece};
-use board_game_traits::{Color, Position};
+use super::Piece;
+use crate::board::TakBoard;
+use board_game_traits::Color;
 use std::fmt;
 
 pub mod ptn;
 
-pub fn generate_all_moves(board: &Board6, moves: &mut Vec<GameMove>) {
+pub fn generate_all_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove>) {
     generate_all_place_moves(board, moves);
     if board.move_num() >= 2 {
         generate_all_stack_moves(board, moves);
@@ -12,7 +13,7 @@ pub fn generate_all_moves(board: &Board6, moves: &mut Vec<GameMove>) {
 }
 
 /// Generates all legal placements of flats, walls, and caps for the active player.
-pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
+pub fn generate_all_place_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove>) {
     let side_to_move = board.side_to_move();
     let start_locs = board.empty_tiles();
     if board.move_num() == 1 {
@@ -42,7 +43,7 @@ pub fn generate_all_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
 }
 
 /// Generates all cap or flat placement moves. Used for Tinue checking
-pub fn generate_aggressive_place_moves(board: &Board6, moves: &mut Vec<GameMove>) {
+pub fn generate_aggressive_place_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove>) {
     let side_to_move = board.side_to_move();
     let start_locs = board.empty_tiles();
     let (flat, cap) = match side_to_move {
@@ -62,16 +63,16 @@ pub fn generate_aggressive_place_moves(board: &Board6, moves: &mut Vec<GameMove>
 }
 
 /// Generates all legal sliding movements for the active player's stacks.
-pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
+pub fn generate_all_stack_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove>) {
     let start_locs = board.active_stacks(board.side_to_move());
     for index in start_locs {
-        let stack_height = board.board[index].len();
+        let stack_height = board.index(index).len();
         let start_move = GameMove(index as u64);
         let limits = find_move_limits(board, index);
         for dir in 0..4 {
             let dir_move = start_move.set_direction(dir as u64);
             let max_steps = limits.steps[dir];
-            let max_pieces = std::cmp::min(board.board_size(), stack_height);
+            let max_pieces = std::cmp::min(T::SIZE, stack_height);
             if limits.can_crush[dir] {
                 directional_crush_moves(moves, dir_move, max_steps, max_pieces - 1);
             }
@@ -80,13 +81,13 @@ pub fn generate_all_stack_moves(board: &Board6, moves: &mut Vec<GameMove>) {
             }
             // Max steps is greater than zero, so we know we can move
             let first_dest = match dir {
-                0 => index - board.board_size(),
+                0 => index - T::SIZE,
                 1 => index + 1,
-                2 => index + board.board_size(),
+                2 => index + T::SIZE,
                 3 => index - 1,
                 _ => unimplemented!(),
             };
-            match board.board[first_dest].last() {
+            match board.index(first_dest).last() {
                 Some(piece) => {
                     // Capture enemy piece first;
                     if piece.owner() != board.side_to_move() {
@@ -374,7 +375,7 @@ impl MoveLimits {
 /// the given direction to show that wall crush moves can be generated on the
 /// steps[dir] + 1 tile. If a fast bitwise method for wall detection is found,
 /// the empty board limits can be precomputed to replace this function.
-pub fn find_move_limits(board: &Board6, st_index: usize) -> MoveLimits {
+pub fn find_move_limits<T: TakBoard>(board: &T, st_index: usize) -> MoveLimits {
     let (st_row, st_col) = board.row_col(st_index);
     let mut limits = MoveLimits::new();
     find_dir_limit(board, st_row, st_col, 0, &mut limits, step_north);
@@ -386,8 +387,8 @@ pub fn find_move_limits(board: &Board6, st_index: usize) -> MoveLimits {
 
 /// Finds the movement limit in a single direction, updating the index to be
 /// searched according to the step_fn. See [find_move_limits].
-fn find_dir_limit<F>(
-    board: &Board6,
+fn find_dir_limit<F, T>(
+    board: &T,
     st_row: usize,
     st_col: usize,
     dir: usize,
@@ -395,6 +396,7 @@ fn find_dir_limit<F>(
     step_fn: F,
 ) where
     F: Fn(usize, usize) -> (usize, usize),
+    T: TakBoard,
 {
     let mut row = st_row;
     let mut col = st_col;
@@ -534,6 +536,7 @@ pub fn recursive_crush_moves(
 
 #[cfg(test)]
 mod test {
+    use crate::board::Board6;
     use board_game_traits::Position;
 
     use super::*;
@@ -587,13 +590,13 @@ mod test {
         generate_all_moves(board, &mut vec);
         vec
     }
-    fn compare_move_lists(my_moves: Vec<GameMove>, source_file: &str) {
+    fn compare_move_lists<T: TakBoard>(my_moves: Vec<GameMove>, source_file: &str) {
         use std::collections::HashSet;
         let file_data = std::fs::read_to_string(source_file).unwrap();
         let my_set: HashSet<_> = my_moves
             .iter()
             .map(|m| {
-                let mut m = m.to_ptn();
+                let mut m = m.to_ptn::<T>();
                 m.retain(|c| c != '*');
                 m
             })
@@ -627,7 +630,13 @@ mod test {
         let crush_moves: Vec<_> = moves
             .iter()
             .copied()
-            .filter_map(|m| if m.crush() { Some(m.to_ptn()) } else { None })
+            .filter_map(|m| {
+                if m.crush() {
+                    Some(m.to_ptn::<Board6>())
+                } else {
+                    None
+                }
+            })
             .collect();
         let real_crush_moves = [
             "3b4>111*", "4b4>121*", "4b4>211*", "5b4>131*", "5b4>221*", "5b4>311*", "6b4>141*",

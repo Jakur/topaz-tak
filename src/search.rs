@@ -1,10 +1,12 @@
 use super::{Color, GameResult};
-use crate::eval::{Evaluator, TakBoard};
+use crate::board::TakBoard;
+use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::GameMove;
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
 use lru::LruCache;
+use std::marker::PhantomData;
 use std::time::Instant;
 
 pub mod proof;
@@ -158,16 +160,20 @@ impl KillerMoves {
     }
 }
 
-pub struct SearchOutcome {
+pub struct SearchOutcome<T> {
     score: i32,
     time: u128,
     pv: Vec<GameMove>,
     nodes: usize,
     depth: usize,
     t_cuts: u64,
+    phantom: PhantomData<T>,
 }
 
-impl SearchOutcome {
+impl<T> SearchOutcome<T>
+where
+    T: TakBoard,
+{
     pub fn new(score: i32, pv: Vec<GameMove>, depth: usize, search_info: &SearchInfo) -> Self {
         let nodes = search_info.nodes;
         let time = search_info.start_time.elapsed().as_millis();
@@ -180,18 +186,22 @@ impl SearchOutcome {
             time,
             depth,
             t_cuts,
+            phantom: PhantomData,
         }
     }
     pub fn best_move(&self) -> Option<String> {
-        self.pv.get(0).map(|m| m.to_ptn())
+        self.pv.get(0).map(|m| m.to_ptn::<T>())
     }
 }
 
-impl std::fmt::Display for SearchOutcome {
+impl<T> std::fmt::Display for SearchOutcome<T>
+where
+    T: TakBoard,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         let mut pv_string = String::new();
         for m in self.pv.iter() {
-            pv_string.push_str(&m.to_ptn());
+            pv_string.push_str(&m.to_ptn::<T>());
             pv_string.push_str(" ");
         }
         pv_string.pop();
@@ -208,7 +218,7 @@ impl std::fmt::Display for SearchOutcome {
     }
 }
 
-pub fn search<T, E>(board: &mut T, eval: &E, info: &mut SearchInfo) -> Option<SearchOutcome>
+pub fn search<T, E>(board: &mut T, eval: &E, info: &mut SearchInfo) -> Option<SearchOutcome<T>>
 where
     T: TakBoard,
     E: Evaluator<Game = T>,
@@ -232,7 +242,7 @@ where
             depth,
             info,
         ));
-        for ptn in pv_moves.iter().map(|m| m.to_ptn()) {
+        for ptn in pv_moves.iter().map(|m| m.to_ptn::<T>()) {
             print!("{} ", ptn);
         }
         println!("");
@@ -467,8 +477,8 @@ fn naive_minimax<T: TakBoard, E: Evaluator<Game = T>>(board: &mut T, eval: &E, d
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::board::Board6;
     use crate::eval::{Evaluator6, LOSE_SCORE};
-    use crate::Board6;
     #[test]
     fn small_minimax() {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";

@@ -1,8 +1,7 @@
-use crate::eval::TakBoard;
-use crate::move_gen::generate_all_moves;
+use crate::move_gen::{generate_all_moves, generate_all_stack_moves};
 use crate::{GameMove, RevGameMove};
 use anyhow::{anyhow, bail, ensure, Result};
-pub use bitboard::{BitIndexIterator, Bitboard, Bitboard6, BitboardStorage};
+pub use bitboard::*;
 use board_game_traits::{Color, GameResult, Position};
 use std::fmt;
 
@@ -13,9 +12,475 @@ mod zobrist;
 pub use piece::*;
 pub use stack::*;
 
+pub trait TakBoard: Position<Move = GameMove, ReverseMove = RevGameMove> {
+    type Bits: Bitboard;
+    const SIZE: usize;
+    const FLATS: usize;
+    const CAPS: usize;
+    fn hash(&self) -> u64;
+    fn legal_move(&self, game_move: GameMove) -> bool;
+    fn ply(&self) -> usize;
+    fn null_move(&mut self);
+    fn rev_null_move(&mut self);
+    fn get_tak_threats(
+        &mut self,
+        legal_moves: &Vec<GameMove>,
+        hint: Option<&[GameMove]>,
+    ) -> Vec<GameMove>;
+    fn can_make_road(
+        &self,
+        storage: &mut Vec<GameMove>,
+        hint: Option<&[GameMove]>,
+    ) -> Option<GameMove>;
+    fn move_num(&self) -> usize;
+    fn flat_game(&self) -> Option<GameResult>;
+    fn zobrist(&self) -> u64;
+    fn row_col(&self, index: usize) -> (usize, usize);
+    fn active_player(&self) -> Color;
+    fn swap_active_player(&mut self);
+    fn row_col_static(index: usize) -> (usize, usize);
+    fn try_tile(&self, row: usize, col: usize) -> Option<&Stack>;
+    fn tile(&self, row: usize, col: usize) -> &Stack;
+    fn tile_mut(&mut self, row: usize, col: usize) -> &mut Stack;
+    fn index(&self, i: usize) -> &Stack;
+    fn active_stacks(&self, player: Color) -> BitIndexIterator<Self::Bits>;
+    fn empty_tiles(&self) -> BitIndexIterator<Self::Bits>;
+    fn pieces_reserve(&self, player: Color) -> usize;
+    fn caps_reserve(&self, player: Color) -> usize;
+    fn road(&self, player: Color) -> bool;
+    fn road_stack_throw(&self, road_pieces: <Self as TakBoard>::Bits, stack_move: GameMove)
+        -> bool;
+    fn make_ptn_moves(&mut self, moves: &[&str]) -> Option<()>;
+    fn bits(&self) -> &BitboardStorage<Self::Bits>;
+    fn board(&self) -> &[Stack];
+}
+
+macro_rules! board_impl {
+    ($t: ty, $bits: ty, $sz: expr, $flats: expr, $caps: expr) => {
+        impl $t {
+            pub fn new() -> Self {
+                const SIZE: usize = $sz * $sz;
+                const INIT: Stack = Stack::new();
+                let mut board = [INIT; SIZE];
+                for (idx, stack) in board.iter_mut().enumerate() {
+                    stack.init(idx);
+                }
+                let bits = BitboardStorage::build::<Self>(&board);
+                Self {
+                    board,
+                    active_player: Color::White,
+                    move_num: 1,
+                    flats_left: [Self::FLATS, Self::FLATS],
+                    caps_left: [Self::CAPS, Self::CAPS],
+                    bits,
+                }
+            }
+            fn flat_winner(&self) -> GameResult {
+                let white_score = self.bits.flat_score(Color::White);
+                let black_score = self.bits.flat_score(Color::Black);
+                if white_score > black_score {
+                    GameResult::WhiteWin
+                } else if black_score > white_score {
+                    GameResult::BlackWin
+                } else {
+                    GameResult::Draw
+                }
+            }
+            pub fn try_from_tps(tps: &str) -> Result<Self> {
+                let data: Vec<_> = tps.split_whitespace().collect();
+                ensure!(data.len() == 3, "Malformed tps string!");
+                let rows: Vec<_> = data[0].split("/").collect();
+                ensure!(rows.len() == Self::SIZE, "Wrong board size for tps");
+                let mut board = Self::new();
+                for (r_idx, row) in rows.into_iter().enumerate() {
+                    let mut col = 0;
+                    let tiles = row.split(",");
+                    for tile in tiles {
+                        if tile.starts_with("x") {
+                            if let Some(c) = tile.chars().nth(1) {
+                                col += c
+                                    .to_digit(10)
+                                    .ok_or_else(|| anyhow!("Failed to parse digit"))?;
+                            } else {
+                                col += 1;
+                            }
+                        } else {
+                            let stack = parse_tps_stack(tile)?;
+                            ensure!(
+                                col < Self::SIZE as u32,
+                                "Too many columns for this board size"
+                            );
+                            board.board[r_idx * Self::SIZE + col as usize]
+                                .extend(stack.into_iter(), &mut board.bits);
+                            col += 1;
+                        }
+                    }
+                }
+                for stack in board.board.iter() {
+                    for piece in stack.iter() {
+                        match piece {
+                            Piece::WhiteCap => board.caps_left[0] -= 1,
+                            Piece::BlackCap => board.caps_left[1] -= 1,
+                            Piece::WhiteFlat | Piece::WhiteWall => board.flats_left[0] -= 1,
+                            Piece::BlackFlat | Piece::BlackWall => board.flats_left[1] -= 1,
+                        }
+                    }
+                }
+                let active_player = match data[1] {
+                    "1" => Color::White,
+                    "2" => Color::Black,
+                    _ => bail!("Unknown active player id"),
+                };
+                board.active_player = active_player;
+                board.move_num = data[2].parse()?;
+                let zobrist_hash = zobrist::TABLE.manual_build_hash(&board);
+                board.bits.set_zobrist(zobrist_hash);
+                Ok(board)
+            }
+        }
+
+        impl TakBoard for $t {
+            type Bits = $bits;
+            const SIZE: usize = $sz;
+            const FLATS: usize = $flats;
+            const CAPS: usize = $caps;
+            fn hash(&self) -> u64 {
+                self.zobrist()
+            }
+            fn legal_move(&self, game_move: GameMove) -> bool {
+                let mut vec = Vec::new();
+                self.generate_moves(&mut vec);
+                vec.into_iter().find(|&m| m == game_move).is_some()
+            }
+            fn ply(&self) -> usize {
+                match self.side_to_move() {
+                    Color::White => self.move_num() * 2,
+                    Color::Black => self.move_num() * 2 + 1,
+                }
+            }
+            fn null_move(&mut self) {
+                self.swap_active_player();
+            }
+            fn rev_null_move(&mut self) {
+                self.swap_active_player();
+            }
+            fn get_tak_threats(
+                &mut self,
+                legal_moves: &Vec<GameMove>,
+                hint: Option<&[GameMove]>,
+            ) -> Vec<GameMove> {
+                let mut tak_threats = Vec::new();
+                let mut stack_moves = Vec::new();
+                for m in legal_moves.iter().copied() {
+                    let rev = self.do_move(m);
+                    self.null_move();
+                    if self.can_make_road(&mut stack_moves, hint).is_some() {
+                        tak_threats.push(m);
+                    }
+                    self.rev_null_move();
+                    self.reverse_move(rev);
+                    stack_moves.clear();
+                }
+                tak_threats
+            }
+            fn can_make_road(
+                &self,
+                storage: &mut Vec<GameMove>,
+                hint: Option<&[GameMove]>,
+            ) -> Option<GameMove> {
+                let player = self.active_player();
+                let road_pieces = self.bits.road_pieces(player);
+                // Check placement
+                let place_road = find_placement_road(player, road_pieces, self.bits.empty());
+                if place_road.is_some() {
+                    return place_road;
+                }
+                // Check stack movements
+                generate_all_stack_moves(self, storage);
+                if let Some(suggestions) = hint {
+                    for m in suggestions.iter().copied() {
+                        if storage.contains(&m) {
+                            if self.road_stack_throw(road_pieces, m) {
+                                return Some(m);
+                            }
+                        }
+                    }
+                }
+                for m in storage.iter().copied() {
+                    if self.road_stack_throw(road_pieces, m) {
+                        return Some(m);
+                    }
+                }
+                None
+            }
+            fn move_num(&self) -> usize {
+                self.move_num
+            }
+            fn flat_game(&self) -> Option<GameResult> {
+                assert!(self.flats_left[0] < 1_000 && self.flats_left[1] < 1_000);
+                if self.flats_left[0] == 0 || self.flats_left[1] == 0 || self.bits.board_fill() {
+                    Some(self.flat_winner())
+                } else {
+                    None
+                }
+            }
+            fn zobrist(&self) -> u64 {
+                self.bits.zobrist()
+            }
+            fn row_col(&self, index: usize) -> (usize, usize) {
+                Self::row_col_static(index)
+            }
+            fn active_player(&self) -> Color {
+                self.active_player
+            }
+            fn swap_active_player(&mut self) {
+                self.active_player = !self.active_player;
+                self.bits.zobrist_color(self.active_player);
+            }
+            fn row_col_static(index: usize) -> (usize, usize) {
+                (index / Self::SIZE, index % Self::SIZE)
+            }
+            fn try_tile(&self, row: usize, col: usize) -> Option<&Stack> {
+                if row >= Self::SIZE || col >= Self::SIZE {
+                    None
+                } else {
+                    Some(&self.board[row * Self::SIZE + col])
+                }
+            }
+            fn tile(&self, row: usize, col: usize) -> &Stack {
+                &self.board[row * Self::SIZE + col]
+            }
+            fn tile_mut(&mut self, row: usize, col: usize) -> &mut Stack {
+                &mut self.board[row * Self::SIZE + col]
+            }
+            fn index(&self, i: usize) -> &Stack {
+                &self.board[i]
+            }
+            fn active_stacks(&self, player: Color) -> BitIndexIterator<<Self as TakBoard>::Bits> {
+                self.bits.iter_stacks(player)
+            }
+            fn empty_tiles(&self) -> BitIndexIterator<<Self as TakBoard>::Bits> {
+                self.bits.iter_empty()
+            }
+            fn pieces_reserve(&self, player: Color) -> usize {
+                self.flats_left[player as usize]
+            }
+            fn caps_reserve(&self, player: Color) -> usize {
+                self.caps_left[player as usize]
+            }
+            fn road(&self, player: Color) -> bool {
+                self.bits.check_road(player)
+            }
+            fn road_stack_throw(
+                &self,
+                road_pieces: <Self as TakBoard>::Bits,
+                stack_move: GameMove,
+            ) -> bool {
+                let color = self.active_player();
+                let src_sq = stack_move.src_index();
+                let dir = stack_move.direction();
+                let stack = &self.board[src_sq];
+                let mut pickup = stack_move.number();
+                let mut slide_bits = stack_move.slide_bits();
+                let mut update = <Self as TakBoard>::Bits::ZERO;
+                let mut index = src_sq;
+                let mut mask = <Self as TakBoard>::Bits::index_to_bit(index);
+                let val = stack
+                    .from_top(pickup as usize)
+                    .map(|p| p.road_piece(color))
+                    .unwrap_or(false); // Could have taken all pieces
+                if val {
+                    update |= <Self as TakBoard>::Bits::index_to_bit(index);
+                }
+                while slide_bits != 0 {
+                    match dir {
+                        0 => index -= Self::SIZE,
+                        1 => index += 1,
+                        2 => index += Self::SIZE,
+                        3 => index -= 1,
+                        _ => unimplemented!(),
+                    }
+                    pickup -= slide_bits & 0xF;
+                    slide_bits = slide_bits >> 4;
+                    let bb = <Self as TakBoard>::Bits::index_to_bit(index);
+                    mask |= bb;
+                    let val = stack
+                        .from_top(pickup as usize)
+                        .map(|p| p.road_piece(color))
+                        .unwrap();
+                    if val {
+                        update |= bb;
+                    }
+                }
+                let updated = road_pieces ^ (road_pieces ^ update) & mask;
+                updated.check_road()
+            }
+            fn make_ptn_moves(&mut self, moves: &[&str]) -> Option<()> {
+                for s in moves {
+                    let m = GameMove::try_from_ptn(s, self)?;
+                    self.do_move(m);
+                }
+                Some(())
+            }
+
+            fn bits(&self) -> &BitboardStorage<Self::Bits> {
+                &self.bits
+            }
+
+            fn board(&self) -> &[Stack] {
+                &self.board
+            }
+        }
+        impl Position for $t {
+            type Move = GameMove;
+            type ReverseMove = RevGameMove;
+            fn start_position() -> Self {
+                Self::new()
+            }
+            fn side_to_move(&self) -> Color {
+                self.active_player
+            }
+            fn generate_moves(&self, moves: &mut Vec<<Self as Position>::Move>) {
+                generate_all_moves(self, moves);
+            }
+            fn game_result(&self) -> Option<GameResult> {
+                let prev_player = !self.side_to_move();
+                let current_player = self.side_to_move();
+                // If both players have a road the active player wins, but the eval will
+                // be checked after the players switch, so we check the prev player first
+                if self.road(prev_player) {
+                    return Some(GameResult::win_by(prev_player));
+                } else if self.road(current_player) {
+                    return Some(GameResult::win_by(current_player));
+                } else {
+                    self.flat_game()
+                }
+            }
+            fn reverse_move(&mut self, rev_m: <Self as Position>::ReverseMove) {
+                if let Color::White = self.active_player {
+                    self.move_num -= 1;
+                }
+                self.swap_active_player();
+                let m = rev_m.game_move;
+                let src_index = m.src_index();
+                if m.is_place_move() {
+                    let piece = self.board[src_index].pop(&mut self.bits).unwrap();
+                    if piece.is_cap() {
+                        self.caps_left[piece.owner() as usize] += 1;
+                    } else {
+                        self.flats_left[piece.owner() as usize] += 1;
+                    }
+                } else {
+                    if rev_m.game_move.crush() {
+                        // Stand the wall back up
+                        let dest_tile = &mut self.board[rev_m.dest_sq];
+                        dest_tile.uncrush_wall(&mut self.bits);
+                    }
+                    let iter = rev_m.rev_iter(Self::SIZE);
+                    // We need to get a mutable reference to multiple areas of the array. Hold on.
+                    let (origin, rest, offset): (&mut Stack, &mut [Stack], usize) = {
+                        if src_index > rev_m.dest_sq {
+                            // Easy case, because all indices remain the same
+                            let (split_left, split_right) = self.board.split_at_mut(src_index);
+                            (&mut split_right[0], split_left, 0)
+                        } else {
+                            // Should not go out of bounds since src index < dest_sq
+                            let (split_left, split_right) = self.board.split_at_mut(src_index + 1);
+                            (&mut split_left[src_index], split_right, src_index + 1)
+                        }
+                    };
+                    for idx in iter {
+                        let piece = rest[idx - offset].pop(&mut self.bits).unwrap();
+                        origin.push(piece, &mut self.bits); // This will need to be reversed later
+                    }
+                    let pieces_moved = rev_m.game_move.number() as usize;
+                    origin.reverse_top(pieces_moved, &mut self.bits);
+                }
+            }
+            fn do_move(&mut self, m: GameMove) -> <Self as Position>::ReverseMove {
+                let swap_pieces = self.move_num == 1;
+                if let Color::Black = self.active_player {
+                    self.move_num += 1;
+                }
+                self.swap_active_player();
+                let src_index = m.src_index();
+                if m.is_place_move() {
+                    let mut piece = m.place_piece();
+                    if swap_pieces {
+                        piece = piece.swap_color();
+                    }
+                    self.board[src_index].push(piece, &mut self.bits);
+                    if piece.is_cap() {
+                        self.caps_left[piece.owner() as usize] -= 1;
+                    } else {
+                        self.flats_left[piece.owner() as usize] -= 1;
+                    }
+                    RevGameMove::new(m, src_index)
+                } else {
+                    let num_pieces = m.number() as usize;
+                    let stack_move = m.forward_iter(Self::SIZE);
+                    let src_stack = &mut self.board[src_index];
+                    // Todo remove allocation with split_at_mut
+                    debug_assert!(src_stack.len() >= num_pieces);
+                    let take_stack: Vec<_> = src_stack.split_off(num_pieces, &mut self.bits);
+                    let mut last_idx = 0;
+                    for (piece, sq) in take_stack.into_iter().zip(stack_move) {
+                        debug_assert!(sq != src_index);
+                        self.board[sq].push(piece, &mut self.bits);
+                        last_idx = sq;
+                    }
+                    let last_square = &mut self.board[last_idx];
+                    let len = last_square.len();
+                    if len >= 2 {
+                        if last_square.try_crush_wall(&mut self.bits) {
+                            return RevGameMove::new(m.set_crush(), last_idx);
+                        }
+                    }
+                    RevGameMove::new(m, last_idx)
+                }
+            }
+        }
+
+        impl fmt::Debug for $t {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+                let mut board_string = String::new();
+                for (i, stack) in self.board.iter().enumerate() {
+                    for piece in stack.iter() {
+                        let s = match piece {
+                            Piece::WhiteCap => "1C",
+                            Piece::BlackCap => "2C",
+                            Piece::WhiteWall => "1S",
+                            Piece::BlackWall => "2S",
+                            Piece::WhiteFlat => "1",
+                            Piece::BlackFlat => "2",
+                        };
+                        board_string.push_str(s);
+                    }
+                    if stack.is_empty() {
+                        board_string.push_str("x");
+                    }
+                    if i > 0 && i % Self::SIZE == (Self::SIZE - 1) {
+                        board_string.push_str("/");
+                    } else {
+                        board_string.push_str(",")
+                    }
+                }
+                board_string.pop(); // Trailing comma or slash
+                let side = if let Color::White = self.side_to_move() {
+                    1
+                } else {
+                    2
+                };
+
+                write!(f, "{} {} {}", board_string, side, self.move_num)
+            }
+        }
+    };
+}
+
 #[derive(PartialEq, Clone)]
-pub struct Board6 {
-    pub board: [Stack; 36],
+pub struct Board5 {
+    pub board: [Stack; Self::SIZE * Self::SIZE],
     active_player: Color,
     move_num: usize,
     flats_left: [usize; 2],
@@ -23,203 +488,40 @@ pub struct Board6 {
     pub bits: BitboardStorage<<Self as TakBoard>::Bits>,
 }
 
-impl Board6 {
-    pub fn new() -> Self {
-        const SIZE: usize = Board6::SIZE * Board6::SIZE;
-        const INIT: Stack = Stack::new();
-        let mut board = [INIT; SIZE];
-        for (idx, stack) in board.iter_mut().enumerate() {
-            stack.init(idx);
-        }
-        let bits = BitboardStorage::build_6(&board);
-        Self {
-            board,
-            active_player: Color::White,
-            move_num: 1,
-            flats_left: [30, 30],
-            caps_left: [1, 1],
-            bits,
-        }
-    }
+#[derive(PartialEq, Clone)]
+pub struct Board6 {
+    pub board: [Stack; Self::SIZE * Self::SIZE],
+    active_player: Color,
+    move_num: usize,
+    flats_left: [usize; 2],
+    caps_left: [usize; 2],
+    pub bits: BitboardStorage<<Self as TakBoard>::Bits>,
 }
 
-impl Board6 {
-    pub const fn board_size(&self) -> usize {
-        Self::SIZE
-    }
-    pub fn try_from_tps(tps: &str) -> Result<Self> {
-        let data: Vec<_> = tps.split_whitespace().collect();
-        ensure!(data.len() == 3, "Malformed tps string!");
-        let rows: Vec<_> = data[0].split("/").collect();
-        ensure!(rows.len() == Self::SIZE, "Wrong board size for tps");
-        let mut board = Self::new();
-        for (r_idx, row) in rows.into_iter().enumerate() {
-            let mut col = 0;
-            let tiles = row.split(",");
-            for tile in tiles {
-                if tile.starts_with("x") {
-                    if let Some(c) = tile.chars().nth(1) {
-                        col += c
-                            .to_digit(10)
-                            .ok_or_else(|| anyhow!("Failed to parse digit"))?;
-                    } else {
-                        col += 1;
-                    }
-                } else {
-                    let stack = parse_tps_stack(tile)?;
-                    ensure!(
-                        col < Self::SIZE as u32,
-                        "Too many columns for this board size"
-                    );
-                    board.board[r_idx * Self::SIZE + col as usize]
-                        .extend(stack.into_iter(), &mut board.bits);
-                    col += 1;
-                }
-            }
-        }
-        for stack in board.board.iter() {
-            for piece in stack.iter() {
-                match piece {
-                    Piece::WhiteCap => board.caps_left[0] -= 1,
-                    Piece::BlackCap => board.caps_left[1] -= 1,
-                    Piece::WhiteFlat | Piece::WhiteWall => board.flats_left[0] -= 1,
-                    Piece::BlackFlat | Piece::BlackWall => board.flats_left[1] -= 1,
-                }
-            }
-        }
-        let active_player = match data[1] {
-            "1" => Color::White,
-            "2" => Color::Black,
-            _ => bail!("Unknown active player id"),
-        };
-        board.active_player = active_player;
-        board.move_num = data[2].parse()?;
-        let zobrist_hash = zobrist::TABLE.manual_build_hash(&board);
-        board.bits.set_zobrist(zobrist_hash);
-        Ok(board)
-    }
-    pub fn zobrist(&self) -> u64 {
-        self.bits.zobrist()
-    }
-    pub fn row_col(&self, index: usize) -> (usize, usize) {
-        Self::row_col_static(index)
-    }
-    pub fn active_player(&self) -> Color {
-        self.active_player
-    }
-    pub fn swap_active_player(&mut self) {
-        self.active_player = !self.active_player;
-        self.bits.zobrist_color(self.active_player);
-    }
-    pub fn move_num(&self) -> usize {
-        self.move_num
-    }
-    pub fn row_col_static(index: usize) -> (usize, usize) {
-        (index / Self::SIZE, index % Self::SIZE)
-    }
-    pub fn try_tile(&self, row: usize, col: usize) -> Option<&Stack> {
-        if row >= Self::SIZE || col >= Self::SIZE {
-            None
-        } else {
-            Some(&self.board[row * Self::SIZE + col])
-        }
-    }
-    pub fn tile(&self, row: usize, col: usize) -> &Stack {
-        &self.board[row * Self::SIZE + col]
-    }
-    pub fn tile_mut(&mut self, row: usize, col: usize) -> &mut Stack {
-        &mut self.board[row * Self::SIZE + col]
-    }
-    pub fn index(&self, i: usize) -> &Stack {
-        &self.board[i]
-    }
-    pub fn active_stacks(&self, player: Color) -> BitIndexIterator<Bitboard6> {
-        self.bits.iter_stacks(player)
-    }
-    pub fn empty_tiles(&self) -> BitIndexIterator<Bitboard6> {
-        self.bits.iter_empty()
-    }
-    pub fn pieces_reserve(&self, player: Color) -> usize {
-        self.flats_left[player as usize]
-    }
-    pub fn caps_reserve(&self, player: Color) -> usize {
-        self.caps_left[player as usize]
-    }
-    fn board_fill(&self) -> bool {
-        self.bits.board_fill()
-    }
-    pub fn flat_game(&self) -> Option<GameResult> {
-        assert!(self.flats_left[0] < 1_000 && self.flats_left[1] < 1_000);
-        if self.flats_left[0] == 0 || self.flats_left[1] == 0 || self.board_fill() {
-            Some(self.flat_winner())
-        } else {
-            None
-        }
-    }
-    fn flat_winner(&self) -> GameResult {
-        let white_score = self.bits.flat_score(Color::White);
-        let black_score = self.bits.flat_score(Color::Black);
-        if white_score > black_score {
-            GameResult::WhiteWin
-        } else if black_score > white_score {
-            GameResult::BlackWin
-        } else {
-            GameResult::Draw
-        }
-    }
-    pub fn road(&self, player: Color) -> bool {
-        self.bits.check_road(player)
-    }
-    pub fn road_stack_throw(
-        &self,
-        road_pieces: <Self as TakBoard>::Bits,
-        stack_move: GameMove,
-    ) -> bool {
-        let color = self.active_player();
-        let src_sq = stack_move.src_index();
-        let dir = stack_move.direction();
-        let stack = &self.board[src_sq];
-        let mut pickup = stack_move.number();
-        let mut slide_bits = stack_move.slide_bits();
-        let mut update = <Self as TakBoard>::Bits::ZERO;
-        let mut index = src_sq;
-        let mut mask = <Self as TakBoard>::Bits::index_to_bit(index);
-        let val = stack
-            .from_top(pickup as usize)
-            .map(|p| p.road_piece(color))
-            .unwrap_or(false); // Could have taken all pieces
-        if val {
-            update |= <Self as TakBoard>::Bits::index_to_bit(index);
-        }
-        while slide_bits != 0 {
-            match dir {
-                0 => index -= self.board_size(),
-                1 => index += 1,
-                2 => index += self.board_size(),
-                3 => index -= 1,
-                _ => unimplemented!(),
-            }
-            pickup -= slide_bits & 0xF;
-            slide_bits = slide_bits >> 4;
-            let bb = <Self as TakBoard>::Bits::index_to_bit(index);
-            mask |= bb;
-            let val = stack
-                .from_top(pickup as usize)
-                .map(|p| p.road_piece(color))
-                .unwrap();
-            if val {
-                update |= bb;
-            }
-        }
-        let updated = road_pieces ^ (road_pieces ^ update) & mask;
-        updated.check_road()
-    }
-    pub fn make_ptn_moves(&mut self, moves: &[&str]) -> Option<()> {
-        for s in moves {
-            let m = GameMove::try_from_ptn(s, self)?;
-            self.do_move(m);
-        }
-        Some(())
+#[derive(PartialEq, Clone)]
+pub struct Board7 {
+    pub board: [Stack; Self::SIZE * Self::SIZE],
+    active_player: Color,
+    move_num: usize,
+    flats_left: [usize; 2],
+    caps_left: [usize; 2],
+    pub bits: BitboardStorage<<Self as TakBoard>::Bits>,
+}
+
+board_impl![Board5, Bitboard5, 5, 21, 1];
+board_impl![Board6, Bitboard6, 6, 30, 1];
+board_impl![Board7, Bitboard7, 7, 40, 2];
+
+pub fn find_placement_road<T>(player: Color, road_pieces: T, empty: T) -> Option<GameMove>
+where
+    T: Bitboard,
+{
+    let valid = road_pieces.critical_squares() & empty;
+    if valid != T::ZERO {
+        let sq_index = valid.lowest_index();
+        Some(GameMove::from_placement(Piece::flat(player), sq_index))
+    } else {
+        None
     }
 }
 
@@ -243,151 +545,6 @@ fn parse_tps_stack(tile: &str) -> Result<Vec<Piece>> {
         }
     }
     Ok(vec)
-}
-
-impl Position for Board6 {
-    type Move = GameMove;
-    type ReverseMove = RevGameMove;
-    fn start_position() -> Self {
-        Self::new()
-    }
-    fn side_to_move(&self) -> Color {
-        self.active_player
-    }
-    fn generate_moves(&self, moves: &mut Vec<<Self as Position>::Move>) {
-        generate_all_moves(self, moves);
-    }
-    fn game_result(&self) -> Option<GameResult> {
-        let prev_player = !self.side_to_move();
-        let current_player = self.side_to_move();
-        // If both players have a road the active player wins, but the eval will
-        // be checked after the players switch, so we check the prev player first
-        if self.road(prev_player) {
-            return Some(GameResult::win_by(prev_player));
-        } else if self.road(current_player) {
-            return Some(GameResult::win_by(current_player));
-        } else {
-            self.flat_game()
-        }
-    }
-    fn reverse_move(&mut self, rev_m: <Self as Position>::ReverseMove) {
-        if let Color::White = self.active_player {
-            self.move_num -= 1;
-        }
-        self.swap_active_player();
-        let m = rev_m.game_move;
-        let src_index = m.src_index();
-        if m.is_place_move() {
-            let piece = self.board[src_index].pop(&mut self.bits).unwrap();
-            if piece.is_cap() {
-                self.caps_left[piece.owner() as usize] += 1;
-            } else {
-                self.flats_left[piece.owner() as usize] += 1;
-            }
-        } else {
-            if rev_m.game_move.crush() {
-                // Stand the wall back up
-                let dest_tile = &mut self.board[rev_m.dest_sq];
-                dest_tile.uncrush_wall(&mut self.bits);
-            }
-            let iter = rev_m.rev_iter(self.board_size());
-            // We need to get a mutable reference to multiple areas of the array. Hold on.
-            let (origin, rest, offset): (&mut Stack, &mut [Stack], usize) = {
-                if src_index > rev_m.dest_sq {
-                    // Easy case, because all indices remain the same
-                    let (split_left, split_right) = self.board.split_at_mut(src_index);
-                    (&mut split_right[0], split_left, 0)
-                } else {
-                    // Should not go out of bounds since src index < dest_sq
-                    let (split_left, split_right) = self.board.split_at_mut(src_index + 1);
-                    (&mut split_left[src_index], split_right, src_index + 1)
-                }
-            };
-            for idx in iter {
-                let piece = rest[idx - offset].pop(&mut self.bits).unwrap();
-                origin.push(piece, &mut self.bits); // This will need to be reversed later
-            }
-            let pieces_moved = rev_m.game_move.number() as usize;
-            origin.reverse_top(pieces_moved, &mut self.bits);
-        }
-    }
-    fn do_move(&mut self, m: GameMove) -> <Self as Position>::ReverseMove {
-        let swap_pieces = self.move_num == 1;
-        if let Color::Black = self.active_player {
-            self.move_num += 1;
-        }
-        self.swap_active_player();
-        let src_index = m.src_index();
-        if m.is_place_move() {
-            let mut piece = m.place_piece();
-            if swap_pieces {
-                piece = piece.swap_color();
-            }
-            self.board[src_index].push(piece, &mut self.bits);
-            if piece.is_cap() {
-                self.caps_left[piece.owner() as usize] -= 1;
-            } else {
-                self.flats_left[piece.owner() as usize] -= 1;
-            }
-            RevGameMove::new(m, src_index)
-        } else {
-            let num_pieces = m.number() as usize;
-            let stack_move = m.forward_iter(self.board_size());
-            let src_stack = &mut self.board[src_index];
-            // Todo remove allocation with split_at_mut
-            debug_assert!(src_stack.len() >= num_pieces);
-            let take_stack: Vec<_> = src_stack.split_off(num_pieces, &mut self.bits);
-            let mut last_idx = 0;
-            for (piece, sq) in take_stack.into_iter().zip(stack_move) {
-                debug_assert!(sq != src_index);
-                self.board[sq].push(piece, &mut self.bits);
-                last_idx = sq;
-            }
-            let last_square = &mut self.board[last_idx];
-            let len = last_square.len();
-            if len >= 2 {
-                if last_square.try_crush_wall(&mut self.bits) {
-                    return RevGameMove::new(m.set_crush(), last_idx);
-                }
-            }
-            RevGameMove::new(m, last_idx)
-        }
-    }
-}
-
-impl fmt::Debug for Board6 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let mut board_string = String::new();
-        for (i, stack) in self.board.iter().enumerate() {
-            for piece in stack.iter() {
-                let s = match piece {
-                    Piece::WhiteCap => "1C",
-                    Piece::BlackCap => "2C",
-                    Piece::WhiteWall => "1S",
-                    Piece::BlackWall => "2S",
-                    Piece::WhiteFlat => "1",
-                    Piece::BlackFlat => "2",
-                };
-                board_string.push_str(s);
-            }
-            if stack.is_empty() {
-                board_string.push_str("x");
-            }
-            if i > 0 && i % Self::SIZE == (Self::SIZE - 1) {
-                board_string.push_str("/");
-            } else {
-                board_string.push_str(",")
-            }
-        }
-        board_string.pop(); // Trailing comma or slash
-        let side = if let Color::White = self.side_to_move() {
-            1
-        } else {
-            2
-        };
-
-        write!(f, "{} {} {}", board_string, side, self.move_num)
-    }
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use super::{Piece, Stack};
 use crate::board::zobrist::TABLE;
 use board_game_traits::Color;
+use crate::TakBoard;
 
 #[derive(Default, PartialEq, Clone)]
 pub struct BitboardStorage<T> {
@@ -65,7 +66,8 @@ where
     pub fn check_road(&self, color: Color) -> bool {
         self.road_pieces(color).check_road()
     }
-    pub fn build_6(board: &[Stack; 36]) -> Self {
+    pub fn build<B: TakBoard>(board: &[Stack]) -> Self {
+        assert_eq!(board.len(), B::SIZE * B::SIZE);
         let mut storage = Self::default();
         storage.set_zobrist(TABLE.color_hash(Color::White));
         for (idx, stack) in board.iter().enumerate() {
@@ -109,6 +111,7 @@ where
 pub trait Bitboard:
     Copy
     + Default
+    + PartialEq
     + std::ops::BitOrAssign
     + std::ops::BitOr<Output = Self>
     + std::ops::BitAnd<Output = Self>
@@ -119,6 +122,8 @@ pub trait Bitboard:
 {
     const ZERO: Self;
     fn adjacent(self) -> Self;
+    fn critical_squares(self) -> Self;
+    fn flood(self, edge: Self) -> Self;
     fn check_road(self) -> bool;
     fn pop_lowest(&mut self) -> Self;
     fn nonzero(&self) -> bool;
@@ -130,73 +135,59 @@ pub trait Bitboard:
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bitboard5(u64);
+
+impl Bitboard5 {
+    const BIT_TO_INDEX: [usize; 64] = Self::build_bit_to_index_table();
+    const INDEX_TO_BIT: [u64; 25] = Self::build_index_to_bit_table();
+    const TOP: Bitboard5 = Bitboard5::new(0x3e0000);
+    const BOTTOM: Bitboard5 = Bitboard5::new(0x3e000000000000);
+    const LEFT: Bitboard5 = Bitboard5::new(0x2020202020000);
+    const RIGHT: Bitboard5 = Bitboard5::new(0x20202020200000);
+    const LEFT_TOP: Bitboard5 = Bitboard5::new(Self::LEFT.0 | Self::TOP.0);
+    pub const fn new(data: u64) -> Self {
+        const INNER: u64 = 0x3e3e3e3e3e0000; // 5x5 Board
+        Self(data & INNER)
+    }
+    #[rustfmt::skip]
+    const fn build_bit_to_index_table() -> [usize; 64] {
+        const EMPTY: usize = 100;
+        let arr: [usize; 64] = [
+            EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+            EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+            EMPTY, 00, 01, 02, 03, 04, EMPTY, EMPTY,
+            EMPTY, 05, 06, 07, 08, 09, EMPTY, EMPTY,
+            EMPTY, 10, 11, 12, 13, 14, EMPTY, EMPTY,
+            EMPTY, 15, 16, 17, 18, 19, EMPTY, EMPTY,
+            EMPTY, 20, 21, 22, 23, 24, EMPTY, EMPTY,
+            EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY
+        ];
+        arr
+    }
+    #[rustfmt::skip]
+    const fn build_index_to_bit_table() -> [u64; 25] {
+        let arr: [u64; 25] = [
+            17,	18,	19,	20,	21,
+            25,	26,	27,	28,	29,
+            33,	34,	35,	36,	37,
+            41,	42,	43,	44,	45,	
+            49,	50,	51,	52,	53,
+        ];
+        arr
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bitboard6(u64);
-
-impl Default for Bitboard6 {
-    fn default() -> Self {
-        Self(0)
-    }
-}
-
-impl std::ops::BitAnd for Bitboard6 {
-    type Output = Self;
-
-    fn bitand(self, Self(rhs): Self) -> Self::Output {
-        Bitboard6::new(self.0 & rhs)
-    }
-}
-
-impl std::ops::BitOr for Bitboard6 {
-    type Output = Self;
-
-    fn bitor(self, Self(rhs): Self) -> Self::Output {
-        Bitboard6::new(self.0 | rhs)
-    }
-}
-
-impl std::ops::Not for Bitboard6 {
-    type Output = Self;
-
-    fn not(self) -> Self::Output {
-        Bitboard6::new(!self.0)
-    }
-}
-
-impl std::ops::BitOrAssign for Bitboard6 {
-    fn bitor_assign(&mut self, other: Self) {
-        self.0 |= other.0;
-    }
-}
-
-impl std::ops::BitAndAssign for Bitboard6 {
-    fn bitand_assign(&mut self, other: Self) {
-        self.0 &= other.0;
-    }
-}
-
-impl std::ops::Sub for Bitboard6 {
-    type Output = Self;
-    fn sub(self, rhs: Self) -> Self::Output {
-        Self(self.0 - rhs.0)
-    }
-}
-
-impl std::ops::SubAssign for Bitboard6 {
-    fn sub_assign(&mut self, rhs: Self) {
-        self.0 -= rhs.0;
-    }
-}
-
-impl std::ops::BitXor for Bitboard6 {
-    type Output = Self;
-    fn bitxor(self, rhs: Self) -> Self::Output {
-        Self(self.0 ^ rhs.0)
-    }
-}
 
 impl Bitboard6 {
     const BIT_TO_INDEX: [usize; 64] = Self::build_bit_to_index_table();
     const INDEX_TO_BIT: [u64; 36] = Self::build_index_to_bit_table();
+    const TOP: Bitboard6 = Bitboard6::new(0x7e00);
+    const BOTTOM: Bitboard6 = Bitboard6::new(0x7e000000000000);
+    const LEFT: Bitboard6 = Bitboard6::new(0x2020202020200);
+    const RIGHT: Bitboard6 = Bitboard6::new(0x40404040404000);
+    const LEFT_TOP: Bitboard6 = Bitboard6::new(Self::LEFT.0 | Self::TOP.0);
     pub const fn new(data: u64) -> Self {
         const INNER: u64 = 0x7e7e7e7e7e7e00; // 6x6 Board
         Self(data & INNER)
@@ -228,99 +219,205 @@ impl Bitboard6 {
         ];
         arr
     }
-    pub fn critical_squares(self) -> Self {
-        const TOP: Bitboard6 = Bitboard6::new(0x7e00);
-        const BOTTOM: Bitboard6 = Bitboard6::new(0x7e000000000000);
-        const LEFT: Bitboard6 = Bitboard6::new(0x2020202020200);
-        const RIGHT: Bitboard6 = Bitboard6::new(0x40404040404000);
-        let left = self.flood(LEFT);
-        let right = self.flood(RIGHT);
-        let mut out = (left.adjacent() | LEFT) & (right.adjacent() | RIGHT);
-        let top = self.flood(TOP);
-        let bottom = self.flood(BOTTOM);
-        out |= (top.adjacent() | TOP) & (bottom.adjacent() | BOTTOM);
-        out
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bitboard7(u64);
+
+impl Bitboard7 {
+    const BIT_TO_INDEX: [usize; 64] = Self::build_bit_to_index_table();
+    const INDEX_TO_BIT: [u64; 49] = Self::build_index_to_bit_table();
+    const TOP: Bitboard7 = Bitboard7::new(0x7f00);
+    const BOTTOM: Bitboard7 = Bitboard7::new(0x7f00000000000000);
+    const LEFT: Bitboard7 = Bitboard7::new(0x101010101010100);
+    const RIGHT: Bitboard7 = Bitboard7::new(0x4040404040404000);
+    const LEFT_TOP: Bitboard7 = Bitboard7::new(Self::LEFT.0 | Self::TOP.0);
+    pub const fn new(data: u64) -> Self {
+        const INNER: u64 = 0x7f7f7f7f7f7f7f00; // 7x7 Board
+        Self(data & INNER)
     }
-    fn flood(self, edge: Self) -> Self {
-        let mut prev = Bitboard6::new(0);
-        let mut edge_connected = self & edge;
-        while edge_connected != prev {
-            prev = edge_connected;
-            edge_connected |= edge_connected.adjacent() & self
-        }
-        edge_connected
+    #[rustfmt::skip]
+    const fn build_bit_to_index_table() -> [usize; 64] {
+        const EMPTY: usize = 100;
+        let arr: [usize; 64] = [
+            EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+            00, 01, 02, 03, 04, 05, 06, EMPTY,
+            07, 08, 09, 10, 11, 12, 13, EMPTY,
+            14, 15, 16, 17, 18, 19, 20, EMPTY,
+            21, 22, 23, 24, 25, 26, 27, EMPTY,
+            28, 29, 30, 31, 32, 33, 34, EMPTY,
+            35, 36, 37, 38, 39, 40, 41, EMPTY,
+            42, 43, 44, 45, 46, 47, 48, EMPTY
+        ];
+        arr
+    }
+    #[rustfmt::skip]
+    const fn build_index_to_bit_table() -> [u64; 49] {
+        let arr: [u64; 49] = [
+            08, 09,	10,	11,	12,	13,	14,
+            16, 17,	18,	19,	20,	21,	22,
+            24, 25,	26,	27,	28,	29,	30,
+            32, 33,	34,	35,	36,	37,	38,
+            40, 41,	42,	43,	44,	45,	46,
+            48, 49,	50,	51,	52,	53,	54,
+            56, 57, 58, 59, 60, 61, 62,
+        ];
+        arr
     }
 }
 
-impl Bitboard for Bitboard6 {
-    const ZERO: Self = Bitboard6::new(0);
-    fn adjacent(self) -> Self {
-        let Bitboard6(data) = self;
-        let up = data >> 8;
-        let down = data << 8;
-        let left = data >> 1;
-        let right = data << 1;
-        Bitboard6::new(up | down | left | right)
-    }
-    fn check_road(self) -> bool {
-        const LEFT_TOP: Bitboard6 = Bitboard6::new(0x2020202027e00);
-        const TOP: Bitboard6 = Bitboard6::new(0x7e00);
-        const BOTTOM: Bitboard6 = Bitboard6::new(0x7e000000000000);
-        const LEFT: Bitboard6 = Bitboard6::new(0x2020202020200);
-        const RIGHT: Bitboard6 = Bitboard6::new(0x40404040404000);
-        let mut unchecked = self & LEFT_TOP; // Only need to start from two edges
-        while unchecked.nonzero() {
-            // Find all connected components
-            let mut component = unchecked.pop_lowest();
-            let mut prev = Bitboard6::new(0);
-            // While component is still being updated
-            while component != prev {
-                prev = component;
-                component |= component.adjacent() & self
+macro_rules! bitboard_impl {
+    ($t: ty, $sz: expr) => {
+        impl Default for $t {
+            fn default() -> Self {
+                Self(0)
             }
-            // If component has squares on two opposite edges there is a road
-            if (component & TOP).nonzero() && (component & BOTTOM).nonzero() {
-                return true;
-            }
-            if (component & LEFT).nonzero() && (component & RIGHT).nonzero() {
-                return true;
-            }
-            unchecked = unchecked & !component;
         }
-        false
-    }
-    fn pop_lowest(&mut self) -> Self {
-        let highest_index = self.0.trailing_zeros();
-        if highest_index == 64 {
-            Self::new(0)
-        } else {
-            let value = 1 << highest_index;
-            self.0 ^= value;
-            Self::new(value)
+
+        impl std::ops::BitAnd for $t {
+            type Output = Self;
+
+            fn bitand(self, Self(rhs): Self) -> Self::Output {
+                Self::new(self.0 & rhs)
+            }
         }
-    }
-    fn nonzero(&self) -> bool {
-        self.0 != 0
-    }
-    fn lowest_index(self) -> usize {
-        let raw_index = self.0.trailing_zeros();
-        Self::BIT_TO_INDEX[raw_index as usize]
-    }
-    fn index_to_bit(idx: usize) -> Self {
-        let bit_idx = Self::INDEX_TO_BIT[idx];
-        let bit_pattern = Self(1 << bit_idx);
-        bit_pattern
-    }
-    fn size() -> usize {
-        6
-    }
-    fn all_ones(self) -> bool {
-        self.0 == u64::MAX
-    }
-    fn pop_count(self) -> u32 {
-        (self.0).count_ones()
-    }
+
+        impl std::ops::BitOr for $t {
+            type Output = Self;
+
+            fn bitor(self, Self(rhs): Self) -> Self::Output {
+                Self::new(self.0 | rhs)
+            }
+        }
+
+        impl std::ops::Not for $t {
+            type Output = Self;
+
+            fn not(self) -> Self::Output {
+                Self::new(!self.0)
+            }
+        }
+
+        impl std::ops::BitOrAssign for $t {
+            fn bitor_assign(&mut self, other: Self) {
+                self.0 |= other.0;
+            }
+        }
+
+        impl std::ops::BitAndAssign for $t {
+            fn bitand_assign(&mut self, other: Self) {
+                self.0 &= other.0;
+            }
+        }
+
+        impl std::ops::Sub for $t {
+            type Output = Self;
+            fn sub(self, rhs: Self) -> Self::Output {
+                Self(self.0 - rhs.0)
+            }
+        }
+
+        impl std::ops::SubAssign for $t {
+            fn sub_assign(&mut self, rhs: Self) {
+                self.0 -= rhs.0;
+            }
+        }
+
+        impl std::ops::BitXor for $t {
+            type Output = Self;
+            fn bitxor(self, rhs: Self) -> Self::Output {
+                Self(self.0 ^ rhs.0)
+            }
+        }
+
+        impl Bitboard for $t {
+            const ZERO: Self = Self::new(0);
+            fn adjacent(self) -> Self {
+                let data = self.0;
+                let up = data >> 8;
+                let down = data << 8;
+                let left = data >> 1;
+                let right = data << 1;
+                Self::new(up | down | left | right)
+            }
+            fn critical_squares(self) -> Self {
+                let left = self.flood(Self::LEFT);
+                let right = self.flood(Self::RIGHT);
+                let mut out = (left.adjacent() | Self::LEFT) & (right.adjacent() | Self::RIGHT);
+                let top = self.flood(Self::TOP);
+                let bottom = self.flood(Self::BOTTOM);
+                out |= (top.adjacent() | Self::TOP) & (bottom.adjacent() | Self::BOTTOM);
+                out
+            }
+            fn flood(self, edge: Self) -> Self {
+                let mut prev = Self::new(0);
+                let mut edge_connected = self & edge;
+                while edge_connected != prev {
+                    prev = edge_connected;
+                    edge_connected |= edge_connected.adjacent() & self
+                }
+                edge_connected
+            }
+            fn check_road(self) -> bool {
+                let mut unchecked = self & Self::LEFT_TOP; // Only need to start from two edges
+                while unchecked.nonzero() {
+                    // Find all connected components
+                    let mut component = unchecked.pop_lowest();
+                    let mut prev = Self::new(0);
+                    // While component is still being updated
+                    while component != prev {
+                        prev = component;
+                        component |= component.adjacent() & self
+                    }
+                    // If component has squares on two opposite edges there is a road
+                    if (component & Self::TOP).nonzero() && (component & Self::BOTTOM).nonzero() {
+                        return true;
+                    }
+                    if (component & Self::LEFT).nonzero() && (component & Self::RIGHT).nonzero() {
+                        return true;
+                    }
+                    unchecked = unchecked & !component;
+                }
+                false
+            }
+            fn pop_lowest(&mut self) -> Self {
+                let highest_index = self.0.trailing_zeros();
+                if highest_index == 64 {
+                    Self::new(0)
+                } else {
+                    let value = 1 << highest_index;
+                    self.0 ^= value;
+                    Self::new(value)
+                }
+            }
+            fn nonzero(&self) -> bool {
+                self.0 != 0
+            }
+            fn lowest_index(self) -> usize {
+                let raw_index = self.0.trailing_zeros();
+                Self::BIT_TO_INDEX[raw_index as usize]
+            }
+            fn index_to_bit(idx: usize) -> Self {
+                let bit_idx = Self::INDEX_TO_BIT[idx];
+                let bit_pattern = Self(1 << bit_idx);
+                bit_pattern
+            }
+            fn size() -> usize {
+                $sz
+            }
+            fn all_ones(self) -> bool {
+                self.0 == u64::MAX
+            }
+            fn pop_count(self) -> u32 {
+                (self.0).count_ones()
+            }
+        }
+    };
 }
+
+bitboard_impl![Bitboard5, 5];
+bitboard_impl![Bitboard6, 6];
+bitboard_impl![Bitboard7, 7];
 
 pub struct BitIndexIterator<T> {
     bits: T,
@@ -365,10 +462,11 @@ mod test {
     #[test]
     pub fn bitboard_creation() {
         use board_game_traits::Position;
+        use crate::board::Board6;
         let tps =
             "2,x4,1/2,2,x2,1,x/2,212C,x,1,1,x/2,1,x,2S,12S,x/12,12221C,x,12,1,1/1S,12,x,1,1,x 1 22";
-        let board = crate::Board6::try_from_tps(tps).unwrap();
-        let bitboards = BitboardStorage::<Bitboard6>::build_6(&board.board);
+        let board = Board6::try_from_tps(tps).unwrap();
+        let bitboards = BitboardStorage::<Bitboard6>::build::<Board6>(&board.board);
         let stacks1: Vec<_> = bitboards.iter_stacks(board.side_to_move()).collect();
         let stacks2 = board.scan_active_stacks(board.side_to_move());
         assert_eq!(stacks1, stacks2);
