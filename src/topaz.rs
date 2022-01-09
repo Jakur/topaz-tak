@@ -102,7 +102,7 @@ fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>) -> Result<()> {
         println!("No Tinue Found.");
     }
     let pv = search.principal_variation();
-    for m in pv.into_iter().map(|m| m.to_ptn::<Board6>()) {
+    for m in pv.into_iter().map(|m| m.to_ptn::<T>()) {
         println!("{}", m);
     }
 
