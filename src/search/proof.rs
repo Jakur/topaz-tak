@@ -183,7 +183,11 @@ where
         self.expand.clear();
     }
     pub fn print_root(&mut self) {
-        let line = self.view_hist.iter().map(|(m, _)| m.to_ptn()).collect();
+        let line = self
+            .view_hist
+            .iter()
+            .map(|(m, _)| m.to_ptn::<T>())
+            .collect();
         let mut tree = Tree::root(Solved::Root(line));
         if self.view_hist.len() % 2 == 0 {
             self.recurse_attack(&mut tree);
@@ -192,7 +196,7 @@ where
         }
         println!("{}", tree);
     }
-    fn recurse_attack(&mut self, root: &mut Tree<Solved>) {
+    fn recurse_attack(&mut self, root: &mut Tree<Solved<T>>) {
         let attempt = self.tinue_attempts.get(&self.board.hash());
         match attempt {
             Some(AttackerOutcome::TakThreats(moves)) => {
@@ -216,7 +220,7 @@ where
                 }
             }
             Some(AttackerOutcome::NoTakThreats) => {
-                root.push(Tree::root(Solved::AttackerNoMoves));
+                root.push(Tree::root(Solved::AttackerNoMoves(PhantomData)));
             }
             Some(AttackerOutcome::HasRoad(m)) => {
                 root.push(Tree::root(Solved::AttackerRoad(*m)));
@@ -224,7 +228,7 @@ where
             None => todo!(),
         }
     }
-    fn recurse_defend(&mut self, root: &mut Tree<Solved>) {
+    fn recurse_defend(&mut self, root: &mut Tree<Solved<T>>) {
         let attempt = TinueSearch::defender_responses(&mut self.board, None);
         match attempt {
             DefenderOutcome::CanWin(m) => {
@@ -255,27 +259,30 @@ where
 }
 
 #[derive(Debug, Clone)]
-enum Solved {
+enum Solved<T> {
     Proved(GameMove),
     Disproved(GameMove),
     Unknown(GameMove),
     AttackerRoad(GameMove),
     DefenderRoad(GameMove),
-    AttackerNoMoves,
+    AttackerNoMoves(PhantomData<T>),
     Root(Vec<String>),
 }
 
-impl std::fmt::Display for Solved {
+impl<T> std::fmt::Display for Solved<T>
+where
+    T: TakBoard,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         use colorful::Color;
         use colorful::Colorful;
         let s = match self {
-            Solved::Proved(m) => format!("{}", m.to_ptn()),
-            Solved::Disproved(m) => format!("{}", m.to_ptn()),
-            Solved::Unknown(m) => return write!(f, "{}", m.to_ptn()),
-            Solved::AttackerRoad(m) => format!("{}''", m.to_ptn()),
-            Solved::DefenderRoad(m) => format!("{}''", m.to_ptn()),
-            Solved::AttackerNoMoves => format!("∅"),
+            Solved::Proved(m) => format!("{}", m.to_ptn::<T>()),
+            Solved::Disproved(m) => format!("{}", m.to_ptn::<T>()),
+            Solved::Unknown(m) => return write!(f, "{}", m.to_ptn::<T>()),
+            Solved::AttackerRoad(m) => format!("{}''", m.to_ptn::<T>()),
+            Solved::DefenderRoad(m) => format!("{}''", m.to_ptn::<T>()),
+            Solved::AttackerNoMoves(_) => format!("∅"),
             Solved::Root(vec) => {
                 let move_str = vec.join("/");
                 return write!(f, "ROOT({})", move_str);
@@ -283,7 +290,9 @@ impl std::fmt::Display for Solved {
         };
         let color = match self {
             Solved::Proved(_) | Solved::AttackerRoad(_) => Color::Blue,
-            Solved::Disproved(_) | Solved::DefenderRoad(_) | Solved::AttackerNoMoves => Color::Red,
+            Solved::Disproved(_) | Solved::DefenderRoad(_) | Solved::AttackerNoMoves(_) => {
+                Color::Red
+            }
             _ => unreachable!(),
         };
         write!(f, "{}", s.color(color))
@@ -418,7 +427,7 @@ where
         assert!(!moves.is_empty());
 
         if child.game_move == GameMove::null_move() {
-            let debug_vec: Vec<_> = moves.iter().map(|m| m.to_ptn()).collect();
+            let debug_vec: Vec<_> = moves.iter().map(|m| m.to_ptn::<T>()).collect();
             println!("All Tak Threats at the Root: ");
             dbg!(&debug_vec); // Root moves
         }

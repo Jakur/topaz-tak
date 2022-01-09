@@ -590,13 +590,13 @@ mod test {
         generate_all_moves(board, &mut vec);
         vec
     }
-    fn compare_move_lists(my_moves: Vec<GameMove>, source_file: &str) {
+    fn compare_move_lists<T: TakBoard>(my_moves: Vec<GameMove>, source_file: &str) {
         use std::collections::HashSet;
         let file_data = std::fs::read_to_string(source_file).unwrap();
         let my_set: HashSet<_> = my_moves
             .iter()
             .map(|m| {
-                let mut m = m.to_ptn();
+                let mut m = m.to_ptn::<T>();
                 m.retain(|c| c != '*');
                 m
             })
@@ -630,7 +630,13 @@ mod test {
         let crush_moves: Vec<_> = moves
             .iter()
             .copied()
-            .filter_map(|m| if m.crush() { Some(m.to_ptn()) } else { None })
+            .filter_map(|m| {
+                if m.crush() {
+                    Some(m.to_ptn::<Board6>())
+                } else {
+                    None
+                }
+            })
             .collect();
         let real_crush_moves = [
             "3b4>111*", "4b4>121*", "4b4>211*", "5b4>131*", "5b4>221*", "5b4>311*", "6b4>141*",

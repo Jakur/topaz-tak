@@ -7,6 +7,7 @@ use std::env;
 use std::io::{self, BufRead};
 use std::thread;
 use std::time::Instant;
+use topaz_tak::board::Board6;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
 
@@ -21,12 +22,12 @@ pub fn main() {
         } else if arg1 == "test" {
             let time = Instant::now();
             let s = "2,x4,1/x4,1,x/x,2,12C,1,1,x/x,1,2,21C,x2/x,2,2,x3/x2,2,1,x2 1 10";
-            let mut board = crate::board::Board6::try_from_tps(s).unwrap();
+            let mut board = Board6::try_from_tps(s).unwrap();
             let eval = Evaluator6 {};
             let mut info = SearchInfo::new(6, 10000);
             search(&mut board, &eval, &mut info);
             let pv_move = info.pv_move(&board).unwrap();
-            println!("Computer Choose: {}", pv_move.to_ptn());
+            println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
             println!("Time: {} ms", time.elapsed().as_millis());
             return;
         } else if arg1 == "tinue" {
@@ -42,31 +43,33 @@ pub fn main() {
                 "alion3" => "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27",
                 "alion4" => "x,1,x4/2,2,1,1,1,1/2221,x,1,21C,x2/2,2,2C,1,2,x/2,2,1,1,1,2/2,x2,2,x,1 2 18",
                 "alion5" => "2,x4,11/x5,221/x,2,2,2,x,221/2,1,12C,1,21C,2/2,x,2,x2,2/x,2,2,2,x,121 1 25",
+                "test5" => "2,2,x2,1/2,2,x,1,1/1221S,1,122221C,x,1/1,12,x,2C,2/1S,2,2,x2 1 20",
+                "test7" => concat!("2,2,21S,2,1,1,1/2,1,x,2,1,x,1/2,2,2,2,21112C,121S,x/x2,1112C,2,1,1112S,x/121,22211C,", 
+                    "1S,1,1,121,1221C/x,2,2,2,1,12,2/2,x3,1,122,x 2 50"),
                 _ => rest.as_str(),
             };
-            let time = Instant::now();
-            let board = match crate::board::Board6::try_from_tps(tps) {
+            let game = match TakGame::try_from_tps(tps) {
                 Ok(b) => b,
-                Err(_) => {
-                    println!("Unable to create game with tps: \n{}", tps);
+                Err(e) => {
+                    println!("Unable to create game with tps: \n{}\n{}", tps, e);
                     return;
                 }
             };
-            let mut search = crate::search::proof::TinueSearch::new(board);
-            let tinue = search.is_tinue();
-            if tinue {
-                println!("Tinue Found!")
-            } else {
-                println!("No Tinue Found.");
+            match game {
+                TakGame::Standard5(board) => {
+                    let search = crate::search::proof::TinueSearch::new(board);
+                    proof_interactive(search).unwrap();
+                }
+                TakGame::Standard6(board) => {
+                    let search = crate::search::proof::TinueSearch::new(board);
+                    proof_interactive(search).unwrap();
+                }
+                TakGame::Standard7(board) => {
+                    let search = crate::search::proof::TinueSearch::new(board);
+                    proof_interactive(search).unwrap();
+                }
+                _ => todo!(),
             }
-            let pv = search.principal_variation();
-            for m in pv.into_iter().map(|m| m.to_ptn()) {
-                println!("{}", m);
-            }
-
-            let seconds = time.elapsed().as_secs();
-            println!("Done in {} seconds", seconds);
-            proof_interactive(search).unwrap();
             return;
         } else {
             println!("Unknown argument: {}", arg1);
@@ -90,7 +93,21 @@ pub fn main() {
     }
 }
 
-fn proof_interactive<T: TakBoard>(search: TinueSearch<T>) -> Result<()> {
+fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>) -> Result<()> {
+    let time = Instant::now();
+    let tinue = search.is_tinue();
+    if tinue {
+        println!("Tinue Found!")
+    } else {
+        println!("No Tinue Found.");
+    }
+    let pv = search.principal_variation();
+    for m in pv.into_iter().map(|m| m.to_ptn::<Board6>()) {
+        println!("{}", m);
+    }
+
+    let seconds = time.elapsed().as_secs();
+    println!("Done in {} seconds", seconds);
     let mut interactive = crate::search::proof::InteractiveSearch::new(search);
     let mut first = true;
     interactive.print_root();
@@ -147,7 +164,7 @@ fn proof_interactive<T: TakBoard>(search: TinueSearch<T>) -> Result<()> {
 }
 
 fn play_game_cmd(mut computer_turn: bool) {
-    let mut board = crate::board::Board6::new();
+    let mut board = Board6::new();
     let eval = Evaluator6 {};
     while let None = board.game_result() {
         println!("{:?}", &board);
@@ -155,7 +172,7 @@ fn play_game_cmd(mut computer_turn: bool) {
             let mut info = SearchInfo::new(6, 5000);
             search(&mut board, &eval, &mut info);
             let pv_move = info.pv_move(&board).unwrap();
-            println!("Computer Choose: {}", pv_move.to_ptn());
+            println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
             board.do_move(pv_move);
         } else {
             let stdin = io::stdin();
@@ -217,7 +234,7 @@ impl TimeLeft {
 }
 
 fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
-    let mut board = crate::board::Board6::new();
+    let mut board = Board6::new();
     let mut info = SearchInfo::new(6, 1000000);
     let eval = Evaluator6 {};
     loop {
@@ -249,7 +266,7 @@ fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
                 }
             }
             TeiCommand::Position(s) => {
-                board = crate::board::Board6::new();
+                board = Board6::new();
                 for m in s.split_whitespace() {
                     if let Some(m) = GameMove::try_from_ptn(m, &board) {
                         board.do_move(m);

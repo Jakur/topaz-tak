@@ -8,6 +8,27 @@ pub mod eval;
 mod move_gen;
 pub mod search;
 
+use crate::board::{Board5, Board6, Board7};
+
+#[non_exhaustive]
+pub enum TakGame {
+    Standard5(Board5),
+    Standard6(Board6),
+    Standard7(Board7),
+}
+
+impl TakGame {
+    pub fn try_from_tps(tps: &str) -> Result<Self> {
+        let size = tps.chars().filter(|&c| c == '/').count() + 1;
+        match size {
+            5 => Ok(TakGame::Standard5(Board5::try_from_tps(tps)?)),
+            6 => Ok(TakGame::Standard6(Board6::try_from_tps(tps)?)),
+            7 => Ok(TakGame::Standard7(Board7::try_from_tps(tps)?)),
+            _ => Err(anyhow!("Unknown game size: {}", size)),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum TeiCommand {
     Stop,
@@ -16,10 +37,7 @@ pub enum TeiCommand {
     Position(String),
 }
 
-pub fn execute_moves_check_valid(
-    board: &mut crate::board::Board6,
-    ptn_slice: &[&str],
-) -> Result<Vec<GameMove>> {
+pub fn execute_moves_check_valid(board: &mut Board6, ptn_slice: &[&str]) -> Result<Vec<GameMove>> {
     let mut moves = Vec::new();
     let mut made_moves = Vec::new();
     for m_str in ptn_slice {

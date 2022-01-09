@@ -67,7 +67,7 @@ fn placement_road(_x: ()) {
     let empty = Bitboard6::new(9570373622301696);
     let color = Color::White;
     assert_eq!(
-        find_placement_road(color, rp, empty).map(|s| s.to_ptn()),
+        find_placement_road(color, rp, empty).map(|s| s.to_ptn::<Board6>()),
         Some("f4".to_string())
     );
     // "x,1,x4/2,2,1,1,1,1/2221,x,1,21C,x2/2,2,2C,1,2,x/2,2,1,1,1,2/2,x2,2,x,1 2 18"

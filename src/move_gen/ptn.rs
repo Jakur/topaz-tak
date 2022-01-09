@@ -4,8 +4,8 @@ use super::{GameMove, Piece};
 use crate::board::{Board6, TakBoard};
 
 impl GameMove {
-    pub fn to_ptn(self) -> String {
-        let square = tile_ptn(self.src_index());
+    pub fn to_ptn<T: TakBoard>(self) -> String {
+        let square = tile_ptn::<T>(self.src_index());
         if self.is_place_move() {
             match self.place_piece() {
                 Piece::WhiteCap | Piece::BlackCap => return format!("C{}", square),
@@ -115,9 +115,9 @@ impl GameMove {
     }
 }
 
-fn tile_ptn(index: usize) -> String {
-    let size = Board6::SIZE;
-    let (row, col) = Board6::row_col_static(index);
+fn tile_ptn<T: TakBoard>(index: usize) -> String {
+    let size = T::SIZE;
+    let (row, col) = T::row_col_static(index);
     let col = match col {
         0 => "a",
         1 => "b",
@@ -125,6 +125,7 @@ fn tile_ptn(index: usize) -> String {
         3 => "d",
         4 => "e",
         5 => "f",
+        6 => "g",
         _ => unimplemented!(),
     };
     let row = size - row;
@@ -144,7 +145,7 @@ mod test {
         ];
         for p in ptn {
             let m = GameMove::try_from_ptn(p, &board).unwrap();
-            assert_eq!(p, &m.to_ptn())
+            assert_eq!(p, &m.to_ptn::<Board6>())
         }
     }
 }

@@ -227,7 +227,7 @@ mod test {
         generate_all_moves(&mut board, &mut moves);
         let tak_threats = board.get_tak_threats(&moves, None);
         for m in tak_threats.iter() {
-            dbg!(m.to_ptn());
+            dbg!(m.to_ptn::<Board6>());
         }
         assert_eq!(tak_threats.len(), 5);
     }
