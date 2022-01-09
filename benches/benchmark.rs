@@ -1,8 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use topaz_tak::board::find_placement_road;
+use topaz_tak::board::{Bitboard6, Board6};
 use topaz_tak::eval::{Evaluator, Evaluator6, LOSE_SCORE};
 use topaz_tak::search::root_minimax;
-use topaz_tak::{execute_moves_check_valid, perft, Bitboard6, Board6, Color, GameMove};
+use topaz_tak::{execute_moves_check_valid, perft, Color, GameMove};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     // c.bench_function("small perft", |b| {

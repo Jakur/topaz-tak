@@ -1,4 +1,4 @@
-use crate::board::Board6;
+use crate::board::Board7;
 use crate::Piece;
 use crate::TakBoard;
 use board_game_traits::Color;
@@ -7,22 +7,27 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 
 pub const TABLE: ZobristTable = ZobristTable::new();
 
-const TOPS: usize = (Board6::SIZE + 1) * (Board6::SIZE * Board6::SIZE + 1);
-const STACKS: usize = (Board6::FLATS * 2 + 2) * (Board6::SIZE * Board6::SIZE);
-/// A Zobrist Table holding enough random values to support a size 6 board
+const LENGTH: usize = Board7::SIZE;
+const MAX_PIECES: usize = Board7::FLATS * 2 + 2;
+const TOPS: usize = (LENGTH + 1) * (LENGTH * LENGTH + 1);
+const STACKS: usize = MAX_PIECES * (LENGTH * LENGTH);
+const ARR_SIZE: usize = TOPS + STACKS * 2 + 2;
+/// A Zobrist Table holding enough random values to support a size 7 board
 pub struct ZobristTable {
     white_to_move: u64,
     black_to_move: u64,
-    table: [u64; TOPS + STACKS * 2],
+    table: [u64; ARR_SIZE],
 }
 
 impl ZobristTable {
     const fn new() -> Self {
-        const TABLE_DATA: [u64; TOPS + STACKS * 2] = include!("zobrist.table");
+        // const TABLE_DATA: [u64; ARR_SIZE] = [0; ARR_SIZE];
+        const TABLE_DATA: [u64; ARR_SIZE] = include!("zobrist.table");
+        let len = TABLE_DATA.len();
         Self {
             table: TABLE_DATA,
-            white_to_move: 0x1C1E9C11991A743F,
-            black_to_move: 0xD272922F20FEAB1E,
+            white_to_move: TABLE_DATA[len - 1],
+            black_to_move: TABLE_DATA[len - 2],
         }
     }
     pub fn color_hash(&self, color: Color) -> u64 {
@@ -32,14 +37,14 @@ impl ZobristTable {
         }
     }
     pub fn top_hash(&self, piece: Piece, index: usize) -> u64 {
-        self.table[piece as usize + index * 7]
+        self.table[piece as usize + index * (LENGTH + 1)]
     }
     pub fn stack_hash(&self, piece: Piece, sq_index: usize, stack_index: usize) -> u64 {
         let color_offset = match piece {
             Piece::WhiteCap | Piece::WhiteWall | Piece::WhiteFlat => 0,
             Piece::BlackCap | Piece::BlackWall | Piece::BlackFlat => STACKS,
         };
-        let idx = color_offset + sq_index * 62 + stack_index;
+        let idx = color_offset + sq_index * MAX_PIECES + stack_index;
         self.table[TOPS + idx]
     }
     pub fn manual_build_hash<T: TakBoard>(&self, board: &T) -> u64 {
@@ -63,7 +68,7 @@ impl ZobristTable {
             9, 60, 225, 206, 252, 134, 26, 117, 109, 127, 202, 188, 75, 28, 41, 96, 219, 156, 76,
             19, 163, 106, 124, 70, 39, 78, 146, 125, 40, 120, 244, 216,
         ];
-        let mut table = [0; TOPS + STACKS * 2];
+        let mut table = [0; ARR_SIZE];
         let mut rng = Xoshiro256PlusPlus::from_seed(SEED);
         for idx in 0..table.len() {
             table[idx] = rng.next_u64();
@@ -83,6 +88,7 @@ impl ZobristTable {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::board::Board6;
     use crate::generate_all_moves;
     use board_game_traits::Position;
     use std::collections::HashSet;
@@ -91,14 +97,14 @@ mod test {
         let mut seen = HashSet::new();
         for piece_idx in 1..=6 {
             let piece = Piece::from_index(piece_idx);
-            for sq_index in 0..36 {
+            for sq_index in 0..(LENGTH * LENGTH) {
                 let hash = TABLE.top_hash(piece, sq_index);
                 assert!(seen.insert(hash));
             }
         }
         for piece in [Piece::WhiteFlat, Piece::BlackFlat].iter() {
-            for sq_index in 0..36 {
-                for stack_index in 0..62 {
+            for sq_index in 0..(LENGTH * LENGTH) {
+                for stack_index in 0..MAX_PIECES {
                     let hash = TABLE.stack_hash(*piece, sq_index, stack_index);
                     assert!(seen.insert(hash));
                 }
@@ -120,7 +126,7 @@ mod test {
             assert_eq!(board.bits.zobrist(), init_zobrist);
         }
     }
-
+    // #[test]
     // pub fn dummy() {
     //     ZobristTable::build_table();
     // }
