@@ -577,6 +577,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "getopts",
+ "getrandom",
  "lru",
  "rand_core",
  "rand_xoshiro",

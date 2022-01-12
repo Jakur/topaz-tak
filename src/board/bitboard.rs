@@ -145,9 +145,9 @@ impl Bitboard5 {
     const LEFT: Bitboard5 = Bitboard5::new(0x2020202020000);
     const RIGHT: Bitboard5 = Bitboard5::new(0x20202020200000);
     const LEFT_TOP: Bitboard5 = Bitboard5::new(Self::LEFT.0 | Self::TOP.0);
+    const INNER: u64 = 0x3e3e3e3e3e0000; // 5x5 Board
     pub const fn new(data: u64) -> Self {
-        const INNER: u64 = 0x3e3e3e3e3e0000; // 5x5 Board
-        Self(data & INNER)
+        Self(data & Self::INNER)
     }
     #[rustfmt::skip]
     const fn build_bit_to_index_table() -> [usize; 64] {
@@ -188,9 +188,9 @@ impl Bitboard6 {
     const LEFT: Bitboard6 = Bitboard6::new(0x2020202020200);
     const RIGHT: Bitboard6 = Bitboard6::new(0x40404040404000);
     const LEFT_TOP: Bitboard6 = Bitboard6::new(Self::LEFT.0 | Self::TOP.0);
+    const INNER: u64 = 0x7e7e7e7e7e7e00; // 6x6 Board
     pub const fn new(data: u64) -> Self {
-        const INNER: u64 = 0x7e7e7e7e7e7e00; // 6x6 Board
-        Self(data & INNER)
+        Self(data & Self::INNER)
     }
     #[rustfmt::skip]
     const fn build_bit_to_index_table() -> [usize; 64] {
@@ -232,9 +232,9 @@ impl Bitboard7 {
     const LEFT: Bitboard7 = Bitboard7::new(0x101010101010100);
     const RIGHT: Bitboard7 = Bitboard7::new(0x4040404040404000);
     const LEFT_TOP: Bitboard7 = Bitboard7::new(Self::LEFT.0 | Self::TOP.0);
+    const INNER: u64 = 0x7f7f7f7f7f7f7f00; // 7x7 Board
     pub const fn new(data: u64) -> Self {
-        const INNER: u64 = 0x7f7f7f7f7f7f7f00; // 7x7 Board
-        Self(data & INNER)
+        Self(data & Self::INNER)
     }
     #[rustfmt::skip]
     const fn build_bit_to_index_table() -> [usize; 64] {
@@ -406,7 +406,7 @@ macro_rules! bitboard_impl {
                 $sz
             }
             fn all_ones(self) -> bool {
-                self.0 == u64::MAX
+                self.0 == Self::INNER
             }
             fn pop_count(self) -> u32 {
                 (self.0).count_ones()

@@ -8,6 +8,7 @@ use std::io::{self, BufRead};
 use std::thread;
 use std::time::Instant;
 use topaz_tak::board::Board6;
+use topaz_tak::eval::Weights6;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
 
@@ -236,7 +237,9 @@ impl TimeLeft {
 fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
     let mut board = Board6::new();
     let mut info = SearchInfo::new(6, 1000000);
-    let eval = Evaluator6 {};
+    let mut eval = Weights6::default();
+    eval.add_noise();
+    // let eval = Evaluator6 {};
     loop {
         let message = receiver.recv()?;
         match message {

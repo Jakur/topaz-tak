@@ -16,6 +16,7 @@ lru = "0.7.0"
 termtree = "0.2.3"
 colorful = "0.2"
 getopts = "0.2.21"
+getrandom = "*"
 
 [profile.release]
 debug = true

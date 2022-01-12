@@ -2,6 +2,8 @@ use super::{Bitboard, Piece, Stack};
 use crate::board::Board6;
 use crate::board::TakBoard;
 use board_game_traits::{Color, Position};
+use rand_core::{RngCore, SeedableRng};
+use rand_xoshiro::Xoshiro256PlusPlus;
 
 pub trait Evaluator {
     type Game: TakBoard;
@@ -84,6 +86,17 @@ pub struct Weights6 {
     tempo_offset: i32,
     piece: [i32; 3],
     stack_top: [i32; 6],
+}
+
+impl Weights6 {
+    pub fn add_noise(&mut self) {
+        let mut seed: [u8; 32] = [0; 32];
+        getrandom::getrandom(&mut seed).unwrap();
+        let mut rng = Xoshiro256PlusPlus::from_seed(seed);
+        for i in 0..self.location.len() {
+            self.location[i] += (rng.next_u32() % 4) as i32;
+        }
+    }
 }
 
 impl Evaluator for Weights6 {
