@@ -311,6 +311,8 @@ pub struct TinueSearch<T> {
     pub replies: HashMap<u64, GameMove>,
     tinue_cache_hits: usize,
     tinue_cache_misses: usize,
+    quiet: bool,
+    max_nodes: usize,
 }
 
 impl<T> TinueSearch<T>
@@ -331,19 +333,33 @@ where
             tinue_cache_hits: 0,
             tinue_cache_misses: 0,
             zobrist_hist: Vec::new(),
+            quiet: false,
+            max_nodes: usize::MAX,
         }
     }
-    pub fn is_tinue(&mut self) -> bool {
+    pub fn is_tinue(&mut self) -> Option<bool> {
         let mut root = Child::new(Bounds::root(), GameMove::null_move(), self.board.hash());
         self.mid(&mut root, 0);
-        dbg!(self.nodes);
-        dbg!(self.tinue_cache_hits);
-        dbg!(self.tinue_cache_misses);
-        if root.delta() == INFINITY {
-            true
-        } else {
-            false
+        if !self.quiet {
+            dbg!(self.nodes);
+            dbg!(self.tinue_cache_hits);
+            dbg!(self.tinue_cache_misses);
         }
+        if self.aborted() {
+            return None;
+        }
+        if root.delta() == INFINITY {
+            Some(true)
+        } else {
+            Some(false)
+        }
+    }
+    pub fn limit(mut self, max_nodes: usize) -> Self {
+        self.max_nodes = max_nodes;
+        self
+    }
+    pub fn aborted(&self) -> bool {
+        self.nodes > self.max_nodes
     }
     pub fn principal_variation(&mut self) -> Vec<GameMove> {
         let mut hist = Vec::new();
@@ -360,11 +376,9 @@ where
     }
     fn mid(&mut self, child: &mut Child, depth: usize) {
         self.nodes += 1;
-        // if depth == 1 {
-        //     dbg!(self.nodes);
-        //     dbg!(child.game_move.to_ptn());
-        //     dbg!(child.bounds);
-        // }
+        if self.nodes > self.max_nodes {
+            return;
+        }
         if child.game_move != GameMove::null_move() {
             let rev = self.board.do_move(child.game_move);
             self.rev_moves.push(rev);
@@ -426,7 +440,7 @@ where
         };
         assert!(!moves.is_empty());
 
-        if child.game_move == GameMove::null_move() {
+        if child.game_move == GameMove::null_move() && !self.quiet {
             let debug_vec: Vec<_> = moves.iter().map(|m| m.to_ptn::<T>()).collect();
             println!("All Tak Threats at the Root: ");
             dbg!(&debug_vec); // Root moves
@@ -581,7 +595,7 @@ mod test {
         let board = Board6::try_from_tps(s).unwrap();
         dbg!(&board);
         let mut search = TinueSearch::new(board);
-        assert!(search.is_tinue());
+        assert!(search.is_tinue().unwrap());
     }
     #[test]
     fn simple2() {
@@ -590,9 +604,9 @@ mod test {
             "1,1,1,1,1112C,1/x,x,x,1,2,1/1,2,x,12,1S,x/x,2,2,1221S,x,2/x3,121,x2/2,2,2,1,2,x 1 25";
         let board = Board6::try_from_tps(s).unwrap();
         let mut search = TinueSearch::new(board);
-        assert!(search.is_tinue());
+        assert!(search.is_tinue().unwrap());
         let mut search2 = TinueSearch::new(Board6::try_from_tps(s2).unwrap());
-        assert!(!search2.is_tinue());
+        assert!(!search2.is_tinue().unwrap());
     }
     #[test]
     fn see_edge_placement_road() {
@@ -607,6 +621,6 @@ mod test {
         let s = "x3,1C,x2/x,1,x,1,x2/x,1,1,x,1,x/x3,1,x2/x3,1,x2/2C,2,22,x,2,x 1 9";
         let board = Board6::try_from_tps(s).unwrap();
         let mut search = TinueSearch::new(board);
-        assert!(!search.is_tinue());
+        assert!(!search.is_tinue().unwrap());
     }
 }

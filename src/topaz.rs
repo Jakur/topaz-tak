@@ -96,7 +96,7 @@ pub fn main() {
 
 fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>) -> Result<()> {
     let time = Instant::now();
-    let tinue = search.is_tinue();
+    let tinue = search.is_tinue().unwrap();
     if tinue {
         println!("Tinue Found!")
     } else {

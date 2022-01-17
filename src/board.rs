@@ -665,4 +665,13 @@ mod test {
             .collect();
         assert_eq!(&p_res[..], &[1, 190, 20698]);
     }
+
+    #[test]
+    pub fn board_fill() {
+        let tps = "1,2,1,1,1,x/2,2,2,1,21,1/2,2,112C,21S,2,2/2,1,221C,1,12,212/1,1,1,2,1,2/2,2,1,1,2,112S 2 30";
+        let mut board = Board6::try_from_tps(tps).unwrap();
+        let res = crate::execute_moves_check_valid(&mut board, &["f6"]);
+        assert!(res.is_ok());
+        assert_eq!(board.flat_game(), Some(GameResult::BlackWin));
+    }
 }
