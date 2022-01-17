@@ -358,6 +358,10 @@ where
         self.max_nodes = max_nodes;
         self
     }
+    pub fn quiet(mut self) -> Self {
+        self.quiet = true;
+        self
+    }
     pub fn aborted(&self) -> bool {
         self.nodes > self.max_nodes
     }
