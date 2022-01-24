@@ -423,6 +423,10 @@ pub struct BitIndexIterator<T> {
     bits: T,
 }
 
+impl<T> BitIndexIterator<T> {
+    pub fn new(bits: T) -> Self { Self { bits } }
+}
+
 impl<T> Iterator for BitIndexIterator<T>
 where
     T: Bitboard,

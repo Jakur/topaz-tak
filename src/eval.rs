@@ -1,4 +1,5 @@
 use super::{Bitboard, Piece, Stack};
+use crate::board::BitIndexIterator;
 use crate::board::Board6;
 use crate::board::TakBoard;
 use board_game_traits::{Color, Position};
@@ -115,8 +116,60 @@ impl Evaluator for Weights6 {
             } else if stack.len() > 1 {
                 let top = *stack.last().unwrap();
                 let pw = self.piece_weight(top) + self.location[idx];
-                let (captive, friendly) = captive_friendly(&stack, top);
+                let (mut captive, mut friendly) = captive_friendly(&stack, top);
                 let (c_mul, f_mul) = self.stack_top_multiplier(top);
+                let mut mobility = 0;
+                let mut safety = 0;
+                match top {
+                    Piece::WhiteFlat | Piece::BlackFlat => {}
+                    Piece::WhiteWall | Piece::BlackWall => {
+                        safety += 4;
+                    }
+                    Piece::WhiteCap | Piece::BlackCap => {
+                        safety += 32;
+                        mobility += 1;
+                    }
+                }
+                let neighbors = <Board6 as TakBoard>::Bits::index_to_bit(idx).adjacent();
+                for sq in BitIndexIterator::new(neighbors) {
+                    if let Some(piece) = game.board[sq].last() {
+                        if piece.owner() == top.owner() {
+                            match piece {
+                                Piece::WhiteFlat | Piece::BlackFlat => {
+                                    safety += 1;
+                                    mobility += 1;
+                                }
+                                Piece::WhiteWall | Piece::BlackWall => {
+                                    safety += 3;
+                                }
+                                Piece::WhiteCap | Piece::BlackCap => {
+                                    safety += 6;
+                                    mobility += 1;
+                                }
+                            }
+                        } else {
+                            match piece {
+                                Piece::WhiteFlat | Piece::BlackFlat => {
+                                    mobility += 2;
+                                }
+                                Piece::WhiteWall | Piece::BlackWall => {
+                                    safety -= 4;
+                                }
+                                Piece::WhiteCap | Piece::BlackCap => {
+                                    safety -= 8;
+                                }
+                            }
+                        }
+                    } else {
+                        mobility += 2;
+                    }
+                }
+                if mobility < 2 && !top.is_blocker() {
+                    friendly /= 2;
+                }
+                if safety < 0 {
+                    captive *= 2;
+                }
                 let stack_score = captive * c_mul + friendly * f_mul + pw;
                 if let Color::White = top.owner() {
                     score += stack_score;
@@ -142,6 +195,17 @@ impl Evaluator for Weights6 {
                 -1 * score + self.tempo_offset
             }
         }
+    }
+}
+
+fn local_influence(top: Piece) -> i32 {
+    match top {
+        Piece::WhiteFlat => 1,
+        Piece::WhiteWall => 16,
+        Piece::WhiteCap => 512,
+        Piece::BlackFlat => -1,
+        Piece::BlackWall => -16,
+        Piece::BlackCap => -512,
     }
 }
 
