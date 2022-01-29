@@ -5,6 +5,7 @@ use std::fmt;
 
 pub mod ptn;
 
+/// Generates all legal moves in a position, filling the provided buffer
 pub fn generate_all_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove>) {
     generate_all_place_moves(board, moves);
     if board.move_num() >= 2 {
@@ -101,6 +102,7 @@ pub fn generate_all_stack_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove
     }
 }
 
+/// A struct containing the necessary data to reverse a [GameMove].
 #[derive(Clone, Copy, Debug)]
 pub struct RevGameMove {
     pub game_move: GameMove,
@@ -116,6 +118,11 @@ impl RevGameMove {
     }
 }
 
+/// A struct tightly packing all information necessary to make a Tak move.
+///
+/// Bit shifts and bit masks are used to set / retrieve the necessary move info.
+/// There is enough space in this configuration to represent any move up to an 8x8 Tak Board.
+/// The current data configuration is as follows:
 /// 0011 1111 Src Tile
 /// 1100 0000 Direction
 /// 000000000F00 Number Picked Up
@@ -134,13 +141,24 @@ pub struct GameMove(u64);
 
 impl GameMove {
     const PLACEMENT_BITS: u64 = 0xF00000000000;
+    /// Creates a placement move from the provided piece and board index
     pub fn from_placement(piece: Piece, index: usize) -> Self {
         let bits = ((piece as u64) << 44) | index as u64;
         Self(bits)
     }
+    /// Creates a null move which can be used to pass without changing the game state
+    ///
+    /// Technically this move does not follow the expected data layout and is thus illegal.
+    /// There is no way for a null move to result from normal move creation rules,
+    /// so it should only appear when explicitly made for low level data structures or advanced
+    /// search heuristics, i.e. the [null move heuristic](https://www.chessprogramming.org/Null_Move_Pruning) in alpha beta search.
+    /// In situations where a null move might arise, it must be checked for explicitly.
     pub fn null_move() -> Self {
         Self(0)
     }
+    /// Returns the move priority directly embedded in the bits of the move.
+    ///
+    /// Importantly, the score bits must not be included in the hashing of game moves.
     pub fn score(self) -> i32 {
         let bits = self.0 >> 52;
         if self.is_place_move() {
@@ -149,28 +167,51 @@ impl GameMove {
             (bits + self.number() + 10 * self.is_stack_move() as u64) as i32
         }
     }
+    /// Adds the provided value to the score.
+    ///
+    /// # Panics
+    ///
+    /// Note that only 12 bits are reserved for the score, so larger values will overflow, corrupting the data
+    /// and panicking in debug mode.
     pub fn add_score(&mut self, score: u64) {
         self.0 = self.0 + (score << 52)
     }
+    /// Returns true if this is a placement move, i.e. not a stack move or null move.
     pub fn is_place_move(self) -> bool {
         (self.0 & Self::PLACEMENT_BITS) > 0
     }
+    /// Returns the bits corresponding to the movement of the stack
+    ///
+    /// There is one nibble reserved each new location that the stack could move to
+    /// where the value indicates how many pieces were dropped there. This requires 7 nibbles at maximum,
+    /// since even on an 8x8 board a stack cannot advance more than 7 squares. The
+    /// lower value bits correspond to piece drops closer to the origin. By the rules
+    /// of Tak, once a single nibble is 0, all higher bits of the slide must also be 0.
     pub fn slide_bits(self) -> u64 {
         let bits = self.0 & 0xFFFFFFF000;
         bits >> 12
     }
+    /// Returns the piece being placed.
+    ///
+    /// # Panics
+    ///
+    /// If this is not a placement move
     pub fn place_piece(self) -> Piece {
         Piece::from_index((self.0 >> 44) & 0xF)
     }
+    /// Returns true if the move is a stack (sliding) move
     pub fn is_stack_move(self) -> bool {
         (self.0 & Self::PLACEMENT_BITS) == 0
     }
+    /// Returns either the index where the piece is being placed, or the stack move origin square index.
     pub fn src_index(self) -> usize {
         self.0 as usize & 0x3F
     }
+    /// Returns the direction of the movement. 0 &harr; N, 1 &harr; E, 2 &harr; S, 3 &harr; W
     pub fn direction(self) -> u64 {
         (self.0 & 0xC0) >> 6
     }
+    /// Sets square index bits for the placement or stack move
     fn set_index(self, index: u64) -> Self {
         Self(self.0 | index)
     }
@@ -178,12 +219,19 @@ impl GameMove {
     fn set_direction(self, dir: u64) -> Self {
         GameMove(self.0 | (dir << 6))
     }
+    /// Sets the number of pieces being picked up by a stack move
     fn set_number(self, num: u64) -> Self {
         GameMove(self.0 | (num << 8))
     }
+    /// Returns the number of pieces being picked up by a stack move
     pub fn number(self) -> u64 {
         (self.0 & 0xF00) >> 8
     }
+    /// Returns an iterator representing the forward movement of a stack
+    ///
+    /// This is primarily used when actually implementing stack movement on a Tak board.
+    /// The board size is necessary because north and south movement need to know the
+    /// amount to increment / decrement the index value by as the stack moves
     pub fn forward_iter(self, board_size: usize) -> StackMoveIterator {
         StackMoveIterator::new(self, board_size)
     }
@@ -227,9 +275,13 @@ impl GameMove {
             self
         }
     }
+    /// Sets the crush bit according to the given value
     pub fn set_crush(self) -> Self {
         Self(self.0 | 0x10000000000)
     }
+    /// Returns true if move is a stack move that crushes a wall
+    ///
+    /// This is necessary to properly implement [RevGameMove].
     pub fn crush(&self) -> bool {
         (self.0 & 0x10000000000) > 0
     }

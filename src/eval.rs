@@ -178,17 +178,29 @@ impl Evaluator for Weights6 {
                 }
             }
         }
+        // Danger FOR the associated color
+        // const DANGER_MUL: i32 = 20; // 20
+        // let white_danger = (game.bits.road_pieces(Color::Black).critical_squares()
+        //     & !game.bits.blocker_pieces(Color::White))
+        // .pop_count() as i32;
+        // let black_danger = (game.bits.road_pieces(Color::White).critical_squares()
+        //     & !game.bits.blocker_pieces(Color::Black))
+        // .pop_count() as i32;
         let white_connectivity = (game.bits.white.adjacent() & game.bits.white).pop_count();
         let black_connectivity = (game.bits.black.adjacent() & game.bits.black).pop_count();
         score += white_connectivity as i32 * self.connectivity;
         score -= black_connectivity as i32 * self.connectivity;
         if let Color::White = game.side_to_move() {
+            // score -= DANGER_MUL * white_danger;
+            // score += DANGER_MUL * black_danger;
             if depth % 2 == 0 {
                 score
             } else {
                 score - self.tempo_offset
             }
         } else {
+            // score += DANGER_MUL * white_danger;
+            // score -= DANGER_MUL * black_danger;
             if depth % 2 == 0 {
                 -1 * score
             } else {
