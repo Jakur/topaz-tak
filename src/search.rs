@@ -15,7 +15,7 @@ const NULL_REDUCTION: usize = 2;
 
 pub struct SearchInfo {
     pub max_depth: usize,
-    nodes: usize,
+    pub nodes: usize,
     pv_table: LruCache<u64, HashEntry>, // Todo replace with LRU cache
     killer_moves: Vec<KillerMoves>,
     fail_high_first: usize,
@@ -44,6 +44,12 @@ impl SearchInfo {
             start_time: Instant::now(),
             start_ply: 0,
         }
+    }
+    pub fn print_cuts(&self) {
+        println!(
+            "Fail High: {} Fail High First: {} Transposition Hits: {} ",
+            self.fail_high, self.fail_high_first, self.transposition_cutoffs
+        );
     }
     pub fn take_table(mut self, other: &mut Self) -> Self {
         std::mem::swap(&mut self.pv_table, &mut other.pv_table);
@@ -356,6 +362,12 @@ where
     }
     // Do a slower, more thorough move ordering at the root
     if info.ply_depth(board) == 0 {
+        // DEBUG
+        // moves.sort_by(|x, y| x.score().cmp(&y.score()));
+        // println!("MOVE SEARCH ORDER: ");
+        // for m in moves.iter() {
+        //     println!("{}", m.to_ptn::<crate::Board6>());
+        // }
         let tak_threats = board.get_tak_threats(&moves, None);
         if tak_threats.len() > 0 {
             for m in moves.iter_mut() {
@@ -367,13 +379,19 @@ where
     }
     let old_alpha = alpha;
     for count in 0..moves.len() {
-        let (idx, m) = moves
-            .iter()
-            .enumerate()
-            .max_by_key(|(_i, &m)| m.score() + info.killer_moves[depth].score(m))
-            .unwrap();
-        let m = *m;
-        moves.swap_remove(idx);
+        let m = if count <= 10 {
+            let (idx, m) = moves
+                .iter()
+                .enumerate()
+                .max_by_key(|(_i, &m)| m.score() + info.killer_moves[depth].score(m))
+                .unwrap();
+            let m = *m;
+            moves.swap_remove(idx);
+            m
+        } else {
+            // Probably an all node, so search order doesn't really matter
+            moves.pop().unwrap()
+        };
         let rev_move = board.do_move(m);
         let score = -1 * alpha_beta(-beta, -alpha, depth - 1, board, evaluator, info, true);
         board.reverse_move(rev_move);

@@ -22,13 +22,23 @@ pub fn main() {
             play_game_cmd(true);
         } else if arg1 == "test" {
             let time = Instant::now();
-            let s = "2,x4,1/x4,1,x/x,2,12C,1,1,x/x,1,2,21C,x2/x,2,2,x3/x2,2,1,x2 1 10";
-            let mut board = Board6::try_from_tps(s).unwrap();
-            let eval = Evaluator6 {};
-            let mut info = SearchInfo::new(6, 10000);
-            search(&mut board, &eval, &mut info);
-            let pv_move = info.pv_move(&board).unwrap();
-            println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
+            // let s = "2,x4,1/x4,1,x/x,2,12C,1,1,x/x,1,2,21C,x2/x,2,2,x3/x2,2,1,x2 1 10";
+            // let s = "1,1,2,21,2,2/12,1111112C,2,1S,2,121S/1,x,221C,2,212S,21/1,2,x,2,1S,x/1,112S,2,1,1,1/1,x,112,112S,2,2 1 39";
+            // let mut board = Board6::try_from_tps(s).unwrap();
+            // let eval = Weights6::default();
+            // let mut info = SearchInfo::new(4, 1_000_000);
+            // search(&mut board, &eval, &mut info);
+            // let pv_move = info.pv_move(&board).unwrap();
+            // println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
+            // info.print_cuts();
+            // let node_counts = search_efficiency(&["empty6"], 8);
+            let node_counts = search_efficiency(&["alion1", "alion2", "alion3", "topaz1"], 6);
+            let nodes: usize = node_counts.into_iter().sum();
+            println!(
+                "Nodes: {} Nps: {}",
+                nodes,
+                1000 * nodes as u128 / time.elapsed().as_millis()
+            );
             println!("Time: {} ms", time.elapsed().as_millis());
             return;
         } else if arg1 == "tinue" {
@@ -38,16 +48,10 @@ pub fn main() {
                 rest.push_str(" ");
             }
             rest.pop();
-            let tps = match rest.as_str() {
-                "alion1" => "2,1221122,1,1,1,2S/1,1,1,x,1C,1111212/x2,2,212,2C,11/2,2,x2,1,1/x3,1,1,x/x2,2,21,x,112S 2 32",
-                "alion2" => "2,212221C,2,2,2C,1/1,2,1,1,2,1/12,x,1S,2S,2,1/2,2,2,x2,1/1,2212121S,2,12,1,1S/x,2,2,2,x,1 1 30",
-                "alion3" => "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27",
-                "alion4" => "x,1,x4/2,2,1,1,1,1/2221,x,1,21C,x2/2,2,2C,1,2,x/2,2,1,1,1,2/2,x2,2,x,1 2 18",
-                "alion5" => "2,x4,11/x5,221/x,2,2,2,x,221/2,1,12C,1,21C,2/2,x,2,x2,2/x,2,2,2,x,121 1 25",
-                "test5" => "2,2,x2,1/2,2,x,1,1/1221S,1,122221C,x,1/1,12,x,2C,2/1S,2,2,x2 1 20",
-                "test7" => concat!("2,2,21S,2,1,1,1/2,1,x,2,1,x,1/2,2,2,2,21112C,121S,x/x2,1112C,2,1,1112S,x/121,22211C,", 
-                    "1S,1,1,121,1221C/x,2,2,2,1,12,2/2,x3,1,122,x 2 50"),
-                _ => rest.as_str(),
+            let tps = if let Some(tps) = saved_tps(rest.as_str()) {
+                tps
+            } else {
+                rest.as_str()
             };
             let game = match TakGame::try_from_tps(tps) {
                 Ok(b) => b,
@@ -92,6 +96,36 @@ pub fn main() {
     } else {
         println!("Unknown command: {}", buffer);
     }
+}
+
+fn saved_tps(name: &str) -> Option<&str> {
+    let s = match name {
+        "alion1" => "2,1221122,1,1,1,2S/1,1,1,x,1C,1111212/x2,2,212,2C,11/2,2,x2,1,1/x3,1,1,x/x2,2,21,x,112S 2 32",
+        "alion2" => "2,212221C,2,2,2C,1/1,2,1,1,2,1/12,x,1S,2S,2,1/2,2,2,x2,1/1,2212121S,2,12,1,1S/x,2,2,2,x,1 1 30",
+        "alion3" => "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27",
+        "alion4" => "x,1,x4/2,2,1,1,1,1/2221,x,1,21C,x2/2,2,2C,1,2,x/2,2,1,1,1,2/2,x2,2,x,1 2 18",
+        "alion5" => "2,x4,11/x5,221/x,2,2,2,x,221/2,1,12C,1,21C,2/2,x,2,x2,2/x,2,2,2,x,121 1 25",
+        "empty6" => "x6/x6/x6/x6/x6/x6 1 1",
+        "test5" => "2,2,x2,1/2,2,x,1,1/1221S,1,122221C,x,1/1,12,x,2C,2/1S,2,2,x2 1 20",
+        "test7" => concat!("2,2,21S,2,1,1,1/2,1,x,2,1,x,1/2,2,2,2,21112C,121S,x/x2,1112C,2,1,1112S,x/121,22211C,", 
+            "1S,1,1,121,1221C/x,2,2,2,1,12,2/2,x3,1,122,x 2 50"),
+        "topaz1" => "x2,1,x,1212,x/x,221,2212221211C,2S,x2/x,221,1,2,2,x/221,2,12C,1,2,2/22221S,221S,1,1,2,x/12,x,12,1,1,x 1 44",
+        _ => {return None}
+    };
+    Some(s)
+}
+
+fn search_efficiency(names: &[&str], depth: usize) -> Vec<usize> {
+    let mut vec = Vec::new();
+    for name in names {
+        let tps = saved_tps(name).unwrap();
+        let mut board = Board6::try_from_tps(tps).unwrap();
+        let eval = Weights6::default();
+        let mut info = SearchInfo::new(depth, 1_000_000);
+        search(&mut board, &eval, &mut info);
+        vec.push(info.nodes);
+    }
+    vec
 }
 
 fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>) -> Result<()> {
