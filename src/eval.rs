@@ -14,7 +14,7 @@ pub trait Evaluator {
 pub struct Evaluator6 {}
 
 impl Evaluator6 {
-    const TEMPO_OFFSET: i32 = 50;
+    const TEMPO_OFFSET: i32 = 150;
     const CONNECTIVITY: i32 = 20;
     const fn piece_weight(p: Piece) -> i32 {
         match p {
@@ -186,10 +186,15 @@ impl Evaluator for Weights6 {
         // let black_danger = (game.bits.road_pieces(Color::White).critical_squares()
         //     & !game.bits.blocker_pieces(Color::Black))
         // .pop_count() as i32;
-        let white_connectivity = (game.bits.white.adjacent() & game.bits.white).pop_count();
-        let black_connectivity = (game.bits.black.adjacent() & game.bits.black).pop_count();
-        score += white_connectivity as i32 * self.connectivity;
-        score -= black_connectivity as i32 * self.connectivity;
+        let white_comp = connected_components(game.bits.road_pieces(Color::White));
+        let black_comp = connected_components(game.bits.road_pieces(Color::Black));
+        // Punish more components?
+        score -= white_comp as i32 * self.connectivity;
+        score += black_comp as i32 * self.connectivity;
+        // let white_connectivity = (game.bits.white.adjacent() & game.bits.white).pop_count();
+        // let black_connectivity = (game.bits.black.adjacent() & game.bits.black).pop_count();
+        // score += white_connectivity as i32 * self.connectivity;
+        // score -= black_connectivity as i32 * self.connectivity;
         if let Color::White = game.side_to_move() {
             // score -= DANGER_MUL * white_danger;
             // score += DANGER_MUL * black_danger;
@@ -208,6 +213,17 @@ impl Evaluator for Weights6 {
             }
         }
     }
+}
+
+fn connected_components<B: Bitboard>(mut bits: B) -> usize {
+    let mut count = 0;
+    while bits != B::ZERO {
+        let lowest = bits.lowest();
+        let set = bits.flood(lowest);
+        bits = bits ^ set;
+        count += 1;
+    }
+    count
 }
 
 fn local_influence(top: Piece) -> i32 {
@@ -319,5 +335,18 @@ mod test {
             dbg!(m.to_ptn::<Board6>());
         }
         assert_eq!(tak_threats.len(), 5);
+    }
+    #[test]
+    fn components() {
+        let s = "2,x5/2,x,1,2,x2/x2,1,1,2C,x/x,2,2,1,x2/x3,1,x2/x5,1 1 7";
+        let board = Board6::try_from_tps(s).unwrap();
+        assert_eq!(
+            2,
+            connected_components(board.bits.road_pieces(Color::White))
+        );
+        assert_eq!(
+            4,
+            connected_components(board.bits.road_pieces(Color::Black))
+        );
     }
 }

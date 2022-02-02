@@ -272,8 +272,8 @@ fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
     const MAX_DEPTH: usize = 8;
     let mut board = Board6::new();
     let mut info = SearchInfo::new(MAX_DEPTH, 1000000);
-    let mut eval = Weights6::default();
-    eval.add_noise();
+    let eval = Weights6::default();
+    // eval.add_noise();
     // let eval = Evaluator6 {};
     loop {
         let message = receiver.recv()?;

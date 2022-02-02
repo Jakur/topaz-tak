@@ -154,6 +154,8 @@ pub trait Bitboard:
     fn flood(self, edge: Self) -> Self;
     /// Returns true if two opposite edges are connected by the provided bits
     fn check_road(self) -> bool;
+    /// Returns the lowest bit index in the bitboard without modifying self
+    fn lowest(&self) -> Self;
     /// Pops the lowest bit index in the bitboard.
     /// 
     /// This unsets the bit in the bitboard and returns a new bitboard where only
@@ -418,6 +420,15 @@ macro_rules! bitboard_impl {
                     unchecked = unchecked & !component;
                 }
                 false
+            }
+            fn lowest(&self) -> Self {
+                let highest_index = self.0.trailing_zeros();
+                if highest_index == 64 {
+                    Self::new(0)
+                } else {
+                    let value = 1 << highest_index;
+                    Self::new(value)
+                }
             }
             fn pop_lowest(&mut self) -> Self {
                 let highest_index = self.0.trailing_zeros();
