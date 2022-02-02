@@ -269,8 +269,9 @@ impl TimeLeft {
 }
 
 fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
+    const MAX_DEPTH: usize = 8;
     let mut board = Board6::new();
-    let mut info = SearchInfo::new(6, 1000000);
+    let mut info = SearchInfo::new(MAX_DEPTH, 1000000);
     let mut eval = Weights6::default();
     eval.add_noise();
     // let eval = Evaluator6 {};
@@ -285,7 +286,7 @@ fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
                 let est_plies = low_flats * 2;
                 let time_left = TimeLeft::new(&s);
                 let use_time = time_left.use_time(est_plies, board.side_to_move());
-                info = SearchInfo::new(6, 0)
+                info = SearchInfo::new(MAX_DEPTH, 0)
                     .take_table(&mut info)
                     .max_time(use_time);
                 let res = search(&mut board, &eval, &mut info);

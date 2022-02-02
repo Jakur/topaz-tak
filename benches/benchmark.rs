@@ -6,14 +6,14 @@ use topaz_tak::search::root_minimax;
 use topaz_tak::{execute_moves_check_valid, perft, Color, GameMove};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
-    // c.bench_function("small perft", |b| {
-    //     b.iter(|| execute_small_perft(black_box(3)))
-    // });
-    let pos = get_positions();
-    let eval = Evaluator6 {};
-    c.bench_function("eval", |b| {
-        b.iter(|| evaluate_positions(black_box(&pos), black_box(&eval)))
+    c.bench_function("small perft", |b| {
+        b.iter(|| execute_small_perft(black_box(2)))
     });
+    // let pos = get_positions();
+    // let eval = Evaluator6 {};
+    // c.bench_function("eval", |b| {
+    //     b.iter(|| evaluate_positions(black_box(&pos), black_box(&eval)))
+    // });
 }
 
 fn execute_small_perft(depth: usize) {

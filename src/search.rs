@@ -2,7 +2,7 @@ use super::{Color, GameResult};
 use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
-use crate::move_gen::GameMove;
+use crate::move_gen::{generate_all_moves, GameMove, KillerMoves, SmartMoveBuffer};
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
 use lru::LruCache;
@@ -17,7 +17,7 @@ pub struct SearchInfo {
     pub max_depth: usize,
     pub nodes: usize,
     pv_table: LruCache<u64, HashEntry>, // Todo replace with LRU cache
-    killer_moves: Vec<KillerMoves>,
+    pub killer_moves: Vec<KillerMoves>,
     fail_high_first: usize,
     fail_high: usize,
     stopped: bool,
@@ -138,34 +138,6 @@ impl HashEntry {
     }
 }
 
-#[derive(Clone)]
-struct KillerMoves {
-    killer1: GameMove,
-    killer2: GameMove,
-}
-
-impl KillerMoves {
-    pub fn new() -> Self {
-        KillerMoves {
-            killer1: GameMove::null_move(),
-            killer2: GameMove::null_move(),
-        }
-    }
-    pub fn add(&mut self, game_move: GameMove) {
-        self.killer2 = self.killer1;
-        self.killer1 = game_move;
-    }
-    pub fn score(&self, game_move: GameMove) -> i32 {
-        if self.killer1 == game_move {
-            90
-        } else if self.killer2 == game_move {
-            80
-        } else {
-            0
-        }
-    }
-}
-
 pub struct SearchOutcome<T> {
     score: i32,
     time: u128,
@@ -230,9 +202,31 @@ where
     E: Evaluator<Game = T>,
 {
     let mut outcome = None;
+    let mut node_counts = vec![1];
     info.set_start_ply(board.ply());
     for depth in 1..=info.max_depth {
+        // Abort if we are unlikely to finish the search at this depth
+        if depth >= 6 {
+            let mut est_branch = node_counts[depth - 2] as f64 / node_counts[depth - 3] as f64;
+            if est_branch < 3.0 || est_branch > 100.0 {
+                // Transposition hits causing instability, just guess
+                if depth % 2 == 0 {
+                    // Even nodes are cheaper, see even-odd effect
+                    est_branch = 5.0;
+                } else {
+                    est_branch = 10.0;
+                }
+            }
+            let est_nodes = node_counts[depth - 1] as f64 * est_branch;
+            let elapsed = info.start_time.elapsed().as_secs_f64();
+            let nps = node_counts.iter().copied().sum::<usize>() as f64 / elapsed;
+            let remaining = info.max_time as f64 - elapsed;
+            if est_nodes / nps > remaining {
+                break;
+            }
+        }
         let best_score = alpha_beta(-1_000_000, 1_000_000, depth, board, eval, info, true);
+        node_counts.push(info.nodes);
         let pv_moves = info.full_pv(board);
         // If we had an incomplete depth search, use the previous depth's vals
         if info.stopped {
@@ -351,47 +345,34 @@ where
             return beta;
         }
     }
-    let mut moves = Vec::new();
-    board.generate_moves(&mut moves);
+    let mut moves = SmartMoveBuffer::new();
+    generate_all_moves(board, &mut moves);
     let mut best_move = None;
     let mut best_score = None;
     if let Some(pv_move) = info.pv_move(board) {
-        if let Some(found) = moves.iter_mut().find(|m| **m == pv_move) {
-            found.add_score(100);
-        }
+        moves.score_pv_move(pv_move);
     }
+    moves.score_stack_moves(board);
     // Do a slower, more thorough move ordering at the root
-    if info.ply_depth(board) == 0 {
-        // DEBUG
-        // moves.sort_by(|x, y| x.score().cmp(&y.score()));
-        // println!("MOVE SEARCH ORDER: ");
-        // for m in moves.iter() {
-        //     println!("{}", m.to_ptn::<crate::Board6>());
-        // }
-        let tak_threats = board.get_tak_threats(&moves, None);
-        if tak_threats.len() > 0 {
-            for m in moves.iter_mut() {
-                if tak_threats.contains(m) {
-                    m.add_score(50);
-                }
-            }
-        }
-    }
+    // if info.ply_depth(board) == 0 {
+    //     // DEBUG
+    //     // moves.sort_by(|x, y| x.score().cmp(&y.score()));
+    //     // println!("MOVE SEARCH ORDER: ");
+    //     // for m in moves.iter() {
+    //     //     println!("{}", m.to_ptn::<crate::Board6>());
+    //     // }
+    //     let tak_threats = board.get_tak_threats(&moves, None);
+    //     if tak_threats.len() > 0 {
+    //         for m in moves.iter_mut() {
+    //             if tak_threats.contains(m) {
+    //                 m.add_score(50);
+    //             }
+    //         }
+    //     }
+    // }
     let old_alpha = alpha;
     for count in 0..moves.len() {
-        let m = if count <= 10 {
-            let (idx, m) = moves
-                .iter()
-                .enumerate()
-                .max_by_key(|(_i, &m)| m.score() + info.killer_moves[depth].score(m))
-                .unwrap();
-            let m = *m;
-            moves.swap_remove(idx);
-            m
-        } else {
-            // Probably an all node, so search order doesn't really matter
-            moves.pop().unwrap()
-        };
+        let m = moves.get_best(depth, info);
         let rev_move = board.do_move(m);
         let score = -1 * alpha_beta(-beta, -alpha, depth - 1, board, evaluator, info, true);
         board.reverse_move(rev_move);
