@@ -2,7 +2,7 @@ use super::{Color, GameResult};
 use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
-use crate::move_gen::{generate_all_moves, GameMove, KillerMoves, SmartMoveBuffer};
+use crate::move_gen::{generate_all_moves, GameMove, KillerMoves, RevGameMove, SmartMoveBuffer};
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
 use lru::LruCache;
@@ -225,11 +225,20 @@ where
                 break;
             }
         }
-        let best_score = alpha_beta(-1_000_000, 1_000_000, depth, board, eval, info, true);
+        let best_score = alpha_beta(
+            board,
+            eval,
+            info,
+            SearchData::new(-1_000_000, 1_000_000, depth, true, None),
+        );
         node_counts.push(info.nodes);
         let pv_moves = info.full_pv(board);
         // If we had an incomplete depth search, use the previous depth's vals
         if info.stopped {
+            print!(
+                "Aborted Depth: {} Score: {} Nodes: {} PV: ",
+                depth, best_score, info.nodes
+            );
             break;
         }
         print!(
@@ -254,19 +263,44 @@ where
     outcome
 }
 
-fn alpha_beta<T, E>(
-    mut alpha: i32,
+struct SearchData {
+    alpha: i32,
     beta: i32,
     depth: usize,
-    board: &mut T,
-    evaluator: &E,
-    info: &mut SearchInfo,
     null_move: bool,
-) -> i32
+    last_move: Option<RevGameMove>,
+}
+
+impl SearchData {
+    fn new(
+        alpha: i32,
+        beta: i32,
+        depth: usize,
+        null_move: bool,
+        last_move: Option<RevGameMove>,
+    ) -> Self {
+        Self {
+            alpha,
+            beta,
+            depth,
+            null_move,
+            last_move,
+        }
+    }
+}
+
+fn alpha_beta<T, E>(board: &mut T, evaluator: &E, info: &mut SearchInfo, data: SearchData) -> i32
 where
     T: TakBoard,
     E: Evaluator<Game = T>,
 {
+    let SearchData {
+        mut alpha,
+        beta,
+        depth,
+        null_move,
+        last_move,
+    } = data;
     info.nodes += 1;
     const FREQ: usize = (1 << 16) - 1; // Per 65k nodes
     if (info.nodes & FREQ) == FREQ {
@@ -302,9 +336,9 @@ where
         // road_check.clear();
     }
 
-    if let Some(data) = info.lookup_move(board) {
-        if data.depth >= depth {
-            match data.score {
+    if let Some(entry) = info.lookup_move(board) {
+        if entry.depth >= depth {
+            match entry.score {
                 ScoreCutoff::Alpha(score) => {
                     if score <= alpha {
                         info.transposition_cutoffs += 1;
@@ -331,13 +365,10 @@ where
         board.null_move();
         let score = -1
             * alpha_beta(
-                -beta,
-                -beta + 1,
-                depth - 1 - NULL_REDUCTION,
                 board,
                 evaluator,
                 info,
-                false,
+                SearchData::new(-beta, -beta + 1, depth - 1 - NULL_REDUCTION, false, None),
             );
         board.rev_null_move();
         // If we beta cutoff from the null move, then we can stop searching
@@ -352,7 +383,7 @@ where
     if let Some(pv_move) = info.pv_move(board) {
         moves.score_pv_move(pv_move);
     }
-    moves.score_stack_moves(board);
+    moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
     // Do a slower, more thorough move ordering at the root
     // if info.ply_depth(board) == 0 {
     //     // DEBUG
@@ -373,8 +404,20 @@ where
     let old_alpha = alpha;
     for count in 0..moves.len() {
         let m = moves.get_best(depth, info);
+        // if depth == 6 {
+        //     println!("{}", m.to_ptn::<T>());
+        // }
+        // if depth == 5 && last_move.is_some() {
+        //     println!("    {}", m.to_ptn::<T>());
+        // }
         let rev_move = board.do_move(m);
-        let score = -1 * alpha_beta(-beta, -alpha, depth - 1, board, evaluator, info, true);
+        let score = -1
+            * alpha_beta(
+                board,
+                evaluator,
+                info,
+                SearchData::new(-beta, -alpha, depth - 1, true, Some(rev_move)),
+            );
         board.reverse_move(rev_move);
         if info.stopped {
             return 0;

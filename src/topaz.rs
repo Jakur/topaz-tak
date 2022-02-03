@@ -32,6 +32,7 @@ pub fn main() {
             // println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
             // info.print_cuts();
             // let node_counts = search_efficiency(&["empty6"], 8);
+            // let node_counts = search_efficiency(&["midgame1"], 6);
             let node_counts = search_efficiency(&["alion1", "alion2", "alion3", "topaz1"], 6);
             let nodes: usize = node_counts.into_iter().sum();
             println!(
@@ -110,6 +111,7 @@ fn saved_tps(name: &str) -> Option<&str> {
         "test7" => concat!("2,2,21S,2,1,1,1/2,1,x,2,1,x,1/2,2,2,2,21112C,121S,x/x2,1112C,2,1,1112S,x/121,22211C,", 
             "1S,1,1,121,1221C/x,2,2,2,1,12,2/2,x3,1,122,x 2 50"),
         "topaz1" => "x2,1,x,1212,x/x,221,2212221211C,2S,x2/x,221,1,2,2,x/221,2,12C,1,2,2/22221S,221S,1,1,2,x/12,x,12,1,1,x 1 44",
+        "midgame1" => "2,2,2222221C,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 1 31", // Tinue avoidance
         _ => {return None}
     };
     Some(s)

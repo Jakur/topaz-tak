@@ -102,7 +102,7 @@ pub fn generate_all_stack_moves<T: TakBoard, B: MoveBuffer>(board: &T, moves: &m
 }
 
 /// A struct containing the necessary data to reverse a [GameMove].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RevGameMove {
     pub game_move: GameMove,
     pub dest_sq: usize,
