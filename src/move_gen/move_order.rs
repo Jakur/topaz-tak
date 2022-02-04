@@ -114,6 +114,7 @@ impl SmartMoveBuffer {
                 .max_by_key(|(_i, &m)| {
                     m.score + info.killer_moves[depth].score(m.mv) as i16
                         - self.stack_hist_score(m.mv)
+                        + info.hist_moves.score(m.mv)
                 })
                 .unwrap();
             let m = *m;
@@ -195,6 +196,30 @@ impl KillerMoves {
         } else {
             0
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct HistoryMoves {
+    vec: Vec<u32>,
+}
+
+impl HistoryMoves {
+    pub fn new(board_size: usize) -> Self {
+        Self {
+            vec: vec![1; board_size * board_size * 4],
+        }
+    }
+    pub fn update(&mut self, depth: usize, mv: GameMove) {
+        let value = depth as u32;
+        self.vec[mv.direction() as usize + mv.src_index() * 4] += value * value;
+    }
+    pub fn square_data(&self, square: usize) -> &[u32] {
+        &self.vec[square * 4..square * 4 + 4]
+    }
+    pub fn score(&self, mv: GameMove) -> i16 {
+        // Hacky base 2 log
+        (32 - self.vec[mv.direction() as usize + mv.src_index() * 4].leading_zeros()) as i16
     }
 }
 

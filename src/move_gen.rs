@@ -4,7 +4,7 @@ use board_game_traits::Color;
 use std::fmt;
 
 mod move_order;
-pub use move_order::{KillerMoves, SmartMoveBuffer};
+pub use move_order::{HistoryMoves, KillerMoves, SmartMoveBuffer};
 pub mod ptn;
 
 pub trait MoveBuffer {

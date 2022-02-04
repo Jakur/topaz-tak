@@ -2,7 +2,9 @@ use super::{Color, GameResult};
 use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
-use crate::move_gen::{generate_all_moves, GameMove, KillerMoves, RevGameMove, SmartMoveBuffer};
+use crate::move_gen::{
+    generate_all_moves, GameMove, HistoryMoves, KillerMoves, RevGameMove, SmartMoveBuffer,
+};
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
 use lru::LruCache;
@@ -18,6 +20,7 @@ pub struct SearchInfo {
     pub nodes: usize,
     pv_table: LruCache<u64, HashEntry>, // Todo replace with LRU cache
     pub killer_moves: Vec<KillerMoves>,
+    pub hist_moves: HistoryMoves,
     fail_high_first: usize,
     fail_high: usize,
     stopped: bool,
@@ -34,6 +37,7 @@ impl SearchInfo {
             max_depth,
             pv_table: LruCache::new(pv_size),
             killer_moves: vec![KillerMoves::new(); max_depth + 1],
+            hist_moves: HistoryMoves::new(6), // Todo init in search
             fail_high_first: 0,
             fail_high: 0,
             transposition_cutoffs: 0,
@@ -430,6 +434,12 @@ where
                 info.fail_high += 1;
                 if m.is_place_move() {
                     info.killer_moves[depth].add(m);
+                } else {
+                    const WINNING: i32 = crate::eval::WIN_SCORE - 100;
+                    // Cannot be null?
+                    if score >= WINNING {
+                        info.hist_moves.update(depth, m);
+                    }
                 }
                 info.store_move(board, HashEntry::new(m, ScoreCutoff::Beta(beta), depth));
                 return beta;
