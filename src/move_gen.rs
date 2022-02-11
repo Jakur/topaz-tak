@@ -3,9 +3,25 @@ use crate::board::TakBoard;
 use board_game_traits::Color;
 use std::fmt;
 
+mod move_order;
+pub use move_order::{HistoryMoves, KillerMoves, SmartMoveBuffer};
 pub mod ptn;
 
-pub fn generate_all_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove>) {
+pub trait MoveBuffer {
+    fn add_move(&mut self, mv: GameMove);
+    fn add_limit(&mut self, limit: MoveLimits);
+}
+
+impl MoveBuffer for Vec<GameMove> {
+    fn add_move(&mut self, mv: GameMove) {
+        self.push(mv);
+    }
+
+    fn add_limit(&mut self, _limit: MoveLimits) {}
+}
+
+/// Generates all legal moves in a position, filling the provided buffer
+pub fn generate_all_moves<T: TakBoard, B: MoveBuffer>(board: &T, moves: &mut B) {
     generate_all_place_moves(board, moves);
     if board.move_num() >= 2 {
         generate_all_stack_moves(board, moves);
@@ -13,7 +29,7 @@ pub fn generate_all_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove>) {
 }
 
 /// Generates all legal placements of flats, walls, and caps for the active player.
-pub fn generate_all_place_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove>) {
+pub fn generate_all_place_moves<T: TakBoard, B: MoveBuffer>(board: &T, moves: &mut B) {
     let side_to_move = board.side_to_move();
     let start_locs = board.empty_tiles();
     if board.move_num() == 1 {
@@ -23,7 +39,7 @@ pub fn generate_all_place_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove
             Color::Black => Piece::BlackFlat,
         };
         for index in start_locs {
-            moves.push(GameMove::from_placement(piece, index));
+            moves.add_move(GameMove::from_placement(piece, index));
         }
         return;
     }
@@ -33,12 +49,12 @@ pub fn generate_all_place_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove
     };
     if board.caps_reserve(side_to_move) > 0 {
         for index in start_locs {
-            moves.push(GameMove::from_placement(cap, index));
+            moves.add_move(GameMove::from_placement(cap, index));
         }
     }
     for index in board.empty_tiles() {
-        moves.push(GameMove::from_placement(flat, index));
-        moves.push(GameMove::from_placement(wall, index));
+        moves.add_move(GameMove::from_placement(flat, index));
+        moves.add_move(GameMove::from_placement(wall, index));
     }
 }
 
@@ -63,7 +79,7 @@ pub fn generate_aggressive_place_moves<T: TakBoard>(board: &T, moves: &mut Vec<G
 }
 
 /// Generates all legal sliding movements for the active player's stacks.
-pub fn generate_all_stack_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove>) {
+pub fn generate_all_stack_moves<T: TakBoard, B: MoveBuffer>(board: &T, moves: &mut B) {
     let start_locs = board.active_stacks(board.side_to_move());
     for index in start_locs {
         let stack_height = board.index(index).len();
@@ -79,29 +95,14 @@ pub fn generate_all_stack_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove
             if max_steps == 0 {
                 continue;
             }
-            // Max steps is greater than zero, so we know we can move
-            let first_dest = match dir {
-                0 => index - T::SIZE,
-                1 => index + 1,
-                2 => index + T::SIZE,
-                3 => index - 1,
-                _ => unimplemented!(),
-            };
-            match board.index(first_dest).last() {
-                Some(piece) => {
-                    // Capture enemy piece first;
-                    if piece.owner() != board.side_to_move() {
-                        // dir_move = dir_move.add_score(3);
-                    }
-                }
-                _ => {}
-            }
             directional_stack_moves(moves, dir_move, max_steps, max_pieces);
         }
+        moves.add_limit(limits);
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+/// A struct containing the necessary data to reverse a [GameMove].
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RevGameMove {
     pub game_move: GameMove,
     pub dest_sq: usize,
@@ -116,6 +117,11 @@ impl RevGameMove {
     }
 }
 
+/// A struct tightly packing all information necessary to make a Tak move.
+///
+/// Bit shifts and bit masks are used to set / retrieve the necessary move info.
+/// There is enough space in this configuration to represent any move up to an 8x8 Tak Board.
+/// The current data configuration is as follows:
 /// 0011 1111 Src Tile
 /// 1100 0000 Direction
 /// 000000000F00 Number Picked Up
@@ -134,43 +140,57 @@ pub struct GameMove(u64);
 
 impl GameMove {
     const PLACEMENT_BITS: u64 = 0xF00000000000;
+    /// Creates a placement move from the provided piece and board index
     pub fn from_placement(piece: Piece, index: usize) -> Self {
         let bits = ((piece as u64) << 44) | index as u64;
         Self(bits)
     }
+    /// Creates a null move which can be used to pass without changing the game state
+    ///
+    /// Technically this move does not follow the expected data layout and is thus illegal.
+    /// There is no way for a null move to result from normal move creation rules,
+    /// so it should only appear when explicitly made for low level data structures or advanced
+    /// search heuristics, i.e. the [null move heuristic](https://www.chessprogramming.org/Null_Move_Pruning) in alpha beta search.
+    /// In situations where a null move might arise, it must be checked for explicitly.
     pub fn null_move() -> Self {
         Self(0)
     }
-    pub fn score(self) -> i32 {
-        let bits = self.0 >> 52;
-        if self.is_place_move() {
-            (bits + 3) as i32
-        } else {
-            (bits + self.number() + 10 * self.is_stack_move() as u64) as i32
-        }
-    }
-    pub fn add_score(&mut self, score: u64) {
-        self.0 = self.0 + (score << 52)
-    }
+    /// Returns true if this is a placement move, i.e. not a stack move or null move.
     pub fn is_place_move(self) -> bool {
         (self.0 & Self::PLACEMENT_BITS) > 0
     }
+    /// Returns the bits corresponding to the movement of the stack
+    ///
+    /// There is one nibble reserved each new location that the stack could move to
+    /// where the value indicates how many pieces were dropped there. This requires 7 nibbles at maximum,
+    /// since even on an 8x8 board a stack cannot advance more than 7 squares. The
+    /// lower value bits correspond to piece drops closer to the origin. By the rules
+    /// of Tak, once a single nibble is 0, all higher bits of the slide must also be 0.
     pub fn slide_bits(self) -> u64 {
         let bits = self.0 & 0xFFFFFFF000;
         bits >> 12
     }
+    /// Returns the piece being placed.
+    ///
+    /// # Panics
+    ///
+    /// If this is not a placement move
     pub fn place_piece(self) -> Piece {
         Piece::from_index((self.0 >> 44) & 0xF)
     }
+    /// Returns true if the move is a stack (sliding) move
     pub fn is_stack_move(self) -> bool {
         (self.0 & Self::PLACEMENT_BITS) == 0
     }
+    /// Returns either the index where the piece is being placed, or the stack move origin square index.
     pub fn src_index(self) -> usize {
         self.0 as usize & 0x3F
     }
+    /// Returns the direction of the movement. 0 &harr; N, 1 &harr; E, 2 &harr; S, 3 &harr; W
     pub fn direction(self) -> u64 {
         (self.0 & 0xC0) >> 6
     }
+    /// Sets square index bits for the placement or stack move
     fn set_index(self, index: u64) -> Self {
         Self(self.0 | index)
     }
@@ -178,14 +198,25 @@ impl GameMove {
     fn set_direction(self, dir: u64) -> Self {
         GameMove(self.0 | (dir << 6))
     }
+    /// Sets the number of pieces being picked up by a stack move
     fn set_number(self, num: u64) -> Self {
         GameMove(self.0 | (num << 8))
     }
+    /// Returns the number of pieces being picked up by a stack move
     pub fn number(self) -> u64 {
         (self.0 & 0xF00) >> 8
     }
+    /// Returns an iterator representing the forward movement of a stack
+    ///
+    /// This is primarily used when actually implementing stack movement on a Tak board.
+    /// The board size is necessary because north and south movement need to know the
+    /// amount to increment / decrement the index value by as the stack moves
     pub fn forward_iter(self, board_size: usize) -> StackMoveIterator {
         StackMoveIterator::new(self, board_size)
+    }
+    /// Returns an iterator that returns the quantity and board index for each stack step
+    fn quantity_iter(self, board_size: usize) -> QuantityMoveIterator {
+        QuantityMoveIterator::new(self, board_size)
     }
     fn set_tile(self, tile_num: usize, count: u64) -> Self {
         match tile_num {
@@ -227,9 +258,13 @@ impl GameMove {
             self
         }
     }
+    /// Sets the crush bit according to the given value
     pub fn set_crush(self) -> Self {
         Self(self.0 | 0x10000000000)
     }
+    /// Returns true if move is a stack move that crushes a wall
+    ///
+    /// This is necessary to properly implement [RevGameMove].
     pub fn crush(&self) -> bool {
         (self.0 & 0x10000000000) > 0
     }
@@ -303,6 +338,55 @@ impl Iterator for StackMoveIterator {
     }
 }
 
+struct QuantityMoveIterator {
+    slide_bits: u64,
+    direction: u8,
+    index: usize,
+    board_size: usize,
+}
+
+impl QuantityMoveIterator {
+    fn new(game_move: GameMove, board_size: usize) -> Self {
+        let slide_bits = game_move.slide_bits();
+        let direction = game_move.direction() as u8;
+        let index = game_move.src_index();
+        Self {
+            slide_bits,
+            direction,
+            index,
+            board_size,
+        }
+    }
+}
+
+impl Iterator for QuantityMoveIterator {
+    type Item = QuantityStep;
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        if self.slide_bits == 0 {
+            return None;
+        }
+        let quantity = self.slide_bits & 0xF;
+        self.slide_bits = self.slide_bits >> 4;
+        match self.direction {
+            0 => self.index -= self.board_size,
+            1 => self.index += 1,
+            2 => self.index += self.board_size,
+            3 => self.index -= 1,
+            _ => unimplemented!(),
+        }
+        let step = QuantityStep {
+            index: self.index,
+            quantity,
+        };
+        Some(step)
+    }
+}
+
+struct QuantityStep {
+    index: usize,
+    quantity: u64,
+}
+
 pub struct RevStackMoveIterator {
     slide_bits: u64,
     direction: u8,
@@ -355,7 +439,7 @@ impl Iterator for RevStackMoveIterator {
 
 #[derive(Debug)]
 pub struct MoveLimits {
-    steps: [usize; 4],
+    steps: [u8; 4],
     can_crush: [bool; 4],
 }
 
@@ -440,10 +524,10 @@ fn step_west(row: usize, col: usize) -> (usize, usize) {
 
 /// Find all stack moves for a single stack in one direction. Calls the recursive
 /// function [recursive_stack_moves] 1..=pieces_available times.
-pub fn directional_stack_moves(
-    moves: &mut Vec<GameMove>,
+pub fn directional_stack_moves<B: MoveBuffer>(
+    moves: &mut B,
     init_move: GameMove,
-    max_move: usize,
+    max_move: u8,
     pieces_available: usize,
 ) {
     for take_pieces in 1..pieces_available as u64 + 1 {
@@ -463,15 +547,15 @@ pub fn directional_stack_moves(
 /// recursive function [recursive_crush_moves] for all legal initial stack sizes.
 /// This is more restrictive than the condition on [directional_stack_moves] because
 /// one flat must be placed for tile traversed.
-pub fn directional_crush_moves(
-    moves: &mut Vec<GameMove>,
+pub fn directional_crush_moves<B: MoveBuffer>(
+    moves: &mut B,
     init_move: GameMove,
-    max_steps: usize,
+    max_steps: u8,
     pieces_available: usize,
 ) {
-    let init_move = init_move.set_crush().set_tile(max_steps + 1, 1);
+    let init_move = init_move.set_crush().set_tile(max_steps as usize + 1, 1);
     if max_steps == 0 {
-        moves.push(init_move.set_number(1));
+        moves.add_move(init_move.set_number(1));
         return;
     }
     // Todo figure out upper bound for number of pieces to take to save some cycles?
@@ -486,16 +570,16 @@ pub fn directional_crush_moves(
     }
 }
 
-pub fn recursive_stack_moves(
-    moves: &mut Vec<GameMove>,
+pub fn recursive_stack_moves<B: MoveBuffer>(
+    moves: &mut B,
     in_progress: GameMove,
     tile_num: usize,
-    moves_left: usize,
+    moves_left: u8,
     pieces_left: u64,
 ) {
     if moves_left == 1 || pieces_left == 1 {
         let last_move = in_progress.set_tile(tile_num, pieces_left);
-        moves.push(last_move);
+        moves.add_move(last_move);
         return;
     }
     for piece_count in 1..pieces_left {
@@ -507,19 +591,19 @@ pub fn recursive_stack_moves(
             pieces_left - piece_count,
         );
     }
-    moves.push(in_progress.set_tile(tile_num, pieces_left));
+    moves.add_move(in_progress.set_tile(tile_num, pieces_left));
 }
 
-pub fn recursive_crush_moves(
-    moves: &mut Vec<GameMove>,
+pub fn recursive_crush_moves<B: MoveBuffer>(
+    moves: &mut B,
     in_progress: GameMove,
     tile_num: usize,
-    moves_left: usize,
+    moves_left: u8,
     pieces_left: u64,
 ) {
     if moves_left == 1 && pieces_left > 0 {
         let last_move = in_progress.set_tile(tile_num, pieces_left);
-        moves.push(last_move);
+        moves.add_move(last_move);
         return;
     }
     // Todo figure out max placement to save some cycles?
@@ -554,7 +638,7 @@ mod test {
 
         for stack_size in 4..7 {
             moves.clear();
-            directional_stack_moves(&mut moves, GameMove(0), stack_size, stack_size);
+            directional_stack_moves(&mut moves, GameMove(0), stack_size, stack_size as usize);
             assert_eq!(moves.len(), 2usize.pow(stack_size as u32) - 1);
         }
 

@@ -63,6 +63,13 @@ where
         };
         road_pieces
     }
+    pub fn blocker_pieces(&self, color: Color) -> T {
+        let blocker_pieces = match color {
+            Color::White => (self.wall | self.cap) & self.white,
+            Color::Black => (self.wall | self.cap) & self.black,
+        };
+        blocker_pieces
+    }
     pub fn check_road(&self, color: Color) -> bool {
         self.road_pieces(color).check_road()
     }
@@ -121,16 +128,50 @@ pub trait Bitboard:
     + std::ops::BitXor<Output = Self>
 {
     const ZERO: Self;
+    /// Returns all bits adjacent to a bitboard by sliding the entire bitboard in
+    /// all 4 directions. 
+    /// 
+    /// Note: when only a single bit is included, the adjacent bits will not include
+    /// the provided bit itself. However, because of the interactions between multiple bits, 
+    /// many of the initial values may remain set depending on the input bit configuration. 
     fn adjacent(self) -> Self;
+    /// Flood fills and sets bits where the left + right or top + bottom edges 
+    /// are one square away from meeting. 
+    /// 
+    /// In other words, when set with the appropriate bits, this can detect which
+    /// squares would win the game for a player if filled in with a flat placement.
+    /// This is used to quickly detect a subset of positions where a player is in Tak. 
+    /// If complete tak threat detection is necessary, there must be a slower method 
+    /// to fall back on which detects stack movement roads. 
+    /// 
+    /// The bits returned are not interpretable if a position is passed in where
+    /// two edges of the board already meet. As such, it is not reasonable to use
+    /// all white pieces as the input: walls should be excluded. However, more 
+    /// creative uses of this function could be attempted to get a cheap, rough assessment
+    /// of the danger of a position. 
     fn critical_squares(self) -> Self;
+    /// Performs a flood fill to reveal all bits connected to a provided edge 
     fn flood(self, edge: Self) -> Self;
+    /// Returns true if two opposite edges are connected by the provided bits
     fn check_road(self) -> bool;
+    /// Returns the lowest bit index in the bitboard without modifying self
+    fn lowest(&self) -> Self;
+    /// Pops the lowest bit index in the bitboard.
+    /// 
+    /// This unsets the bit in the bitboard and returns a new bitboard where only
+    /// that single bit is set. 
     fn pop_lowest(&mut self) -> Self;
+    /// Returns true if any of the bits in the bitboard are set.
     fn nonzero(&self) -> bool;
+    /// Returns the number of ones set in the bitboard
     fn pop_count(self) -> u32;
+    /// Returns true if all the bits in the bitboard's intended range are set
     fn all_ones(self) -> bool;
+    /// Finds the lowest set index in the bitboard and returns it as a [TakBoard] square index
     fn lowest_index(self) -> usize;
+    /// Converts a provided [TakBoard] square index into a single set bit in a bitboard
     fn index_to_bit(index: usize) -> Self;
+    /// Returns the board size that this bitboard corresponds to
     fn size() -> usize;
 }
 
@@ -380,6 +421,15 @@ macro_rules! bitboard_impl {
                 }
                 false
             }
+            fn lowest(&self) -> Self {
+                let highest_index = self.0.trailing_zeros();
+                if highest_index == 64 {
+                    Self::new(0)
+                } else {
+                    let value = 1 << highest_index;
+                    Self::new(value)
+                }
+            }
             fn pop_lowest(&mut self) -> Self {
                 let highest_index = self.0.trailing_zeros();
                 if highest_index == 64 {
@@ -421,6 +471,10 @@ bitboard_impl![Bitboard7, 7];
 
 pub struct BitIndexIterator<T> {
     bits: T,
+}
+
+impl<T> BitIndexIterator<T> {
+    pub fn new(bits: T) -> Self { Self { bits } }
 }
 
 impl<T> Iterator for BitIndexIterator<T>

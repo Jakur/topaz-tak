@@ -22,13 +22,26 @@ pub fn main() {
             play_game_cmd(true);
         } else if arg1 == "test" {
             let time = Instant::now();
-            let s = "2,x4,1/x4,1,x/x,2,12C,1,1,x/x,1,2,21C,x2/x,2,2,x3/x2,2,1,x2 1 10";
-            let mut board = Board6::try_from_tps(s).unwrap();
-            let eval = Evaluator6 {};
-            let mut info = SearchInfo::new(6, 10000);
-            search(&mut board, &eval, &mut info);
-            let pv_move = info.pv_move(&board).unwrap();
-            println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
+            // let s = "2,x4,1/x4,1,x/x,2,12C,1,1,x/x,1,2,21C,x2/x,2,2,x3/x2,2,1,x2 1 10";
+            // let s = "1,1,2,21,2,2/12,1111112C,2,1S,2,121S/1,x,221C,2,212S,21/1,2,x,2,1S,x/1,112S,2,1,1,1/1,x,112,112S,2,2 1 39";
+            // let mut board = Board6::try_from_tps(s).unwrap();
+            // let eval = Weights6::default();
+            // let mut info = SearchInfo::new(4, 1_000_000);
+            // search(&mut board, &eval, &mut info);
+            // let pv_move = info.pv_move(&board).unwrap();
+            // println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
+            // info.print_cuts();
+            // let node_counts = search_efficiency(&["empty6"], 8);
+            let node_counts =
+                search_efficiency(&[("opening1", 8), ("opening2", 8), ("midgame1", 6)], false)
+                    .unwrap();
+            // let node_counts = search_efficiency(&["alion1", "alion2", "alion3", "topaz1"], 6);
+            let nodes: usize = node_counts.into_iter().sum();
+            println!(
+                "Nodes: {} Nps: {}",
+                nodes,
+                1000 * nodes as u128 / time.elapsed().as_millis()
+            );
             println!("Time: {} ms", time.elapsed().as_millis());
             return;
         } else if arg1 == "tinue" {
@@ -38,16 +51,10 @@ pub fn main() {
                 rest.push_str(" ");
             }
             rest.pop();
-            let tps = match rest.as_str() {
-                "alion1" => "2,1221122,1,1,1,2S/1,1,1,x,1C,1111212/x2,2,212,2C,11/2,2,x2,1,1/x3,1,1,x/x2,2,21,x,112S 2 32",
-                "alion2" => "2,212221C,2,2,2C,1/1,2,1,1,2,1/12,x,1S,2S,2,1/2,2,2,x2,1/1,2212121S,2,12,1,1S/x,2,2,2,x,1 1 30",
-                "alion3" => "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27",
-                "alion4" => "x,1,x4/2,2,1,1,1,1/2221,x,1,21C,x2/2,2,2C,1,2,x/2,2,1,1,1,2/2,x2,2,x,1 2 18",
-                "alion5" => "2,x4,11/x5,221/x,2,2,2,x,221/2,1,12C,1,21C,2/2,x,2,x2,2/x,2,2,2,x,121 1 25",
-                "test5" => "2,2,x2,1/2,2,x,1,1/1221S,1,122221C,x,1/1,12,x,2C,2/1S,2,2,x2 1 20",
-                "test7" => concat!("2,2,21S,2,1,1,1/2,1,x,2,1,x,1/2,2,2,2,21112C,121S,x/x2,1112C,2,1,1112S,x/121,22211C,", 
-                    "1S,1,1,121,1221C/x,2,2,2,1,12,2/2,x3,1,122,x 2 50"),
-                _ => rest.as_str(),
+            let tps = if let Some(tps) = saved_tps(rest.as_str()) {
+                tps
+            } else {
+                rest.as_str()
             };
             let game = match TakGame::try_from_tps(tps) {
                 Ok(b) => b,
@@ -92,6 +99,74 @@ pub fn main() {
     } else {
         println!("Unknown command: {}", buffer);
     }
+}
+
+fn saved_tps(name: &str) -> Option<&str> {
+    let s = match name {
+        "alion1" => "2,1221122,1,1,1,2S/1,1,1,x,1C,1111212/x2,2,212,2C,11/2,2,x2,1,1/x3,1,1,x/x2,2,21,x,112S 2 32",
+        "alion2" => "2,212221C,2,2,2C,1/1,2,1,1,2,1/12,x,1S,2S,2,1/2,2,2,x2,1/1,2212121S,2,12,1,1S/x,2,2,2,x,1 1 30",
+        "alion3" => "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27",
+        "alion4" => "x,1,x4/2,2,1,1,1,1/2221,x,1,21C,x2/2,2,2C,1,2,x/2,2,1,1,1,2/2,x2,2,x,1 2 18",
+        "alion5" => "2,x4,11/x5,221/x,2,2,2,x,221/2,1,12C,1,21C,2/2,x,2,x2,2/x,2,2,2,x,121 1 25",
+        "empty6" => "x6/x6/x6/x6/x6/x6 1 1",
+        "test5" => "2,2,x2,1/2,2,x,1,1/1221S,1,122221C,x,1/1,12,x,2C,2/1S,2,2,x2 1 20",
+        "test7" => concat!("2,2,21S,2,1,1,1/2,1,x,2,1,x,1/2,2,2,2,21112C,121S,x/x2,1112C,2,1,1112S,x/121,22211C,", 
+            "1S,1,1,121,1221C/x,2,2,2,1,12,2/2,x3,1,122,x 2 50"),
+        "topaz1" => "x2,1,x,1212,x/x,221,2212221211C,2S,x2/x,221,1,2,2,x/221,2,12C,1,2,2/22221S,221S,1,1,2,x/12,x,12,1,1,x 1 44",
+        "opening1" => "x2,2,x3/x,2,2,x3/x,1,1,2,2,1/1C,2,12C,1,1,x/x,2,x2,1,1/2,x4,1 1 11", // Avoid falling way behind?
+        "opening2" => "2,x5/x3,1,2,x/2,2,221C,12C,1,2/x,2,x,1,1,x/x2,2,1,1,x/x2,2,x,1,1 1 13", // Don't give black initiative for free
+        "midgame1" => "2,2,2222221C,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 1 31", // Tinue avoidance
+        _ => {return None}
+    };
+    Some(s)
+}
+
+fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> {
+    use std::collections::HashMap;
+    use std::io::Write;
+    let mut vec = Vec::new();
+    let old = {
+        if let Ok(read_data) = std::fs::read_to_string("node_counts.csv") {
+            let map: HashMap<String, usize> = read_data
+                .lines()
+                .filter_map(|x| {
+                    let sp: Vec<_> = x.split(",").collect();
+                    if sp.len() == 3 {
+                        Some((sp[0].to_string(), sp[2].parse().unwrap()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Some(map)
+        } else {
+            None
+        }
+    };
+    for (name, depth) in names {
+        let tps = saved_tps(name).unwrap();
+        let mut board = Board6::try_from_tps(tps).unwrap();
+        let eval = Weights6::default();
+        let mut info = SearchInfo::new(*depth, 10_000_000);
+        search(&mut board, &eval, &mut info);
+        for idx in 0..36 {
+            let dummy_move = GameMove::from_placement(Piece::WhiteFlat, idx);
+            let ptn_idx = dummy_move.to_ptn::<Board6>();
+            println!("{}: {:?}", ptn_idx, info.hist_moves.square_data(idx));
+        }
+        vec.push(info.nodes);
+        if let Some(old_nodes) = old.as_ref().and_then(|x| x.get(*name)) {
+            let diff = (info.nodes as f64 - *old_nodes as f64) / *old_nodes as f64;
+            println!("{}: {}", name, diff);
+        }
+    }
+    if save {
+        let mut f = std::fs::File::create("node_counts.csv")?;
+        for ((name, depth), nodes) in names.iter().zip(vec.iter()) {
+            write!(&mut f, "{},{},{}\n", name, depth, nodes)?;
+        }
+    }
+    Ok(vec)
 }
 
 fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>) -> Result<()> {
@@ -235,10 +310,11 @@ impl TimeLeft {
 }
 
 fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
+    const MAX_DEPTH: usize = 8;
     let mut board = Board6::new();
-    let mut info = SearchInfo::new(6, 1000000);
-    let mut eval = Weights6::default();
-    eval.add_noise();
+    let mut info = SearchInfo::new(MAX_DEPTH, 1000000);
+    let eval = Weights6::default();
+    // eval.add_noise();
     // let eval = Evaluator6 {};
     loop {
         let message = receiver.recv()?;
@@ -251,7 +327,7 @@ fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
                 let est_plies = low_flats * 2;
                 let time_left = TimeLeft::new(&s);
                 let use_time = time_left.use_time(est_plies, board.side_to_move());
-                info = SearchInfo::new(6, 0)
+                info = SearchInfo::new(MAX_DEPTH, 0)
                     .take_table(&mut info)
                     .max_time(use_time);
                 let res = search(&mut board, &eval, &mut info);

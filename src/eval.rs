@@ -1,4 +1,5 @@
 use super::{Bitboard, Piece, Stack};
+use crate::board::BitIndexIterator;
 use crate::board::Board6;
 use crate::board::TakBoard;
 use board_game_traits::{Color, Position};
@@ -13,7 +14,7 @@ pub trait Evaluator {
 pub struct Evaluator6 {}
 
 impl Evaluator6 {
-    const TEMPO_OFFSET: i32 = 50;
+    const TEMPO_OFFSET: i32 = 150;
     const CONNECTIVITY: i32 = 20;
     const fn piece_weight(p: Piece) -> i32 {
         match p {
@@ -115,8 +116,60 @@ impl Evaluator for Weights6 {
             } else if stack.len() > 1 {
                 let top = *stack.last().unwrap();
                 let pw = self.piece_weight(top) + self.location[idx];
-                let (captive, friendly) = captive_friendly(&stack, top);
+                let (mut captive, mut friendly) = captive_friendly(&stack, top);
                 let (c_mul, f_mul) = self.stack_top_multiplier(top);
+                let mut mobility = 0;
+                let mut safety = 0;
+                match top {
+                    Piece::WhiteFlat | Piece::BlackFlat => {}
+                    Piece::WhiteWall | Piece::BlackWall => {
+                        safety += 4;
+                    }
+                    Piece::WhiteCap | Piece::BlackCap => {
+                        safety += 32;
+                        mobility += 1;
+                    }
+                }
+                let neighbors = <Board6 as TakBoard>::Bits::index_to_bit(idx).adjacent();
+                for sq in BitIndexIterator::new(neighbors) {
+                    if let Some(piece) = game.board[sq].last() {
+                        if piece.owner() == top.owner() {
+                            match piece {
+                                Piece::WhiteFlat | Piece::BlackFlat => {
+                                    safety += 1;
+                                    mobility += 1;
+                                }
+                                Piece::WhiteWall | Piece::BlackWall => {
+                                    safety += 3;
+                                }
+                                Piece::WhiteCap | Piece::BlackCap => {
+                                    safety += 6;
+                                    mobility += 1;
+                                }
+                            }
+                        } else {
+                            match piece {
+                                Piece::WhiteFlat | Piece::BlackFlat => {
+                                    mobility += 2;
+                                }
+                                Piece::WhiteWall | Piece::BlackWall => {
+                                    safety -= 4;
+                                }
+                                Piece::WhiteCap | Piece::BlackCap => {
+                                    safety -= 8;
+                                }
+                            }
+                        }
+                    } else {
+                        mobility += 2;
+                    }
+                }
+                if mobility < 2 && !top.is_blocker() {
+                    friendly /= 2;
+                }
+                if safety < 0 {
+                    captive *= 2;
+                }
                 let stack_score = captive * c_mul + friendly * f_mul + pw;
                 if let Color::White = top.owner() {
                     score += stack_score;
@@ -125,23 +178,62 @@ impl Evaluator for Weights6 {
                 }
             }
         }
-        let white_connectivity = (game.bits.white.adjacent() & game.bits.white).pop_count();
-        let black_connectivity = (game.bits.black.adjacent() & game.bits.black).pop_count();
-        score += white_connectivity as i32 * self.connectivity;
-        score -= black_connectivity as i32 * self.connectivity;
+        // Danger FOR the associated color
+        // const DANGER_MUL: i32 = 20; // 20
+        // let white_danger = (game.bits.road_pieces(Color::Black).critical_squares()
+        //     & !game.bits.blocker_pieces(Color::White))
+        // .pop_count() as i32;
+        // let black_danger = (game.bits.road_pieces(Color::White).critical_squares()
+        //     & !game.bits.blocker_pieces(Color::Black))
+        // .pop_count() as i32;
+        let white_comp = connected_components(game.bits.road_pieces(Color::White));
+        let black_comp = connected_components(game.bits.road_pieces(Color::Black));
+        // Punish more components?
+        score -= white_comp as i32 * self.connectivity;
+        score += black_comp as i32 * self.connectivity;
+        // let white_connectivity = (game.bits.white.adjacent() & game.bits.white).pop_count();
+        // let black_connectivity = (game.bits.black.adjacent() & game.bits.black).pop_count();
+        // score += white_connectivity as i32 * self.connectivity;
+        // score -= black_connectivity as i32 * self.connectivity;
         if let Color::White = game.side_to_move() {
+            // score -= DANGER_MUL * white_danger;
+            // score += DANGER_MUL * black_danger;
             if depth % 2 == 0 {
                 score
             } else {
                 score - self.tempo_offset
             }
         } else {
+            // score += DANGER_MUL * white_danger;
+            // score -= DANGER_MUL * black_danger;
             if depth % 2 == 0 {
                 -1 * score
             } else {
                 -1 * score + self.tempo_offset
             }
         }
+    }
+}
+
+fn connected_components<B: Bitboard>(mut bits: B) -> usize {
+    let mut count = 0;
+    while bits != B::ZERO {
+        let lowest = bits.lowest();
+        let set = bits.flood(lowest);
+        bits = bits ^ set;
+        count += 1;
+    }
+    count
+}
+
+fn local_influence(top: Piece) -> i32 {
+    match top {
+        Piece::WhiteFlat => 1,
+        Piece::WhiteWall => 16,
+        Piece::WhiteCap => 512,
+        Piece::BlackFlat => -1,
+        Piece::BlackWall => -16,
+        Piece::BlackCap => -512,
     }
 }
 
@@ -243,5 +335,18 @@ mod test {
             dbg!(m.to_ptn::<Board6>());
         }
         assert_eq!(tak_threats.len(), 5);
+    }
+    #[test]
+    fn components() {
+        let s = "2,x5/2,x,1,2,x2/x2,1,1,2C,x/x,2,2,1,x2/x3,1,x2/x5,1 1 7";
+        let board = Board6::try_from_tps(s).unwrap();
+        assert_eq!(
+            2,
+            connected_components(board.bits.road_pieces(Color::White))
+        );
+        assert_eq!(
+            4,
+            connected_components(board.bits.road_pieces(Color::Black))
+        );
     }
 }
