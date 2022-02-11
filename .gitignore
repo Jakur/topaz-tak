@@ -1,1 +1,4 @@
 /target
+*.csv
+*.svg
+perf.*

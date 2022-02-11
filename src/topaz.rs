@@ -122,23 +122,43 @@ fn saved_tps(name: &str) -> Option<&str> {
 }
 
 fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> {
+    use std::collections::HashMap;
     use std::io::Write;
     let mut vec = Vec::new();
+    let old = {
+        if let Ok(read_data) = std::fs::read_to_string("node_counts.csv") {
+            let map: HashMap<String, usize> = read_data
+                .lines()
+                .filter_map(|x| {
+                    let sp: Vec<_> = x.split(",").collect();
+                    if sp.len() == 3 {
+                        Some((sp[0].to_string(), sp[2].parse().unwrap()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Some(map)
+        } else {
+            None
+        }
+    };
     for (name, depth) in names {
         let tps = saved_tps(name).unwrap();
         let mut board = Board6::try_from_tps(tps).unwrap();
         let eval = Weights6::default();
         let mut info = SearchInfo::new(*depth, 10_000_000);
         search(&mut board, &eval, &mut info);
-        // for idx in 0..36 {
-        //     let dummy_move = GameMove::from_placement(Piece::WhiteFlat, idx);
-        //     let ptn_idx = dummy_move.to_ptn::<Board6>();
-        //     println!("{}: {:?}", ptn_idx, info.hist_moves.square_data(idx));
-        // }
+        for idx in 0..36 {
+            let dummy_move = GameMove::from_placement(Piece::WhiteFlat, idx);
+            let ptn_idx = dummy_move.to_ptn::<Board6>();
+            println!("{}: {:?}", ptn_idx, info.hist_moves.square_data(idx));
+        }
         vec.push(info.nodes);
-    }
-    if let Ok(read_data) = std::fs::read_to_string("node_counts.csv") {
-        println!("Exists.");
+        if let Some(old_nodes) = old.as_ref().and_then(|x| x.get(*name)) {
+            let diff = (info.nodes as f64 - *old_nodes as f64) / *old_nodes as f64;
+            println!("{}: {}", name, diff);
+        }
     }
     if save {
         let mut f = std::fs::File::create("node_counts.csv")?;
