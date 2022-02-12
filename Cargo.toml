@@ -17,6 +17,7 @@ termtree = "0.2.3"
 colorful = "0.2"
 getopts = "0.2.21"
 getrandom = "*"
+telnet = "0.2"
 
 [profile.release]
 debug = true

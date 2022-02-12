@@ -543,6 +543,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "telnet"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99f2cc260bea5219955ab4832c9600a41b87101d280939edae6dd10b3c68a4f3"
+
+[[package]]
 name = "termtree"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -581,6 +587,7 @@ dependencies = [
  "lru",
  "rand_core",
  "rand_xoshiro",
+ "telnet",
  "termtree",
 ]
 

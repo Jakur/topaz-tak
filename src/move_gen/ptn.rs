@@ -1,7 +1,7 @@
 use board_game_traits::Color;
 
 use super::{GameMove, Piece};
-use crate::board::{Board6, TakBoard};
+use crate::board::TakBoard;
 
 impl GameMove {
     pub fn to_ptn<T: TakBoard>(self) -> String {
@@ -34,6 +34,89 @@ impl GameMove {
             format!("{}{}{}{}", num_string, square, dir, crush_str)
         } else {
             format!("{}{}{}{}{}", num_string, square, dir, spread, crush_str)
+        }
+    }
+    pub fn to_playtak<T: TakBoard>(self) -> String {
+        let origin = tile_ptn::<T>(self.src_index()).to_ascii_uppercase();
+        if self.is_stack_move() {
+            let quantities: Vec<_> = self.quantity_iter(T::SIZE).collect();
+            let dest = tile_ptn::<T>(quantities.last().unwrap().index).to_ascii_uppercase();
+            let mut move_q_s = String::new();
+            for q in quantities {
+                move_q_s.push_str(&format!("{}", q.quantity));
+                move_q_s.push(' ');
+            }
+            move_q_s.pop();
+            format!("M {} {} {}", origin, dest, move_q_s)
+        } else {
+            match self.place_piece() {
+                Piece::WhiteFlat | Piece::BlackFlat => {
+                    format!("P {}", origin)
+                }
+                Piece::WhiteWall | Piece::BlackWall => {
+                    format!("P {} W", origin)
+                }
+                Piece::WhiteCap | Piece::BlackCap => {
+                    format!("P {} C", origin)
+                }
+            }
+        }
+    }
+    pub fn try_from_playtak<T: TakBoard>(s: &str, board: &T) -> Option<Self> {
+        let size = T::SIZE;
+        let side_to_move = board.active_player();
+        let mut split = s.split_whitespace();
+        let stack_move = match split.next()? {
+            "M" => true,
+            "P" => false,
+            _ => return None,
+        };
+        let origin = parse_playtak_sq(split.next()?, size)?;
+        if stack_move {
+            let mut game_move = GameMove(0).set_index(origin as u64);
+            let dest = parse_playtak_sq(split.next()?, size)?;
+            let dir = if origin > dest {
+                // North or West
+                if origin - dest >= size {
+                    0 // North
+                } else {
+                    3 // West
+                }
+            } else {
+                if dest - origin >= size {
+                    2 // South
+                } else {
+                    1 // East
+                }
+            };
+            game_move = game_move.set_direction(dir);
+            let mut tile_counter = 1;
+            let mut total_pieces = 0;
+            while let Some(num) = split.next() {
+                game_move = match tile_counter {
+                    1..=7 => {
+                        let pieces = num.parse().ok()?;
+                        total_pieces += pieces;
+                        game_move.set_tile(tile_counter, pieces)
+                    }
+                    _ => return None,
+                };
+                tile_counter += 1;
+            }
+            if let Some(p) = board.index(dest).last() {
+                if p.is_wall() {
+                    game_move = game_move.set_crush();
+                }
+            }
+            Some(game_move.set_number(total_pieces))
+        } else {
+            let piece = match split.next() {
+                Some("W") => Piece::wall(side_to_move),
+                Some("C") => Piece::cap(side_to_move),
+                None => Piece::flat(side_to_move),
+                _ => return None,
+            };
+            Some(GameMove::from_placement(piece, origin))
         }
     }
     pub fn try_from_ptn<T: TakBoard>(s: &str, board: &T) -> Option<Self> {
@@ -115,6 +198,23 @@ impl GameMove {
     }
 }
 
+fn parse_playtak_sq(s: &str, size: usize) -> Option<usize> {
+    let mut sq = s.chars();
+    let col = match sq.next()? {
+        'A' => 0,
+        'B' => 1,
+        'C' => 2,
+        'D' => 3,
+        'E' => 4,
+        'F' => 5,
+        'G' => 6,
+        'H' => 7,
+        _ => return None,
+    };
+    let row = size - sq.next().and_then(|x| x.to_digit(10))? as usize;
+    Some(row * size + col)
+}
+
 fn tile_ptn<T: TakBoard>(index: usize) -> String {
     let size = T::SIZE;
     let (row, col) = T::row_col_static(index);
@@ -135,6 +235,7 @@ fn tile_ptn<T: TakBoard>(index: usize) -> String {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::{generate_all_moves, Board6};
     #[test]
     pub fn ptn_equivalence() {
         let s = "2,2,2,21,12,x/x4,2,x/x4,2C,x/1,2,12,122211C,x2/x2,1S,1,12,1/x3,2S,1,1 1 19";
@@ -146,6 +247,25 @@ mod test {
         for p in ptn {
             let m = GameMove::try_from_ptn(p, &board).unwrap();
             assert_eq!(p, &m.to_ptn::<Board6>())
+        }
+    }
+    #[test]
+    pub fn playtak_move() {
+        let s = "2,2,2,21,12,x/x4,2,x/x4,2C,x/1,2,12,122211C,x2/x2,1S,1,12,1/x3,2S,1,1 1 19";
+        let board = Board6::try_from_tps(s).unwrap();
+        let ptn = "5b4>32";
+        let m = GameMove::try_from_ptn(ptn, &board).unwrap();
+        let pt = m.to_playtak::<Board6>();
+        assert_eq!(pt.as_str(), "M B4 D4 3 2");
+        let m2 = GameMove::try_from_playtak(&pt, &board).unwrap();
+        assert_eq!(m, m2);
+        let mut buffer = Vec::new();
+        generate_all_moves(&board, &mut buffer);
+        for m in buffer {
+            let pt = m.to_playtak::<Board6>();
+            let same = GameMove::try_from_playtak(&pt, &board).unwrap();
+            assert_eq!(same.direction(), m.direction());
+            assert_eq!(same, m);
         }
     }
 }

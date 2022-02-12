@@ -7,6 +7,7 @@ use std::env;
 use std::io::{self, BufRead};
 use std::thread;
 use std::time::Instant;
+use telnet::Event;
 use topaz_tak::board::Board6;
 use topaz_tak::eval::Weights6;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
@@ -78,6 +79,12 @@ pub fn main() {
                 }
                 _ => todo!(),
             }
+            return;
+        } else if arg1 == "playtak" {
+            let (s1, r1) = unbounded();
+            let (s2, r2) = unbounded();
+            playtak_loop(s1, r2);
+            play_game_playtak(s2, r1).unwrap();
             return;
         } else {
             println!("Unknown argument: {}", arg1);
@@ -392,6 +399,169 @@ fn tei_loop(sender: Sender<TeiCommand>) {
                 println!("Unknown Tei Command: {}", buffer);
             }
             buffer.clear();
+        }
+    });
+}
+
+fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
+    const MAX_DEPTH: usize = 8;
+    let mut board = Board6::new();
+    let mut info = SearchInfo::new(MAX_DEPTH, 5_000_000);
+    let eval = Weights6::default();
+    // eval.add_noise();
+    // let eval = Evaluator6 {};
+    loop {
+        let message = server_recv.recv()?;
+        match message {
+            TeiCommand::Go(s) => {
+                let use_time = 10; // Todo better time management
+                info = SearchInfo::new(MAX_DEPTH, 0)
+                    .take_table(&mut info)
+                    .max_time(use_time);
+                let res = search(&mut board, &eval, &mut info);
+                if let Some(outcome) = res {
+                    server_send
+                        .send(outcome.best_move().expect("could not find best move!"))
+                        .unwrap();
+                } else {
+                    println!("Something went wrong, search failed!");
+                }
+            }
+            TeiCommand::Position(s) => {
+                board = Board6::new();
+                for m in s.split(",") {
+                    if let Some(m) = GameMove::try_from_playtak(m, &board) {
+                        board.do_move(m);
+                    }
+                }
+            }
+            TeiCommand::Quit => {
+                break;
+            }
+            _ => println!("Unknown command: {:?}", message),
+        }
+    }
+    Ok(())
+}
+
+fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
+    println!("Hello world");
+    std::thread::spawn(move || {
+        let mut com = telnet::Telnet::connect(("playtak.com", 10_000), 2048).unwrap();
+        let mut counter = 0;
+        let mut played = false;
+        let mut waiting_for_engine = false;
+        let mut my_color = None;
+        let mut game_id = None;
+        let mut goal = None;
+        // let mut played = true;
+        // let mut waiting_for_engine = false;
+        // let mut my_color = Some("black".to_string());
+        // let mut game_id = Some("481821".to_string());
+        // let mut goal = None;
+        let mut moves = Vec::new();
+        loop {
+            match com.read_nonblocking() {
+                Ok(event) => match event {
+                    Event::Data(buffer) => {
+                        let s = std::str::from_utf8(&(*buffer)).unwrap();
+                        print!("{}", s);
+                        for line in s.lines() {
+                            if line.starts_with("Welcome!") {
+                                println!("Logging in");
+                                com.write("Login Guest\n".as_bytes()).unwrap();
+                            } else if line.starts_with("Game#") {
+                                let rest = line.splitn(2, " ").nth(1);
+                                if let Some(rest) = rest {
+                                    if rest.starts_with("P") || rest.starts_with("M") {
+                                        moves.push(rest.to_string());
+                                    } else if rest.starts_with("Over") {
+                                        engine_send.send(TeiCommand::Quit).unwrap();
+                                        break;
+                                    }
+                                } else {
+                                    dbg!(line);
+                                }
+                            } else if line.starts_with("Seek new") {
+                                if line.contains("FriendlyBot") {
+                                    goal =
+                                        Some(line.split_whitespace().nth(2).unwrap().to_string());
+                                    println!("Goal: {:?}", goal);
+                                }
+                            } else if line.starts_with("Game Start") {
+                                game_id = line.split_whitespace().nth(2).map(|x| x.to_string());
+                                my_color = line.split_whitespace().nth(7).map(|x| x.to_lowercase());
+                                played = true;
+                                dbg!(&game_id);
+                                dbg!(&my_color);
+                            }
+                        }
+                    }
+                    Event::NoData => {
+                        thread::sleep(std::time::Duration::from_secs(1));
+                        counter += 1;
+                        if counter >= 30 {
+                            counter = 0;
+                            println!("Pinging server!");
+                            com.write("PING\n".as_bytes()).unwrap();
+                        }
+                        if !played {
+                            if let Some(ref id) = goal {
+                                let s = format!("Accept {}\n", id);
+                                com.write(s.as_bytes()).unwrap();
+                            }
+                        } else {
+                            let color = my_color.as_ref().unwrap().as_str();
+
+                            let my_turn = match color {
+                                "white" => moves.len() % 2 == 0,
+                                "black" => moves.len() % 2 == 1,
+                                _ => panic!("Weird color?"),
+                            };
+                            if waiting_for_engine {
+                                if let Ok(response) = engine_recv.try_recv() {
+                                    let color = if moves.len() % 2 == 0 {
+                                        Color::White
+                                    } else {
+                                        Color::Black
+                                    };
+                                    let m = GameMove::try_from_ptn_m(&response, 6, color).unwrap();
+                                    let playtak_m = m.to_playtak::<Board6>();
+                                    let message = format!(
+                                        "Game#{} {}\n",
+                                        game_id.as_ref().unwrap(),
+                                        playtak_m
+                                    );
+                                    thread::sleep(std::time::Duration::from_secs(1));
+                                    println!("Sending: {}", message);
+                                    com.write(message.as_bytes()).unwrap();
+                                    waiting_for_engine = false;
+                                    moves.push(playtak_m);
+                                    thread::sleep(std::time::Duration::from_secs(1));
+                                }
+                                continue;
+                            }
+                            if my_turn {
+                                engine_send
+                                    .send(TeiCommand::Position(moves.join(",")))
+                                    .unwrap();
+                                engine_send.send(TeiCommand::Go("".to_string())).unwrap();
+                                waiting_for_engine = true;
+                            }
+                        }
+                    }
+                    _ => {
+                        println!("Got here");
+                        dbg!(event);
+                        break;
+                    }
+                },
+                Err(e) => {
+                    dbg!(e);
+                    break;
+                }
+            }
+            // println!("Thread sleepy!");
         }
     });
 }
