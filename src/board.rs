@@ -53,6 +53,7 @@ pub trait TakBoard: Position<Move = GameMove, ReverseMove = RevGameMove> {
     fn make_ptn_moves(&mut self, moves: &[&str]) -> Option<()>;
     fn bits(&self) -> &BitboardStorage<Self::Bits>;
     fn board(&self) -> &[Stack];
+    fn with_komi(self, half_flats: u8) -> Self;
 }
 
 macro_rules! board_impl {
@@ -73,11 +74,12 @@ macro_rules! board_impl {
                     flats_left: [Self::FLATS, Self::FLATS],
                     caps_left: [Self::CAPS, Self::CAPS],
                     bits,
+                    komi: 0,
                 }
             }
             fn flat_winner(&self) -> GameResult {
-                let white_score = self.bits.flat_score(Color::White);
-                let black_score = self.bits.flat_score(Color::Black);
+                let white_score = 2 * self.bits.flat_score(Color::White);
+                let black_score = 2 * self.bits.flat_score(Color::Black) + self.komi as u32;
                 if white_score > black_score {
                     GameResult::WhiteWin
                 } else if black_score > white_score {
@@ -330,6 +332,11 @@ macro_rules! board_impl {
             fn board(&self) -> &[Stack] {
                 &self.board
             }
+
+            fn with_komi(mut self, half_flats: u8) -> Self {
+                self.komi = half_flats;
+                self
+            }
         }
         impl Position for $t {
             type Move = GameMove;
@@ -486,6 +493,7 @@ pub struct Board5 {
     flats_left: [usize; 2],
     caps_left: [usize; 2],
     pub bits: BitboardStorage<<Self as TakBoard>::Bits>,
+    komi: u8,
 }
 
 #[derive(PartialEq, Clone)]
@@ -496,6 +504,7 @@ pub struct Board6 {
     flats_left: [usize; 2],
     caps_left: [usize; 2],
     pub bits: BitboardStorage<<Self as TakBoard>::Bits>,
+    komi: u8,
 }
 
 #[derive(PartialEq, Clone)]
@@ -506,6 +515,7 @@ pub struct Board7 {
     flats_left: [usize; 2],
     caps_left: [usize; 2],
     pub bits: BitboardStorage<<Self as TakBoard>::Bits>,
+    komi: u8,
 }
 
 board_impl![Board5, Bitboard5, 5, 21, 1];
@@ -671,6 +681,15 @@ mod test {
         let tps = "1,2,1,1,1,x/2,2,2,1,21,1/2,2,112C,21S,2,2/2,1,221C,1,12,212/1,1,1,2,1,2/2,2,1,1,2,112S 2 30";
         let mut board = Board6::try_from_tps(tps).unwrap();
         let res = crate::execute_moves_check_valid(&mut board, &["f6"]);
+        assert!(res.is_ok());
+        assert_eq!(board.flat_game(), Some(GameResult::BlackWin));
+    }
+
+    #[test]
+    pub fn komi_flat_game() {
+        let tps = "x2,2,1112,2,2/12,222121C,x,1S,221S,x/x2,21211112,21,2,2/x,1,21S,2,2,1S/1,21,1,1,1112C,1/1,21,2,2221S,21,221 1 58";
+        let mut board = Board6::try_from_tps(tps).unwrap().with_komi(5);
+        let res = crate::execute_moves_check_valid(&mut board, &["b4"]);
         assert!(res.is_ok());
         assert_eq!(board.flat_game(), Some(GameResult::BlackWin));
     }

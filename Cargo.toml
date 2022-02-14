@@ -18,6 +18,7 @@ colorful = "0.2"
 getopts = "0.2.21"
 getrandom = "*"
 telnet = "0.2"
+dotenv = "0.15.0"
 
 [profile.release]
 debug = true

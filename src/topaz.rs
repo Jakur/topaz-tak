@@ -405,7 +405,8 @@ fn tei_loop(sender: Sender<TeiCommand>) {
 
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
     const MAX_DEPTH: usize = 8;
-    let mut board = Board6::new();
+    const KOMI: u8 = 6;
+    let mut board = Board6::new().with_komi(KOMI);
     let mut info = SearchInfo::new(MAX_DEPTH, 5_000_000);
     let eval = Weights6::default();
     // eval.add_noise();
@@ -413,8 +414,8 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
     loop {
         let message = server_recv.recv()?;
         match message {
-            TeiCommand::Go(s) => {
-                let use_time = 10; // Todo better time management
+            TeiCommand::Go(_) => {
+                let use_time = 5; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, 0)
                     .take_table(&mut info)
                     .max_time(use_time);
@@ -428,7 +429,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                 }
             }
             TeiCommand::Position(s) => {
-                board = Board6::new();
+                board = Board6::new().with_komi(KOMI);
                 for m in s.split(",") {
                     if let Some(m) = GameMove::try_from_playtak(m, &board) {
                         board.do_move(m);
@@ -445,7 +446,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 }
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
-    println!("Hello world");
+    let (user, pass) = playtak_auth().expect("Could not read properly formatted .env file");
     std::thread::spawn(move || {
         let mut com = telnet::Telnet::connect(("playtak.com", 10_000), 2048).unwrap();
         let mut counter = 0;
@@ -469,7 +470,8 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                         for line in s.lines() {
                             if line.starts_with("Welcome!") {
                                 println!("Logging in");
-                                com.write("Login Guest\n".as_bytes()).unwrap();
+                                let login_s = format!("Login {} {}\n", user, pass);
+                                com.write(login_s.as_bytes()).unwrap();
                             } else if line.starts_with("Game#") {
                                 let rest = line.splitn(2, " ").nth(1);
                                 if let Some(rest) = rest {
@@ -483,7 +485,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                     dbg!(line);
                                 }
                             } else if line.starts_with("Seek new") {
-                                if line.contains("FriendlyBot") {
+                                if line.contains("SlateBot") {
                                     goal =
                                         Some(line.split_whitespace().nth(2).unwrap().to_string());
                                     println!("Goal: {:?}", goal);
@@ -532,7 +534,6 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                         game_id.as_ref().unwrap(),
                                         playtak_m
                                     );
-                                    thread::sleep(std::time::Duration::from_secs(1));
                                     println!("Sending: {}", message);
                                     com.write(message.as_bytes()).unwrap();
                                     waiting_for_engine = false;
@@ -564,4 +565,18 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
             // println!("Thread sleepy!");
         }
     });
+}
+
+fn playtak_auth() -> Option<(String, String)> {
+    dotenv::dotenv().ok()?;
+    let mut username = None;
+    let mut password = None;
+    for (key, value) in env::vars() {
+        if key == "PLAYTAK_USERNAME" {
+            username = Some(value);
+        } else if key == "PLAYTAK_PASSWORD" {
+            password = Some(value);
+        }
+    }
+    Some((username?, password?))
 }
