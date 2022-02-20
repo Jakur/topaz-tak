@@ -93,6 +93,74 @@ impl SmartMoveBuffer {
             // }
         }
     }
+    pub fn gen_score_place_moves<T: TakBoard>(&mut self, board: &T) {
+        use crate::board::BitIndexIterator;
+        use crate::board::Bitboard;
+        let side = board.side_to_move();
+        for idx in board.empty_tiles() {
+            let mut flat_score = 3;
+            let mut wall_score = 1;
+            let mut cap_score = 3;
+            let neighbors = T::Bits::index_to_bit(idx).adjacent();
+            let enemies = neighbors & board.bits().all_pieces(!side);
+            for n_idx in BitIndexIterator::new(enemies) {
+                let n_stack = board.index(n_idx);
+                // if n_stack.len() > 3
+                //     && n_stack.last() != Some(&Piece::WhiteCap)
+                //     && n_stack.last() != Some(&Piece::BlackCap)
+                // {
+                //     wall_score += 3;
+                //     cap_score += 5;
+                if n_stack.len() > 1 {
+                    wall_score += 1;
+                    cap_score += 2;
+                }
+            }
+            if enemies.pop_count() >= 3 {
+                flat_score -= 1;
+                cap_score += 1;
+                wall_score += 1;
+            }
+            let friends = neighbors & board.bits().all_pieces(side);
+            if friends.pop_count() == 0 {
+                cap_score -= 2;
+                flat_score -= 1;
+            }
+            // match friends.pop_count() {
+            //     0 => {
+            //         flat_score -= 1;
+            //         cap_score -= 2;
+            //     }
+            //     1 | 2 => {
+            //         flat_score += 1;
+            //         cap_score += 2;
+            //     }
+            //     3 => {
+            //         flat_score += 1;
+            //     }
+            //     _ => {
+            //         wall_score -= 1;
+            //         cap_score -= 1;
+            //     }
+            // }
+            if board.caps_reserve(board.side_to_move()) > 0 {
+                self.moves.push(ScoredMove::new(
+                    GameMove::from_placement(Piece::cap(side), idx),
+                    cap_score,
+                ));
+            }
+            self.moves.push(ScoredMove::new(
+                GameMove::from_placement(Piece::wall(side), idx),
+                wall_score,
+            ));
+            self.moves.push(ScoredMove::new(
+                GameMove::from_placement(Piece::flat(side), idx),
+                flat_score,
+            ));
+        }
+        // let neighbors = T::Bits::index_to_bit(idx).adjacent();
+        // todo!()
+    }
     pub fn score_pv_move(&mut self, pv_move: GameMove) {
         if let Some(found) = self.moves.iter_mut().find(|m| m.mv == pv_move) {
             found.score += 100;
@@ -106,7 +174,7 @@ impl SmartMoveBuffer {
         }
     }
     pub fn get_best(&mut self, depth: usize, info: &SearchInfo) -> GameMove {
-        if self.queries <= 10 {
+        if self.queries <= 16 {
             let (idx, m) = self
                 .moves
                 .iter()
@@ -114,7 +182,6 @@ impl SmartMoveBuffer {
                 .max_by_key(|(_i, &m)| {
                     m.score + info.killer_moves[depth].score(m.mv) as i16
                         - self.stack_hist_score(m.mv)
-                        + info.hist_moves.score(m.mv)
                 })
                 .unwrap();
             let m = *m;
@@ -160,7 +227,11 @@ impl MoveBuffer for SmartMoveBuffer {
     fn add_move(&mut self, mv: GameMove) {
         // (bits + self.number() + 10 * self.is_stack_move() as u64)
         if mv.is_place_move() {
-            self.moves.push(ScoredMove::new(mv, 3));
+            if mv.place_piece().is_wall() {
+                self.moves.push(ScoredMove::new(mv, 2));
+            } else {
+                self.moves.push(ScoredMove::new(mv, 3));
+            }
         } else {
             self.moves.push(ScoredMove::new(mv, 0));
         }

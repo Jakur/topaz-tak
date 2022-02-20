@@ -104,10 +104,22 @@ impl Evaluator for Weights6 {
     type Game = Board6;
     fn evaluate(&self, game: &Self::Game, depth: usize) -> i32 {
         let mut score = 0;
+        // let white_res = game.pieces_reserve(Color::White) as i32;
+        // let black_res = game.pieces_reserve(Color::Black) as i32;
+        // let mut flat_diff = (game.bits.flat & game.bits.white).pop_count() as i32
+        //     - (game.bits.flat & game.bits.black).pop_count() as i32;
+        // flat_diff *= 2;
+        // flat_diff -= game.komi() as i32;
+        // let white_res_lead = black_res - white_res;
+        // let white_leading = white_res_lead >= 4 && 
+
         for (idx, stack) in game.board.iter().enumerate() {
             if stack.len() == 1 {
                 let top = *stack.last().unwrap();
-                let pw = self.piece_weight(top) + self.location[idx];
+                let mut pw = self.piece_weight(top) + self.location[idx];
+                if top.is_cap() {
+                    pw += self.location[idx];
+                }
                 if let Color::White = top.owner() {
                     score += pw;
                 } else {
@@ -115,7 +127,7 @@ impl Evaluator for Weights6 {
                 }
             } else if stack.len() > 1 {
                 let top = *stack.last().unwrap();
-                let pw = self.piece_weight(top) + self.location[idx];
+                let mut pw = self.piece_weight(top) + self.location[idx];
                 let (mut captive, mut friendly) = captive_friendly(&stack, top);
                 let (c_mul, f_mul) = self.stack_top_multiplier(top);
                 let mut mobility = 0;
@@ -125,9 +137,19 @@ impl Evaluator for Weights6 {
                     Piece::WhiteWall | Piece::BlackWall => {
                         safety += 4;
                     }
-                    Piece::WhiteCap | Piece::BlackCap => {
+                    Piece::WhiteCap => {
                         safety += 32;
                         mobility += 1;
+                        if let Some(Piece::WhiteFlat) = stack.from_top(1) {
+                            pw += 30;
+                        }
+                    }
+                    Piece::BlackCap => {
+                        safety += 32;
+                        mobility += 1;
+                        if let Some(Piece::BlackFlat) = stack.from_top(1) {
+                            pw += 30;
+                        }
                     }
                 }
                 let neighbors = <Board6 as TakBoard>::Bits::index_to_bit(idx).adjacent();
@@ -178,24 +200,81 @@ impl Evaluator for Weights6 {
                 }
             }
         }
-        // Danger FOR the associated color
-        // const DANGER_MUL: i32 = 20; // 20
+
+        let black_c_lonely = (game.bits.cap & game.bits.black).adjacent() & (game.bits.flat | game.bits.wall);
+        if black_c_lonely == <Self::Game as TakBoard>::Bits::ZERO {
+            score += 30;
+        }
+
+        let white_c_lonely = (game.bits.cap & game.bits.white).adjacent() & (game.bits.flat | game.bits.wall);
+        if white_c_lonely == <Self::Game as TakBoard>::Bits::ZERO {
+            score -= 30;
+        }
+
+        
+        // // Danger FOR the associated color
+        // const DANGER_MUL: i32 = 40; // 20
         // let white_danger = (game.bits.road_pieces(Color::Black).critical_squares()
-        //     & !game.bits.blocker_pieces(Color::White))
-        // .pop_count() as i32;
+        //     & !game.bits.empty())
+        // .pop_count() >= 1;
         // let black_danger = (game.bits.road_pieces(Color::White).critical_squares()
-        //     & !game.bits.blocker_pieces(Color::Black))
-        // .pop_count() as i32;
+        //     & !game.bits.empty())
+        // .pop_count() >= 1;
         let white_comp = connected_components(game.bits.road_pieces(Color::White));
         let black_comp = connected_components(game.bits.road_pieces(Color::Black));
         // Punish more components?
-        score -= white_comp as i32 * self.connectivity;
-        score += black_comp as i32 * self.connectivity;
+        score -= white_comp.steps as i32 * self.connectivity;
+        score += black_comp.steps as i32 * self.connectivity;
+
+        // Examine the largest components
+        // let white_steps = simple_road_est::<Board6>(white_comp.bits);
+        // let black_steps = simple_road_est::<Board6>(black_comp.bits);
+        // if white_res < 16 || black_res < 16 {
+        //     // Half flats in white's favor
+        //     let mut flat_diff = (game.bits.flat & game.bits.white).pop_count() as i32
+        //         - (game.bits.flat & game.bits.black).pop_count() as i32;
+        //     flat_diff *= 2;
+        //     flat_diff -= game.komi() as i32;
+        //     let res_adv = white_res - black_res;
+        //     flat_diff += res_adv / 2;
+        //     if res_adv > 0 {
+        //         if flat_diff > 0 {
+        //             if white_res < 5 {
+        //                 score += flat_diff * 30;
+        //             } else {
+        //                 score += flat_diff * 20;
+        //             }
+        //         } else {
+        //             score += flat_diff * 10;
+        //         }
+        //     } else {
+        //         if flat_diff < 0 {
+        //             if black_res < 5 {
+        //                 score += flat_diff * 30;
+        //             } else {
+        //                 score += flat_diff * 20;
+        //             }
+        //         } else {
+        //             score += flat_diff * 10;
+        //         }
+        //     }
+        // }
         // let white_connectivity = (game.bits.white.adjacent() & game.bits.white).pop_count();
         // let black_connectivity = (game.bits.black.adjacent() & game.bits.black).pop_count();
         // score += white_connectivity as i32 * self.connectivity;
         // score -= black_connectivity as i32 * self.connectivity;
         if let Color::White = game.side_to_move() {
+            // if white_danger {
+            //     score += DANGER_MUL * 2;
+            // }
+            // if black_danger {
+            //     score += DANGER_MUL;
+            // }
+            // if white_steps <= black_steps {
+            //     score += 60;
+            // } else {
+            //     score -= 60;
+            // }
             // score -= DANGER_MUL * white_danger;
             // score += DANGER_MUL * black_danger;
             if depth % 2 == 0 {
@@ -204,6 +283,17 @@ impl Evaluator for Weights6 {
                 score - self.tempo_offset
             }
         } else {
+            // if white_danger {
+            //     score += DANGER_MUL;
+            // }
+            // if black_danger {
+            //     score += DANGER_MUL * 2;
+            // }
+            // if black_steps <= white_steps {
+            //     score -= 60;
+            // } else {
+            //     score += 60;
+            // }
             // score += DANGER_MUL * white_danger;
             // score -= DANGER_MUL * black_danger;
             if depth % 2 == 0 {
@@ -215,15 +305,83 @@ impl Evaluator for Weights6 {
     }
 }
 
-fn connected_components<B: Bitboard>(mut bits: B) -> usize {
+fn simple_road_est<T: TakBoard>(bits: T::Bits) -> usize {
+    let north = repeat_slide(
+        bits,
+        T::Bits::north,
+        T::Bits::top(),
+    );
+
+    let east = repeat_slide(
+        bits,
+        T::Bits::east,
+        T::Bits::right(),
+    );
+
+    let south = repeat_slide(
+        bits,
+        T::Bits::south,
+        T::Bits::bottom(),
+    );
+
+    let west = repeat_slide(
+        bits,
+        T::Bits::west,
+        T::Bits::left(),
+    );
+
+    std::cmp::min(north.steps + south.steps, east.steps + west.steps)
+}
+
+struct BitOutcome<B> {
+    bits: B,
+    steps: usize,
+}
+
+impl<B> BitOutcome<B> {
+    fn new(bits: B, steps: usize) -> Self {
+        Self { bits, steps }
+    }
+}
+
+// fn apply_bit_fn<B: Bitboard, F: Fn(B) -> B>(mut b: B, f: F) -> BitOutcome<B> {
+//     let mut counter = 0;
+//     let mut last = B::ZERO;
+//     while b != last {
+//         last = b;
+//         b = f(b);
+//         counter += 1;
+//     }
+//     BitOutcome::new(b, counter)
+// }
+
+fn repeat_slide<B: Bitboard, F: Fn(B) -> B>(mut b: B, f: F, end: B) -> BitOutcome<B> {
+    let mut counter = 0;
+    let mut last = B::ZERO;
+    while b != last {
+        if b & end != B::ZERO {
+            break;
+        }
+        last = b;
+        b = f(b);
+        counter += 1;
+    }
+    BitOutcome::new(b, counter)
+}
+
+fn connected_components<B: Bitboard>(mut bits: B) -> BitOutcome<B> {
     let mut count = 0;
+    let mut largest = B::ZERO;
     while bits != B::ZERO {
         let lowest = bits.lowest();
         let set = bits.flood(lowest);
+        if set.pop_count() > largest.pop_count() {
+            largest = set;
+        }
         bits = bits ^ set;
         count += 1;
     }
-    count
+    BitOutcome::new(largest, count)
 }
 
 fn local_influence(top: Piece) -> i32 {
@@ -342,11 +500,11 @@ mod test {
         let board = Board6::try_from_tps(s).unwrap();
         assert_eq!(
             2,
-            connected_components(board.bits.road_pieces(Color::White))
+            connected_components(board.bits.road_pieces(Color::White)).steps
         );
         assert_eq!(
             4,
-            connected_components(board.bits.road_pieces(Color::Black))
+            connected_components(board.bits.road_pieces(Color::Black)).steps
         );
     }
 }

@@ -54,6 +54,8 @@ pub trait TakBoard: Position<Move = GameMove, ReverseMove = RevGameMove> {
     fn bits(&self) -> &BitboardStorage<Self::Bits>;
     fn board(&self) -> &[Stack];
     fn with_komi(self, half_flats: u8) -> Self;
+    fn komi(&self) -> u8;
+    fn flat_diff(&self, player: Color) -> i32;
 }
 
 macro_rules! board_impl {
@@ -336,6 +338,19 @@ macro_rules! board_impl {
             fn with_komi(mut self, half_flats: u8) -> Self {
                 self.komi = half_flats;
                 self
+            }
+
+            fn komi(&self) -> u8 {
+                self.komi
+            }
+
+            fn flat_diff(&self, player: Color) -> i32 {
+                let white = self.bits.flat_score(Color::White) as i32;
+                let black = self.bits.flat_score(Color::Black) as i32;
+                match player {
+                    Color::White => white - black,
+                    Color::Black => black - white,
+                }
             }
         }
         impl Position for $t {

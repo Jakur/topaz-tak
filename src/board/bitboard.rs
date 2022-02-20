@@ -70,6 +70,12 @@ where
         };
         blocker_pieces
     }
+    pub fn all_pieces(&self, color: Color) -> T {
+        match color {
+            Color::White => self.white,
+            Color::Black => self.black,
+        }
+    }
     pub fn check_road(&self, color: Color) -> bool {
         self.road_pieces(color).check_road()
     }
@@ -171,6 +177,14 @@ pub trait Bitboard:
     fn lowest_index(self) -> usize;
     /// Converts a provided [TakBoard] square index into a single set bit in a bitboard
     fn index_to_bit(index: usize) -> Self;
+    fn north(self) -> Self;
+    fn east(self) -> Self;
+    fn south(self) -> Self;
+    fn west(self) -> Self;
+    fn top() -> Self;
+    fn bottom() -> Self;
+    fn left() -> Self;
+    fn right() -> Self;
     /// Returns the board size that this bitboard corresponds to
     fn size() -> usize;
 }
@@ -460,6 +474,30 @@ macro_rules! bitboard_impl {
             }
             fn pop_count(self) -> u32 {
                 (self.0).count_ones()
+            }
+            fn north(self) -> Self {
+                Self::new(self.0 >> 8)
+            }
+            fn east(self) -> Self {
+                Self::new(self.0 << 1)
+            }
+            fn south(self) -> Self {
+                Self::new(self.0 << 8)
+            }
+            fn west(self) -> Self {
+                Self::new(self.0 >> 1)
+            }
+            fn top() -> Self {
+                Self::TOP
+            }
+            fn bottom() -> Self {
+                Self::BOTTOM
+            }
+            fn left() -> Self {
+                Self::LEFT
+            }
+            fn right() -> Self {
+                Self::RIGHT
             }
         }
     };

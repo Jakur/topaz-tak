@@ -3,7 +3,8 @@ use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
-    generate_all_moves, GameMove, HistoryMoves, KillerMoves, RevGameMove, SmartMoveBuffer,
+    generate_all_moves, generate_all_stack_moves, GameMove, HistoryMoves, KillerMoves, RevGameMove,
+    SmartMoveBuffer,
 };
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
@@ -233,7 +234,7 @@ where
             board,
             eval,
             info,
-            SearchData::new(-1_000_000, 1_000_000, depth, true, None),
+            SearchData::new(-1_000_000, 1_000_000, depth, true, None, 0),
         );
         node_counts.push(info.nodes);
         let pv_moves = info.full_pv(board);
@@ -273,6 +274,7 @@ struct SearchData {
     depth: usize,
     null_move: bool,
     last_move: Option<RevGameMove>,
+    extensions: u8,
 }
 
 impl SearchData {
@@ -282,6 +284,7 @@ impl SearchData {
         depth: usize,
         null_move: bool,
         last_move: Option<RevGameMove>,
+        extensions: u8,
     ) -> Self {
         Self {
             alpha,
@@ -289,6 +292,7 @@ impl SearchData {
             depth,
             null_move,
             last_move,
+            extensions,
         }
     }
 }
@@ -304,6 +308,7 @@ where
         depth,
         null_move,
         last_move,
+        extensions,
     } = data;
     info.nodes += 1;
     const FREQ: usize = (1 << 16) - 1; // Per 65k nodes
@@ -372,7 +377,14 @@ where
                 board,
                 evaluator,
                 info,
-                SearchData::new(-beta, -beta + 1, depth - 1 - NULL_REDUCTION, false, None),
+                SearchData::new(
+                    -beta,
+                    -beta + 1,
+                    depth - 1 - NULL_REDUCTION,
+                    false,
+                    None,
+                    extensions,
+                ),
             );
         board.rev_null_move();
         // If we beta cutoff from the null move, then we can stop searching
@@ -381,13 +393,15 @@ where
         }
     }
     let mut moves = SmartMoveBuffer::new();
-    generate_all_moves(board, &mut moves);
+    generate_all_stack_moves(board, &mut moves);
+    moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
+    moves.gen_score_place_moves(board);
     let mut best_move = None;
     let mut best_score = None;
     if let Some(pv_move) = info.pv_move(board) {
         moves.score_pv_move(pv_move);
     }
-    moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
+    // moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
     // Do a slower, more thorough move ordering at the root
     // if info.ply_depth(board) == 0 {
     //     // DEBUG
@@ -414,13 +428,60 @@ where
         // if depth == 5 && last_move.is_some() {
         //     println!("    {}", m.to_ptn::<T>());
         // }
+        // let pv_move = info.pv_move(board);
+        // let side = board.side_to_move();
+        // let flat_diff = board.flat_diff(side);
         let rev_move = board.do_move(m);
+        let mut next_extensions = extensions;
+        // Extend if the pv is to make a "bad capture"
+        // if let Some(pv_move) = pv_move {
+        //     if m == pv_move && m.is_stack_move() {
+        //         next_extensions += 1;
+        //         // if let Some(last_move) = last_move {
+        //         //     if last_move.dest_sq == rev_move.dest_sq {
+        //         //         next_extensions += 1;
+        //         //     }
+        //         // }
+        //         // let new_flat_diff = board.flat_diff(side);
+        //         // if new_flat_diff - flat_diff <= 1 {
+        //         //     next_extensions += 1;
+        //         // }
+        //     } else {
+        //         next_extensions = 0;
+        //     }
+        //     // } else {
+        //     //     next_extensions = 0;
+        //     // }
+        // }
+        let mut next_depth = depth - 1;
+        // if next_extensions >= 3 {
+        //     // dbg!(info.ply_depth(board));
+        //     next_extensions = 0;
+        //     next_depth += 1;
+        // }
+        // match last_move {
+        //     Some(last_rev) if last_rev.game_move.is_stack_move() => {
+        //         if extensions <= 2 && last_rev.dest_sq == rev_move.dest_sq {
+        //             // Must be a capture, I think
+        //             extensions += 1;
+        //             next_depth += 1;
+        //         }
+        //     }
+        //     _ => {}
+        // }
         let score = -1
             * alpha_beta(
                 board,
                 evaluator,
                 info,
-                SearchData::new(-beta, -alpha, depth - 1, true, Some(rev_move)),
+                SearchData::new(
+                    -beta,
+                    -alpha,
+                    next_depth,
+                    true,
+                    Some(rev_move),
+                    next_extensions,
+                ),
             );
         board.reverse_move(rev_move);
         if info.stopped {
@@ -435,11 +496,11 @@ where
                 if m.is_place_move() {
                     info.killer_moves[depth].add(m);
                 } else {
-                    const WINNING: i32 = crate::eval::WIN_SCORE - 100;
-                    // Cannot be null?
-                    if score >= WINNING {
-                        info.hist_moves.update(depth, m);
-                    }
+                    // const WINNING: i32 = crate::eval::WIN_SCORE - 100;
+                    // // Cannot be null?
+                    // if score >= WINNING {
+                    //     info.hist_moves.update(depth, m);
+                    // }
                 }
                 info.store_move(board, HashEntry::new(m, ScoreCutoff::Beta(beta), depth));
                 return beta;
@@ -466,6 +527,15 @@ where
         }
     }
     alpha
+}
+
+fn quiesence_search() {
+    todo!();
+}
+
+fn road_at_a_glance() {
+    // I
+    todo!();
 }
 
 /// A naive minimax function without pruning used for debugging and benchmarking

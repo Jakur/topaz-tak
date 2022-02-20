@@ -33,9 +33,11 @@ pub fn main() {
             // println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
             // info.print_cuts();
             // let node_counts = search_efficiency(&["empty6"], 8);
-            let node_counts =
-                search_efficiency(&[("opening1", 8), ("opening2", 8), ("midgame1", 6)], false)
-                    .unwrap();
+            let examine = vec![("temp", 8)];
+            let node_counts = search_efficiency(&examine, false).unwrap();
+            // let node_counts =
+            //     search_efficiency(&[("opening1", 8), ("opening2", 8), ("midgame1", 6)], false)
+            //         .unwrap();
             // let node_counts = search_efficiency(&["alion1", "alion2", "alion3", "topaz1"], 6);
             let nodes: usize = node_counts.into_iter().sum();
             println!(
@@ -123,6 +125,9 @@ fn saved_tps(name: &str) -> Option<&str> {
         "opening1" => "x2,2,x3/x,2,2,x3/x,1,1,2,2,1/1C,2,12C,1,1,x/x,2,x2,1,1/2,x4,1 1 11", // Avoid falling way behind?
         "opening2" => "2,x5/x3,1,2,x/2,2,221C,12C,1,2/x,2,x,1,1,x/x2,2,1,1,x/x2,2,x,1,1 1 13", // Don't give black initiative for free
         "midgame1" => "2,2,2222221C,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 1 31", // Tinue avoidance
+        "midgame2" => "x4,1,1/1,12S,2,2,1,1/1,1221S,1,21C,1,x/1,21112C,2,1,22221S,2/2,2,2,2S,1,2/x2,21,21,x,2 1 32",
+        "midgame3" => "2,1,1,1,x2/x,2,2,1,x2/x,1,2,1C,1,1/x2,2,1112C,12S,2/x,2,2,1,x,1/2,2,x2,1,1 1 17",
+        "temp" => "x3,1,x2/x,2,1,1,x2/1,1122112C,2,1C,1,x/x,21S,2S,1,1112S,x/2,2,1,21,2211221S,2/2,22112221S,2S,2,2,2 1 42",
         _ => {return None}
     };
     Some(s)
