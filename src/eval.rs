@@ -135,17 +135,17 @@ impl Evaluator for Weights6 {
                 match top {
                     Piece::WhiteFlat | Piece::BlackFlat => {}
                     Piece::WhiteWall | Piece::BlackWall => {
-                        safety += 4;
+                        safety += 16;
                     }
                     Piece::WhiteCap => {
-                        safety += 32;
+                        safety += 64;
                         mobility += 1;
                         if let Some(Piece::WhiteFlat) = stack.from_top(1) {
                             pw += 30;
                         }
                     }
                     Piece::BlackCap => {
-                        safety += 32;
+                        safety += 64;
                         mobility += 1;
                         if let Some(Piece::BlackFlat) = stack.from_top(1) {
                             pw += 30;
@@ -162,10 +162,10 @@ impl Evaluator for Weights6 {
                                     mobility += 1;
                                 }
                                 Piece::WhiteWall | Piece::BlackWall => {
-                                    safety += 3;
+                                    safety += 4;
                                 }
                                 Piece::WhiteCap | Piece::BlackCap => {
-                                    safety += 6;
+                                    safety += 32;
                                     mobility += 1;
                                 }
                             }
@@ -178,7 +178,7 @@ impl Evaluator for Weights6 {
                                     safety -= 4;
                                 }
                                 Piece::WhiteCap | Piece::BlackCap => {
-                                    safety -= 8;
+                                    safety -= 32;
                                 }
                             }
                         }
