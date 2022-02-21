@@ -143,16 +143,18 @@ impl SmartMoveBuffer {
             //         cap_score -= 1;
             //     }
             // }
-            if board.caps_reserve(board.side_to_move()) > 0 {
+            if board.caps_reserve(board.side_to_move()) > 0 && board.ply() >= 4 {
                 self.moves.push(ScoredMove::new(
                     GameMove::from_placement(Piece::cap(side), idx),
                     cap_score,
                 ));
             }
-            self.moves.push(ScoredMove::new(
-                GameMove::from_placement(Piece::wall(side), idx),
-                wall_score,
-            ));
+            if board.ply() >= 4 {
+                self.moves.push(ScoredMove::new(
+                    GameMove::from_placement(Piece::wall(side), idx),
+                    wall_score,
+                ));
+            }
             self.moves.push(ScoredMove::new(
                 GameMove::from_placement(Piece::flat(side), idx),
                 flat_score,

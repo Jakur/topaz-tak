@@ -3,8 +3,7 @@ use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
-    generate_all_moves, generate_all_stack_moves, GameMove, HistoryMoves, KillerMoves, RevGameMove,
-    SmartMoveBuffer,
+    generate_all_stack_moves, GameMove, HistoryMoves, KillerMoves, RevGameMove, SmartMoveBuffer,
 };
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
@@ -104,7 +103,7 @@ impl SearchInfo {
         let mut backward = Vec::new();
         while let Some(m) = self.pv_move(position) {
             if !position.legal_move(m) {
-                dbg!("Illegal Move in Pv");
+                dbg!("Illegal Move in Pv {}", m.to_ptn::<E>());
                 break;
             }
             let rev = position.do_move(m);
@@ -234,7 +233,7 @@ where
             board,
             eval,
             info,
-            SearchData::new(-1_000_000, 1_000_000, depth, true, None, 0),
+            SearchData::new(-1_000_000, 1_000_000, depth, true, None, 0, false),
         );
         node_counts.push(info.nodes);
         let pv_moves = info.full_pv(board);
@@ -275,6 +274,7 @@ struct SearchData {
     null_move: bool,
     last_move: Option<RevGameMove>,
     extensions: u8,
+    must_capture: bool,
 }
 
 impl SearchData {
@@ -285,6 +285,7 @@ impl SearchData {
         null_move: bool,
         last_move: Option<RevGameMove>,
         extensions: u8,
+        must_capture: bool,
     ) -> Self {
         Self {
             alpha,
@@ -293,6 +294,7 @@ impl SearchData {
             null_move,
             last_move,
             extensions,
+            must_capture,
         }
     }
 }
@@ -309,6 +311,7 @@ where
         null_move,
         last_move,
         extensions,
+        must_capture,
     } = data;
     info.nodes += 1;
     const FREQ: usize = (1 << 16) - 1; // Per 65k nodes
@@ -333,6 +336,21 @@ where
     }
     // let mut road_move = None;
     if depth == 0 {
+        // let critical = board.bits().road_pieces(board.side_to_move());
+        // if critical & board.bits().empty() != T::Bits::ZERO {
+        //     return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
+        // }
+
+        // let opp_critical = board.bits().road_pieces(!board.side_to_move()) & board.bits().empty();
+        // // Opponent has two winning placements, we must move a stack
+        // if extensions == 0 && opp_critical.pop_count() >= 2 {
+        //     return alpha_beta(
+        //         board,
+        //         evaluator,
+        //         info,
+        //         SearchData::new(alpha, beta, 2, false, last_move, 1, true),
+        //     );
+        // }
         let ply_depth = info.ply_depth(board);
         return evaluator.evaluate(board, ply_depth);
         // let mut road_check = Vec::new();
@@ -384,6 +402,7 @@ where
                     false,
                     None,
                     extensions,
+                    false,
                 ),
             );
         board.rev_null_move();
@@ -393,9 +412,17 @@ where
         }
     }
     let mut moves = SmartMoveBuffer::new();
-    generate_all_stack_moves(board, &mut moves);
+    if board.ply() >= 4 {
+        generate_all_stack_moves(board, &mut moves);
+    }
+    // generate_all_stack_moves(board, &mut moves);
     moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
     moves.gen_score_place_moves(board);
+    // if !must_capture {
+    //     // Note maybe it is possible to construct a situation with 0 legal moves
+    //     // Though it should not arise from real gameplay
+    //     moves.gen_score_place_moves(board);
+    // }
     let mut best_move = None;
     let mut best_score = None;
     if let Some(pv_move) = info.pv_move(board) {
@@ -432,7 +459,7 @@ where
         // let side = board.side_to_move();
         // let flat_diff = board.flat_diff(side);
         let rev_move = board.do_move(m);
-        let mut next_extensions = extensions;
+        let next_extensions = extensions;
         // Extend if the pv is to make a "bad capture"
         // if let Some(pv_move) = pv_move {
         //     if m == pv_move && m.is_stack_move() {
@@ -453,7 +480,7 @@ where
         //     //     next_extensions = 0;
         //     // }
         // }
-        let mut next_depth = depth - 1;
+        let next_depth = depth - 1;
         // if next_extensions >= 3 {
         //     // dbg!(info.ply_depth(board));
         //     next_extensions = 0;
@@ -481,6 +508,7 @@ where
                     true,
                     Some(rev_move),
                     next_extensions,
+                    false,
                 ),
             );
         board.reverse_move(rev_move);
@@ -529,9 +557,18 @@ where
     alpha
 }
 
-fn quiesence_search() {
-    todo!();
-}
+// fn q_search<T, E>(board: &mut T, evaluator: &E, info: &mut SearchInfo, data: SearchData) -> i32
+// where
+//     T: TakBoard,
+//     E: Evaluator<Game = T>,
+// {
+//     let opp_critical = board.bits().road_pieces(!board.side_to_move()) & board.bits().empty();
+//     // Opponent has two winning placements, we must move a stack
+//     if opp_critical.pop_count() >= 2 {
+
+//     }
+//     0
+// }
 
 fn road_at_a_glance() {
     // I

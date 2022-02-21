@@ -127,7 +127,7 @@ fn saved_tps(name: &str) -> Option<&str> {
         "midgame1" => "2,2,2222221C,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 1 31", // Tinue avoidance
         "midgame2" => "x4,1,1/1,12S,2,2,1,1/1,1221S,1,21C,1,x/1,21112C,2,1,22221S,2/2,2,2,2S,1,2/x2,21,21,x,2 1 32",
         "midgame3" => "2,1,1,1,x2/x,2,2,1,x2/x,1,2,1C,1,1/x2,2,1112C,12S,2/x,2,2,1,x,1/2,2,x2,1,1 1 17",
-        "temp" => "12,x,21,x,1,1/2,21,x3,1/x,2,2,21,112,1/x,2,x,1C,x,2S/x,2,1,1,1112C,1/2,2,2,2,1,1 1 23",
+        "temp" => "x,2,2,12,12,x/1,1,112,1S,x2/x2,1,1,x2/2,x,1,1C,x2/2,112,1S,12112C,x2/1,1S,2,2,2,2 1 27",
         _ => {return None}
     };
     Some(s)
@@ -410,7 +410,7 @@ fn tei_loop(sender: Sender<TeiCommand>) {
 
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
     const MAX_DEPTH: usize = 8;
-    const KOMI: u8 = 6;
+    const KOMI: u8 = 0;
     let mut board = Board6::new().with_komi(KOMI);
     let mut info = SearchInfo::new(MAX_DEPTH, 5_000_000);
     let eval = Weights6::default();
@@ -420,7 +420,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
         let message = server_recv.recv()?;
         match message {
             TeiCommand::Go(_) => {
-                let use_time = 5; // Todo better time management
+                let use_time = 15; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, 0)
                     .take_table(&mut info)
                     .max_time(use_time);
@@ -451,6 +451,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 }
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
+    static OPP: &'static str = "TakticianBot";
     let (user, pass) = playtak_auth().expect("Could not read properly formatted .env file");
     std::thread::spawn(move || {
         let mut com = telnet::Telnet::connect(("playtak.com", 10_000), 2048).unwrap();
@@ -490,7 +491,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                     dbg!(line);
                                 }
                             } else if line.starts_with("Seek new") {
-                                if line.contains("SlateBot") {
+                                if line.contains(OPP) {
                                     goal =
                                         Some(line.split_whitespace().nth(2).unwrap().to_string());
                                     println!("Goal: {:?}", goal);
