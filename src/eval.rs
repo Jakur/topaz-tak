@@ -81,25 +81,6 @@ impl Evaluator for Evaluator6 {
 pub const WIN_SCORE: i32 = 10_000;
 pub const LOSE_SCORE: i32 = -1 * WIN_SCORE;
 
-pub struct Weights6 {
-    location: [i32; 36],
-    connectivity: i32,
-    tempo_offset: i32,
-    piece: [i32; 3],
-    stack_top: [i32; 6],
-}
-
-impl Weights6 {
-    pub fn add_noise(&mut self) {
-        let mut seed: [u8; 32] = [0; 32];
-        getrandom::getrandom(&mut seed).unwrap();
-        let mut rng = Xoshiro256PlusPlus::from_seed(seed);
-        for i in 0..self.location.len() {
-            self.location[i] += (rng.next_u32() % 4) as i32;
-        }
-    }
-}
-
 impl Evaluator for Weights6 {
     type Game = Board6;
     fn evaluate(&self, game: &Self::Game, depth: usize) -> i32 {
@@ -384,17 +365,6 @@ fn connected_components<B: Bitboard>(mut bits: B) -> BitOutcome<B> {
     BitOutcome::new(largest, count)
 }
 
-fn local_influence(top: Piece) -> i32 {
-    match top {
-        Piece::WhiteFlat => 1,
-        Piece::WhiteWall => 16,
-        Piece::WhiteCap => 512,
-        Piece::BlackFlat => -1,
-        Piece::BlackWall => -16,
-        Piece::BlackCap => -512,
-    }
-}
-
 fn captive_friendly(stack: &Stack, top: Piece) -> (i32, i32) {
     let mut captive = 0;
     let mut friendly = 0;
@@ -407,6 +377,14 @@ fn captive_friendly(stack: &Stack, top: Piece) -> (i32, i32) {
         }
     }
     (captive, friendly)
+}
+
+pub struct Weights6 {
+    location: [i32; 36],
+    connectivity: i32,
+    tempo_offset: i32,
+    piece: [i32; 3],
+    stack_top: [i32; 6],
 }
 
 impl Weights6 {
@@ -424,6 +402,31 @@ impl Weights6 {
             piece,
             stack_top,
         }
+    }
+    pub fn add_noise(&mut self) {
+        let mut seed: [u8; 32] = [0; 32];
+        getrandom::getrandom(&mut seed).unwrap();
+        let mut rng = Xoshiro256PlusPlus::from_seed(seed);
+        let offset = rng.next_u32() % 11 + 10;
+        let st_row = (rng.next_u32() % 6) as i32;
+        let st_col = (rng.next_u32() % 6) as i32;
+        // println!("{} @ ({}, {})", offset, st_col, st_row);
+        for row in 0..6 {
+            for col in 0..6 {
+                let idx = row * 6 + col;
+                let dist = (st_row - row).abs() + (st_col - col).abs();
+                let delta = offset as i32 - dist * dist;
+                if delta > 0 {
+                    self.location[idx as usize] += delta;
+                }
+            }
+        }
+        // for r in 0..6 {
+        //     println!("{:?}", &self.location[r * 6..(r + 1) * 6]);
+        // }
+        // for i in 0..self.location.len() {
+        //     self.location[i] += (rng.next_u32() % 4) as i32;
+        // }
     }
     fn piece_weight(&self, p: Piece) -> i32 {
         match p {

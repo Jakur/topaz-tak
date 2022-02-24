@@ -35,6 +35,7 @@ pub enum TeiCommand {
     Quit,
     Go(String),
     Position(String),
+    NewGame(usize),
 }
 
 pub fn execute_moves_check_valid(board: &mut Board6, ptn_slice: &[&str]) -> Result<Vec<GameMove>> {

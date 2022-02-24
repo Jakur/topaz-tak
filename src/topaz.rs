@@ -97,10 +97,10 @@ pub fn main() {
         .read_line(&mut buffer)
         .expect("Could not read line");
     if buffer.trim() == "tei" {
-        let (s, r) = unbounded();
-        tei_loop(s);
-        identify();
-        let _ = play_game_tei(r);
+        // let (s, r) = unbounded();
+        tei_loop();
+        // identify();
+        // let _ = play_game_tei(r);
     } else if buffer == "play white" {
         play_game_cmd(true)
     } else if buffer == "play black" {
@@ -127,7 +127,7 @@ fn saved_tps(name: &str) -> Option<&str> {
         "midgame1" => "2,2,2222221C,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 1 31", // Tinue avoidance
         "midgame2" => "x4,1,1/1,12S,2,2,1,1/1,1221S,1,21C,1,x/1,21112C,2,1,22221S,2/2,2,2,2S,1,2/x2,21,21,x,2 1 32",
         "midgame3" => "2,1,1,1,x2/x,2,2,1,x2/x,1,2,1C,1,1/x2,2,1112C,12S,2/x,2,2,1,x,1/2,2,x2,1,1 1 17",
-        "temp" => "x,2,2,12,12,x/1,1,112,1S,x2/x2,1,1,x2/2,x,1,1C,x2/2,112,1S,12112C,x2/1,1S,2,2,2,2 1 27",
+        "temp" => "x2,2,112,x,1/2,21S,2,12,x2/x2,2,112,x,2/x2,1112111112C,1,1,1/2,221C,x,1,1,x/2,x,1,2,x2 1 31",
         _ => {return None}
     };
     Some(s)
@@ -321,13 +321,11 @@ impl TimeLeft {
     }
 }
 
-fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
-    const MAX_DEPTH: usize = 8;
-    let mut board = Board6::new();
-    let mut info = SearchInfo::new(MAX_DEPTH, 1000000);
-    let eval = Weights6::default();
-    // eval.add_noise();
-    // let eval = Evaluator6 {};
+fn play_game_tei(receiver: Receiver<TeiCommand>, init: GameInitializer) -> Result<()> {
+    let mut board = init.get_board();
+    let mut info = SearchInfo::new(init.max_depth, init.hash_size);
+    let mut eval = Weights6::default();
+
     loop {
         let message = receiver.recv()?;
         match message {
@@ -339,9 +337,12 @@ fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
                 let est_plies = low_flats * 2;
                 let time_left = TimeLeft::new(&s);
                 let use_time = time_left.use_time(est_plies, board.side_to_move());
-                info = SearchInfo::new(MAX_DEPTH, 0)
+                info = SearchInfo::new(init.max_depth, 0)
                     .take_table(&mut info)
                     .max_time(use_time);
+                if board.ply() == 8 || board.ply() == 9 {
+                    eval = Weights6::default();
+                }
                 let res = search(&mut board, &eval, &mut info);
                 if let Some(outcome) = res {
                     println!("info {}", outcome);
@@ -357,11 +358,17 @@ fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
                 }
             }
             TeiCommand::Position(s) => {
-                board = Board6::new();
+                board = init.get_board();
                 for m in s.split_whitespace() {
                     if let Some(m) = GameMove::try_from_ptn(m, &board) {
                         board.do_move(m);
                     }
+                }
+            }
+            TeiCommand::NewGame(_size) => {
+                if init.add_noise {
+                    println!("Adding noise!");
+                    eval.add_noise();
                 }
             }
             TeiCommand::Quit => {
@@ -376,36 +383,83 @@ fn play_game_tei(receiver: Receiver<TeiCommand>) -> Result<()> {
 fn identify() {
     println!("id name Topaz");
     println!("id author Justin Kur");
+    println!("option name Komi type spin default 0 min 0 max 12");
     println!("teiok");
 }
 
-fn tei_loop(sender: Sender<TeiCommand>) {
-    thread::spawn(move || {
-        let mut buffer = String::new();
-        loop {
-            std::io::stdin()
-                .read_line(&mut buffer)
-                .expect("Could not read line");
-            let line = buffer.trim();
-            if line == "tei" {
-                identify();
-            } else if line == "isready" {
-                println!("readyok");
-            } else if line == "quit" {
-                sender.send(TeiCommand::Quit).unwrap();
-                break;
-            } else if line == "stop" {
-                sender.send(TeiCommand::Stop).unwrap();
-            } else if line.starts_with("position") {
-                sender.send(TeiCommand::Position(line.to_string())).unwrap();
-            } else if line.starts_with("go") {
-                sender.send(TeiCommand::Go(line.to_string())).unwrap();
-            } else {
-                println!("Unknown Tei Command: {}", buffer);
+fn tei_loop() {
+    let (sender, r) = unbounded();
+    let mut receiver = Some(r);
+    let mut buffer = String::new();
+    let mut init = GameInitializer::new(1_000_000, 8, 0, true);
+    identify();
+    loop {
+        std::io::stdin()
+            .read_line(&mut buffer)
+            .expect("Could not read line");
+        let line = buffer.trim();
+        if line == "tei" {
+            identify();
+        } else if line == "isready" {
+            println!("readyok");
+        } else if line == "quit" {
+            sender.send(TeiCommand::Quit).unwrap();
+            break;
+        } else if line == "stop" {
+            sender.send(TeiCommand::Stop).unwrap();
+        } else if line.starts_with("position") {
+            sender.send(TeiCommand::Position(line.to_string())).unwrap();
+        } else if line.starts_with("go") {
+            sender.send(TeiCommand::Go(line.to_string())).unwrap();
+        } else if line.starts_with("teinewgame") {
+            let size = line
+                .split_whitespace()
+                .nth(1)
+                .expect("Bad new game command?")
+                .parse()
+                .expect("Failed to parse size!");
+            if let Some(recv) = receiver.take() {
+                let init = init.clone();
+                thread::spawn(move || {
+                    play_game_tei(recv, init).unwrap();
+                });
             }
-            buffer.clear();
+            sender.send(TeiCommand::NewGame(size)).unwrap();
+        } else if line.starts_with("setoption") {
+            let mut iter = line.split_whitespace();
+            let name = iter.nth(2).unwrap();
+            let value = iter.nth(1).unwrap();
+            if name == "Komi" {
+                init.komi = value.parse().unwrap();
+                println!("Setting komi to {}", init.komi);
+            }
+        } else {
+            println!("Unknown Tei Command: {}", buffer);
         }
-    });
+        buffer.clear();
+    }
+}
+
+#[derive(Clone)]
+struct GameInitializer {
+    hash_size: usize,
+    max_depth: usize,
+    komi: u8,
+    add_noise: bool,
+}
+
+impl GameInitializer {
+    fn new(hash_size: usize, max_depth: usize, komi: u8, add_noise: bool) -> Self {
+        Self {
+            hash_size,
+            max_depth,
+            komi,
+            add_noise,
+        }
+    }
+    fn get_board(&self) -> Board6 {
+        Board6::new().with_komi(self.komi)
+    }
 }
 
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
