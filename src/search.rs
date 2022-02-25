@@ -3,7 +3,8 @@ use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
-    generate_all_stack_moves, GameMove, HistoryMoves, KillerMoves, RevGameMove, SmartMoveBuffer,
+    generate_aggressive_place_moves, generate_all_stack_moves, GameMove, HistoryMoves, KillerMoves,
+    MoveBuffer, RevGameMove, SmartMoveBuffer,
 };
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
@@ -21,14 +22,13 @@ pub struct SearchInfo {
     pv_table: LruCache<u64, HashEntry>, // Todo replace with LRU cache
     pub killer_moves: Vec<KillerMoves>,
     pub hist_moves: HistoryMoves,
-    fail_high_first: usize,
-    fail_high: usize,
     stopped: bool,
     input: Option<Receiver<TeiCommand>>,
     max_time: u64,
     start_time: Instant,
     start_ply: usize,
-    transposition_cutoffs: u64,
+    estimate_time: bool,
+    pub stats: SearchStats,
 }
 
 impl SearchInfo {
@@ -38,21 +38,20 @@ impl SearchInfo {
             pv_table: LruCache::new(pv_size),
             killer_moves: vec![KillerMoves::new(); max_depth + 1],
             hist_moves: HistoryMoves::new(6), // Todo init in search
-            fail_high_first: 0,
-            fail_high: 0,
-            transposition_cutoffs: 0,
             nodes: 0,
             stopped: false,
             input: None,
             max_time: 120, // Some large but not enormous default
             start_time: Instant::now(),
             start_ply: 0,
+            estimate_time: true,
+            stats: SearchStats::new(16),
         }
     }
     pub fn print_cuts(&self) {
         println!(
             "Fail High: {} Fail High First: {} Transposition Hits: {} ",
-            self.fail_high, self.fail_high_first, self.transposition_cutoffs
+            self.stats.fail_high, self.stats.fail_high_first, self.stats.transposition_cutoffs
         );
     }
     pub fn take_table(mut self, other: &mut Self) -> Self {
@@ -120,6 +119,43 @@ impl SearchInfo {
     }
 }
 
+#[derive(Debug)]
+pub struct SearchStats {
+    fail_high: u64,
+    fail_high_first: u64,
+    transposition_cutoffs: u64,
+    ordering_cut: Vec<usize>,
+    ordering_alpha: Vec<usize>,
+    bad_search: u64,
+}
+
+impl SearchStats {
+    pub fn new(ordering_size: usize) -> Self {
+        Self {
+            fail_high: 0,
+            fail_high_first: 0,
+            transposition_cutoffs: 0,
+            ordering_cut: vec![0; ordering_size],
+            ordering_alpha: vec![0; ordering_size],
+            bad_search: 0,
+        }
+    }
+    fn add_cut(&mut self, order: usize) {
+        if order >= self.ordering_cut.len() {
+            *self.ordering_cut.last_mut().unwrap() += 1;
+        } else {
+            self.ordering_cut[order] += 1;
+        }
+    }
+    fn add_alpha(&mut self, order: usize) {
+        if order >= self.ordering_alpha.len() {
+            *self.ordering_alpha.last_mut().unwrap() += 1;
+        } else {
+            self.ordering_alpha[order] += 1;
+        }
+    }
+}
+
 enum ScoreCutoff {
     Alpha(i32),
     Beta(i32),
@@ -160,7 +196,7 @@ where
         let nodes = search_info.nodes;
         let time = search_info.start_time.elapsed().as_millis();
         // let t_cuts = search_info.transposition_cutoffs;
-        let t_cuts = search_info.transposition_cutoffs;
+        let t_cuts = search_info.stats.transposition_cutoffs;
         Self {
             score,
             pv,
@@ -210,7 +246,7 @@ where
     info.set_start_ply(board.ply());
     for depth in 1..=info.max_depth {
         // Abort if we are unlikely to finish the search at this depth
-        if depth >= 6 {
+        if info.estimate_time && depth >= 6 {
             let mut est_branch = node_counts[depth - 2] as f64 / node_counts[depth - 3] as f64;
             if est_branch < 3.0 || est_branch > 100.0 {
                 // Transposition hits causing instability, just guess
@@ -233,7 +269,7 @@ where
             board,
             eval,
             info,
-            SearchData::new(-1_000_000, 1_000_000, depth, true, None, 0, false),
+            SearchData::new(-1_000_000, 1_000_000, depth, true, None, 0, TakHistory(0)),
         );
         node_counts.push(info.nodes);
         let pv_moves = info.full_pv(board);
@@ -267,6 +303,22 @@ where
     outcome
 }
 
+#[derive(Clone, Copy)]
+struct TakHistory(u32);
+
+impl TakHistory {
+    fn add(self, depth: usize) -> Self {
+        Self(self.0 | 1 << depth)
+    }
+    fn consecutive(self, depth: usize) -> bool {
+        if depth < 2 {
+            return false;
+        }
+        let mask = (1 << depth) | (1 << depth - 2);
+        (self.0 & mask) == mask
+    }
+}
+
 struct SearchData {
     alpha: i32,
     beta: i32,
@@ -274,7 +326,7 @@ struct SearchData {
     null_move: bool,
     last_move: Option<RevGameMove>,
     extensions: u8,
-    must_capture: bool,
+    tak_history: TakHistory,
 }
 
 impl SearchData {
@@ -285,7 +337,7 @@ impl SearchData {
         null_move: bool,
         last_move: Option<RevGameMove>,
         extensions: u8,
-        must_capture: bool,
+        tak_history: TakHistory,
     ) -> Self {
         Self {
             alpha,
@@ -294,7 +346,7 @@ impl SearchData {
             null_move,
             last_move,
             extensions,
-            must_capture,
+            tak_history,
         }
     }
 }
@@ -311,7 +363,7 @@ where
         null_move,
         last_move,
         extensions,
-        must_capture,
+        mut tak_history,
     } = data;
     info.nodes += 1;
     const FREQ: usize = (1 << 16) - 1; // Per 65k nodes
@@ -368,56 +420,97 @@ where
             match entry.score {
                 ScoreCutoff::Alpha(score) => {
                     if score <= alpha {
-                        info.transposition_cutoffs += 1;
+                        info.stats.transposition_cutoffs += 1;
                         return alpha;
                     }
                 }
                 ScoreCutoff::Beta(score) => {
                     if score >= beta {
-                        info.transposition_cutoffs += 1;
+                        info.stats.transposition_cutoffs += 1;
                         return beta;
                     }
                 }
                 ScoreCutoff::Exact(score) => {
-                    info.transposition_cutoffs += 1;
+                    info.stats.transposition_cutoffs += 1;
                     return score;
                 }
             }
         }
     }
-
     if null_move && depth >= 1 + NULL_REDUCTION {
         // && road_move.is_none() {
-        // Check if our position is so good that passing still gives opp a bad pos
+
         board.null_move();
-        let score = -1
+        // Check if we are in Tak
+        let one_depth_score = -1
             * alpha_beta(
                 board,
                 evaluator,
                 info,
                 SearchData::new(
-                    -beta,
-                    -beta + 1,
-                    depth - 1 - NULL_REDUCTION,
+                    -1_000_000,
+                    1_000_000,
+                    1,
                     false,
                     None,
                     extensions,
-                    false,
+                    tak_history,
                 ),
             );
-        board.rev_null_move();
-        // If we beta cutoff from the null move, then we can stop searching
-        if score >= beta {
-            return beta;
+        if one_depth_score <= LOSE_SCORE + 100 {
+            tak_history = tak_history.add(info.ply_depth(board));
+            board.rev_null_move();
+        } else {
+            // Check if our position is so good that passing still gives opp a bad pos
+            let score = -1
+                * alpha_beta(
+                    board,
+                    evaluator,
+                    info,
+                    SearchData::new(
+                        -beta,
+                        -beta + 1,
+                        depth - 1 - NULL_REDUCTION,
+                        false,
+                        None,
+                        extensions,
+                        tak_history,
+                    ),
+                );
+            board.rev_null_move();
+            // If we beta cutoff from the null move, then we can stop searching
+            if score >= beta {
+                return beta;
+            }
         }
     }
     let mut moves = SmartMoveBuffer::new();
-    if board.ply() >= 4 {
-        generate_all_stack_moves(board, &mut moves);
+    // Do a slower, more thorough move ordering near the root
+    if depth > 3 && board.ply() >= 6 {
+        moves.gen_score_place_moves(board);
+        let mut check_moves = Vec::new();
+        if let Some(mv) = board.can_make_road(&mut check_moves, None) {
+            let data = &[mv];
+            moves.add_move(mv);
+            moves.score_tak_threats(data);
+        } else {
+            check_moves.clear();
+            generate_aggressive_place_moves(board, &mut check_moves);
+            let tak_threats = board.get_tak_threats(&check_moves, None);
+            moves.score_tak_threats(&tak_threats);
+            if board.ply() >= 4 {
+                generate_all_stack_moves(board, &mut moves);
+                moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
+            }
+        }
+    } else {
+        if board.ply() >= 4 {
+            generate_all_stack_moves(board, &mut moves);
+            moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
+        }
+        moves.gen_score_place_moves(board);
     }
-    // generate_all_stack_moves(board, &mut moves);
-    moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
-    moves.gen_score_place_moves(board);
+    // moves.gen_score_place_moves(board);
     // if !must_capture {
     //     // Note maybe it is possible to construct a situation with 0 legal moves
     //     // Though it should not arise from real gameplay
@@ -428,24 +521,7 @@ where
     if let Some(pv_move) = info.pv_move(board) {
         moves.score_pv_move(pv_move);
     }
-    // moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
-    // Do a slower, more thorough move ordering at the root
-    // if info.ply_depth(board) == 0 {
-    //     // DEBUG
-    //     // moves.sort_by(|x, y| x.score().cmp(&y.score()));
-    //     // println!("MOVE SEARCH ORDER: ");
-    //     // for m in moves.iter() {
-    //     //     println!("{}", m.to_ptn::<crate::Board6>());
-    //     // }
-    //     let tak_threats = board.get_tak_threats(&moves, None);
-    //     if tak_threats.len() > 0 {
-    //         for m in moves.iter_mut() {
-    //             if tak_threats.contains(m) {
-    //                 m.add_score(50);
-    //             }
-    //         }
-    //     }
-    // }
+
     let old_alpha = alpha;
     for count in 0..moves.len() {
         let m = moves.get_best(depth, info);
@@ -459,7 +535,7 @@ where
         // let side = board.side_to_move();
         // let flat_diff = board.flat_diff(side);
         let rev_move = board.do_move(m);
-        let next_extensions = extensions;
+        let mut next_extensions = extensions;
         // Extend if the pv is to make a "bad capture"
         // if let Some(pv_move) = pv_move {
         //     if m == pv_move && m.is_stack_move() {
@@ -480,7 +556,13 @@ where
         //     //     next_extensions = 0;
         //     // }
         // }
-        let next_depth = depth - 1;
+        let next_depth = if tak_history.consecutive(info.ply_depth(board)) && extensions < 2 {
+            // dbg!("extending!");
+            next_extensions += 1;
+            depth - 1
+        } else {
+            depth - 1
+        };
         // if next_extensions >= 3 {
         //     // dbg!(info.ply_depth(board));
         //     next_extensions = 0;
@@ -496,6 +578,10 @@ where
         //     }
         //     _ => {}
         // }
+        //         value = PVS(-(alpha+1),-alpha)
+        // if(value > alpha && value < beta) {
+        //   value = PVS(-beta,-alpha);
+        // }
         let score = -1
             * alpha_beta(
                 board,
@@ -508,7 +594,7 @@ where
                     true,
                     Some(rev_move),
                     next_extensions,
-                    false,
+                    tak_history,
                 ),
             );
         board.reverse_move(rev_move);
@@ -517,10 +603,11 @@ where
         }
         if score > alpha {
             if score >= beta {
-                if count == 1 {
-                    info.fail_high_first += 1;
+                if count == 0 {
+                    info.stats.fail_high_first += 1;
                 }
-                info.fail_high += 1;
+                info.stats.fail_high += 1;
+                info.stats.add_cut(count);
                 if m.is_place_move() {
                     info.killer_moves[depth].add(m);
                 } else {
@@ -533,6 +620,7 @@ where
                 info.store_move(board, HashEntry::new(m, ScoreCutoff::Beta(beta), depth));
                 return beta;
             }
+            info.stats.add_alpha(count);
             alpha = score;
             best_move = Some(m);
             best_score = Some(score);
@@ -553,6 +641,9 @@ where
                 )
             }
         }
+    } else {
+        info.stats.bad_search += 1;
+        // Waste of time?
     }
     alpha
 }

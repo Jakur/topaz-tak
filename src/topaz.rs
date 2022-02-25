@@ -161,11 +161,12 @@ fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> 
         let eval = Weights6::default();
         let mut info = SearchInfo::new(*depth, 10_000_000);
         search(&mut board, &eval, &mut info);
-        for idx in 0..36 {
-            let dummy_move = GameMove::from_placement(Piece::WhiteFlat, idx);
-            let ptn_idx = dummy_move.to_ptn::<Board6>();
-            println!("{}: {:?}", ptn_idx, info.hist_moves.square_data(idx));
-        }
+        dbg!(info.stats);
+        // for idx in 0..36 {
+        //     let dummy_move = GameMove::from_placement(Piece::WhiteFlat, idx);
+        //     let ptn_idx = dummy_move.to_ptn::<Board6>();
+        //     println!("{}: {:?}", ptn_idx, info.hist_moves.square_data(idx));
+        // }
         vec.push(info.nodes);
         if let Some(old_nodes) = old.as_ref().and_then(|x| x.get(*name)) {
             let diff = (info.nodes as f64 - *old_nodes as f64) / *old_nodes as f64;
@@ -391,7 +392,7 @@ fn tei_loop() {
     let (sender, r) = unbounded();
     let mut receiver = Some(r);
     let mut buffer = String::new();
-    let mut init = GameInitializer::new(1_000_000, 8, 0, true);
+    let mut init = GameInitializer::new(5_000_000, 8, 0, false);
     identify();
     loop {
         std::io::stdin()
