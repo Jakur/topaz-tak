@@ -119,7 +119,7 @@ fn saved_tps(name: &str) -> Option<&str> {
         "alion5" => "2,x4,11/x5,221/x,2,2,2,x,221/2,1,12C,1,21C,2/2,x,2,x2,2/x,2,2,2,x,121 1 25",
         "empty6" => "x6/x6/x6/x6/x6/x6 1 1",
         "test5" => "2,2,x2,1/2,2,x,1,1/1221S,1,122221C,x,1/1,12,x,2C,2/1S,2,2,x2 1 20",
-        "test7" => concat!("2,2,21S,2,1,1,1/2,1,x,2,1,x,1/2,2,2,2,21112C,121S,x/x2,1112C,2,1,1112S,x/121,22211C,", 
+        "test7" => concat!("2,2,21S,2,1,1,1/2,1,x,2,1,x,1/2,2,2,2,21112C,121S,x/x2,1112C,2,1,1112S,x/121,22211C,",
             "1S,1,1,121,1221C/x,2,2,2,1,12,2/2,x3,1,122,x 2 50"),
         "topaz1" => "x2,1,x,1212,x/x,221,2212221211C,2S,x2/x,221,1,2,2,x/221,2,12C,1,2,2/22221S,221S,1,1,2,x/12,x,12,1,1,x 1 44",
         "opening1" => "x2,2,x3/x,2,2,x3/x,1,1,2,2,1/1C,2,12C,1,1,x/x,2,x2,1,1/2,x4,1 1 11", // Avoid falling way behind?
@@ -392,7 +392,7 @@ fn tei_loop() {
     let (sender, r) = unbounded();
     let mut receiver = Some(r);
     let mut buffer = String::new();
-    let mut init = GameInitializer::new(5_000_000, 8, 0, false);
+    let mut init = GameInitializer::new(2<<22, 80, 0, false);
     identify();
     loop {
         std::io::stdin()
