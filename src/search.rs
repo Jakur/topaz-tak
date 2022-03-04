@@ -201,7 +201,7 @@ impl HashTable {
         let slot: usize = (hash as usize % self.size) * 2;
         let depth_entry = self.two_way_table[slot];
         if entry.depth > depth_entry.depth
-            || entry.depth + entry.ply - TT_DISCARD_AGE > depth_entry.depth + depth_entry.ply
+            || entry.depth + entry.ply > depth_entry.depth + depth_entry.ply + TT_DISCARD_AGE
             {
                 self.two_way_table[slot] = entry;
             } else {
