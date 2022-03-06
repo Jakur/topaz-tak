@@ -165,7 +165,7 @@ impl SmartMoveBuffer {
     }
     pub fn score_pv_move(&mut self, pv_move: GameMove) {
         if let Some(found) = self.moves.iter_mut().find(|m| m.mv == pv_move) {
-            found.score += 100;
+            found.score += 1000;
         }
     }
     pub fn score_tak_threats(&mut self, tak_threats: &[GameMove]) {

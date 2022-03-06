@@ -16,10 +16,18 @@ pub mod proof;
 
 const NULL_REDUCTION: usize = 2;
 
+// late move reduction parameters
+const LMR_FULL_SEARCH_MOVES: usize = 8; // number of moves that don't get reduced
+const LMR_DEPTH_LIMIT: usize = 3;       // don't reduce low depth searches up to this depth
+
+// transposition table parameters
+const TT_DISCARD_AGE: u8 = 5; // adjusts which HashEntries are considered outdated
+
+
 pub struct SearchInfo {
     pub max_depth: usize,
     pub nodes: usize,
-    pv_table: LruCache<u64, HashEntry>, // Todo replace with LRU cache
+    pv_table: HashTable,
     pub killer_moves: Vec<KillerMoves>,
     pub hist_moves: HistoryMoves,
     stopped: bool,
@@ -35,7 +43,7 @@ impl SearchInfo {
     pub fn new(max_depth: usize, pv_size: usize) -> Self {
         Self {
             max_depth,
-            pv_table: LruCache::new(pv_size),
+            pv_table: HashTable::new(pv_size),
             killer_moves: vec![KillerMoves::new(); max_depth + 1],
             hist_moves: HistoryMoves::new(6), // Todo init in search
             nodes: 0,
@@ -156,24 +164,85 @@ impl SearchStats {
     }
 }
 
+#[derive(Clone, Copy)]
 enum ScoreCutoff {
     Alpha(i32),
     Beta(i32),
     Exact(i32),
 }
 
+// drop-in replacement for LruCache<u64, hashEntry>
+//
+// for every slot, there are two entries consecutive in memory.
+// first entry is the "depth table" entry, always replace on depth.
+// second entry is the "recency table" entry, always replace if not in depth table.
+// this way, depth table and recency table entries lie consecutively in memory and will
+// hopefully be fetched in a single cache line.
+//
+// possible improvements:
+// - Buckets:  instead of having 2 entries with different replacement schemes for every slot,
+//             have 4 entries with some fancy common replacement scheme.
+// - Bleeding: have put and get also "bleed over" to next slot if that is free,
+//             so that a better table utilization can be reached.
+struct HashTable {
+    size: usize,
+    two_way_table: Vec<HashEntry>,
+}
+
+impl HashTable {
+    fn new(size: usize) -> Self {
+        Self {
+            size: size / 2,
+            two_way_table: vec![HashEntry::new(1, GameMove::null_move(), ScoreCutoff::Alpha(0), 0, 0); size],
+        }
+    }
+
+    fn put(&mut self, hash: u64, entry: HashEntry) {
+        let slot: usize = (hash as usize % self.size) * 2;
+        let depth_entry = self.two_way_table[slot];
+        if entry.depth > depth_entry.depth
+            || entry.depth + entry.ply > depth_entry.depth + depth_entry.ply + TT_DISCARD_AGE
+            {
+                self.two_way_table[slot] = entry;
+            } else {
+                self.two_way_table[slot+1] = entry;
+            }
+    }
+
+    fn get(&self, hash: &u64) -> Option<&HashEntry> {
+        let slot: usize = (*hash as usize % self.size) * 2;
+        let hash_hi: u32 = (*hash >> 32) as u32;
+        if self.two_way_table[slot].hash_hi == hash_hi {
+            return Some(&self.two_way_table[slot]);
+        }
+        if self.two_way_table[slot+1].hash_hi == hash_hi {
+            return Some(&self.two_way_table[slot+1]);
+        }
+        None
+    }
+}
+
+// right now this totals to 22 bytes, extended to 24 bytes for 8 byte memory alignment.
+// it would be nice to get this into 16 bytes!
+// this would be not only mean less memory usage, but also be much faster because of
+// cache utilization. each slot (2 entries) would be loaded with a single cache line.
+#[derive(Clone, Copy)]
 struct HashEntry {
-    game_move: GameMove,
-    score: ScoreCutoff,
-    depth: usize,
+    hash_hi: u32,        // 4 bytes (~3 low bytes are encoded in the HashTable idx)
+    game_move: GameMove, // 8 bytes
+    score: ScoreCutoff,  // 8 bytes (can this be 2 bytes?)
+    depth: u8,           // 1 byte
+    ply: u8,             // 1 byte
 }
 
 impl HashEntry {
-    fn new(game_move: GameMove, score: ScoreCutoff, depth: usize) -> Self {
+    fn new(hash: u64, game_move: GameMove, score: ScoreCutoff, depth: usize, ply: usize) -> Self {
         Self {
+            hash_hi: (hash >> 32) as u32,
             game_move,
             score,
-            depth,
+            depth: depth as u8,
+            ply: ply as u8,
         }
     }
 }
@@ -416,7 +485,7 @@ where
     }
 
     if let Some(entry) = info.lookup_move(board) {
-        if entry.depth >= depth {
+        if entry.depth as usize >= depth {
             match entry.score {
                 ScoreCutoff::Alpha(score) => {
                     if score <= alpha {
@@ -582,21 +651,59 @@ where
         // if(value > alpha && value < beta) {
         //   value = PVS(-beta,-alpha);
         // }
-        let score = -1
-            * alpha_beta(
-                board,
-                evaluator,
-                info,
-                SearchData::new(
-                    -beta,
-                    -alpha,
-                    next_depth,
-                    true,
-                    Some(rev_move),
-                    next_extensions,
-                    tak_history,
-                ),
-            );
+
+        let mut score = 0;
+
+        // late move reduction
+        if depth > LMR_DEPTH_LIMIT  && count >= LMR_FULL_SEARCH_MOVES {
+            score = -1 * alpha_beta(
+                    board,
+                    evaluator,
+                    info,
+                    SearchData::new(
+                        -beta,
+                        -alpha,
+                        next_depth - 2,
+                        true,
+                        Some(rev_move),
+                        next_extensions,
+                        tak_history,
+                    ),
+                );
+            // re-search full depth moves and those that don't fail low
+            if score > alpha {
+                score = -1 * alpha_beta(
+                        board,
+                        evaluator,
+                        info,
+                        SearchData::new(
+                            -beta,
+                            -alpha,
+                            next_depth,
+                            true,
+                            Some(rev_move),
+                            next_extensions,
+                            tak_history,
+                        ),
+                    );
+            }
+        } else {
+            score = -1 * alpha_beta(
+                    board,
+                    evaluator,
+                    info,
+                    SearchData::new(
+                        -beta,
+                        -alpha,
+                        next_depth,
+                        true,
+                        Some(rev_move),
+                        next_extensions,
+                        tak_history,
+                    ),
+                );
+        }
+
         board.reverse_move(rev_move);
         if info.stopped {
             return 0;
@@ -617,7 +724,7 @@ where
                     //     info.hist_moves.update(depth, m);
                     // }
                 }
-                info.store_move(board, HashEntry::new(m, ScoreCutoff::Beta(beta), depth));
+                info.store_move(board, HashEntry::new(board.hash(), m, ScoreCutoff::Beta(beta), depth, board.ply()));
                 return beta;
             }
             info.stats.add_alpha(count);
@@ -632,12 +739,12 @@ where
             if alpha != old_alpha {
                 info.store_move(
                     board,
-                    HashEntry::new(best, ScoreCutoff::Exact(best_score), depth),
+                    HashEntry::new(board.hash(), best, ScoreCutoff::Exact(best_score), depth, board.ply()),
                 );
             } else {
                 info.store_move(
                     board,
-                    HashEntry::new(best, ScoreCutoff::Alpha(alpha), depth),
+                    HashEntry::new(board.hash(), best, ScoreCutoff::Alpha(alpha), depth, board.ply()),
                 )
             }
         }
