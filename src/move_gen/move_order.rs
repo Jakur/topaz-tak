@@ -175,14 +175,16 @@ impl SmartMoveBuffer {
             }
         }
     }
-    pub fn get_best(&mut self, depth: usize, info: &SearchInfo) -> GameMove {
+
+    pub fn get_best(&mut self, ply: usize, info: &SearchInfo) -> GameMove {
         if self.queries <= 16 {
+            self.queries += 1;
             let (idx, m) = self
                 .moves
                 .iter()
                 .enumerate()
                 .max_by_key(|(_i, &m)| {
-                    m.score + info.killer_moves[depth].score(m.mv) as i16
+                    m.score + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
                         - self.stack_hist_score(m.mv)
                 })
                 .unwrap();

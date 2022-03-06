@@ -4,6 +4,7 @@ pub use board_game_traits::{Color, GameResult, Position};
 pub use move_gen::{generate_all_moves, GameMove, RevGameMove};
 
 pub mod board;
+pub mod transposition_table;
 pub mod eval;
 mod move_gen;
 pub mod search;

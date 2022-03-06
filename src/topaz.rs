@@ -367,6 +367,7 @@ fn play_game_tei(receiver: Receiver<TeiCommand>, init: GameInitializer) -> Resul
                 }
             }
             TeiCommand::NewGame(_size) => {
+                info.clear_tt();
                 if init.add_noise {
                     println!("Adding noise!");
                     eval.add_noise();

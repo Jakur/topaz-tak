@@ -2,13 +2,13 @@ use super::{Color, GameResult};
 use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
+use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::move_gen::{
     generate_aggressive_place_moves, generate_all_stack_moves, GameMove, HistoryMoves, KillerMoves,
     MoveBuffer, RevGameMove, SmartMoveBuffer,
 };
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
-use lru::LruCache;
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -17,11 +17,11 @@ pub mod proof;
 const NULL_REDUCTION: usize = 2;
 
 // late move reduction parameters
-const LMR_FULL_SEARCH_MOVES: usize = 8; // number of moves that don't get reduced
+const LMR_FULL_SEARCH_MOVES: usize = 4; // number of moves that don't get reduced
 const LMR_DEPTH_LIMIT: usize = 3;       // don't reduce low depth searches up to this depth
 
-// transposition table parameters
-const TT_DISCARD_AGE: u8 = 5; // adjusts which HashEntries are considered outdated
+// move generation and ordering parameters
+const GEN_THOROUGH_ORDER_DEPTH: usize = 1; // where to stop bothering with accurate move ordering
 
 
 pub struct SearchInfo {
@@ -125,6 +125,9 @@ impl SearchInfo {
     fn ply_depth<E: TakBoard>(&self, position: &E) -> usize {
         position.ply() - self.start_ply
     }
+    pub fn clear_tt(&mut self) {
+        self.pv_table.clear();
+    }
 }
 
 #[derive(Debug)]
@@ -160,89 +163,6 @@ impl SearchStats {
             *self.ordering_alpha.last_mut().unwrap() += 1;
         } else {
             self.ordering_alpha[order] += 1;
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum ScoreCutoff {
-    Alpha(i32),
-    Beta(i32),
-    Exact(i32),
-}
-
-// drop-in replacement for LruCache<u64, hashEntry>
-//
-// for every slot, there are two entries consecutive in memory.
-// first entry is the "depth table" entry, always replace on depth.
-// second entry is the "recency table" entry, always replace if not in depth table.
-// this way, depth table and recency table entries lie consecutively in memory and will
-// hopefully be fetched in a single cache line.
-//
-// possible improvements:
-// - Buckets:  instead of having 2 entries with different replacement schemes for every slot,
-//             have 4 entries with some fancy common replacement scheme.
-// - Bleeding: have put and get also "bleed over" to next slot if that is free,
-//             so that a better table utilization can be reached.
-struct HashTable {
-    size: usize,
-    two_way_table: Vec<HashEntry>,
-}
-
-impl HashTable {
-    fn new(size: usize) -> Self {
-        Self {
-            size: size / 2,
-            two_way_table: vec![HashEntry::new(1, GameMove::null_move(), ScoreCutoff::Alpha(0), 0, 0); size],
-        }
-    }
-
-    fn put(&mut self, hash: u64, entry: HashEntry) {
-        let slot: usize = (hash as usize % self.size) * 2;
-        let depth_entry = self.two_way_table[slot];
-        if entry.depth > depth_entry.depth
-            || entry.depth + entry.ply > depth_entry.depth + depth_entry.ply + TT_DISCARD_AGE
-            {
-                self.two_way_table[slot] = entry;
-            } else {
-                self.two_way_table[slot+1] = entry;
-            }
-    }
-
-    fn get(&self, hash: &u64) -> Option<&HashEntry> {
-        let slot: usize = (*hash as usize % self.size) * 2;
-        let hash_hi: u32 = (*hash >> 32) as u32;
-        if self.two_way_table[slot].hash_hi == hash_hi {
-            return Some(&self.two_way_table[slot]);
-        }
-        if self.two_way_table[slot+1].hash_hi == hash_hi {
-            return Some(&self.two_way_table[slot+1]);
-        }
-        None
-    }
-}
-
-// right now this totals to 22 bytes, extended to 24 bytes for 8 byte memory alignment.
-// it would be nice to get this into 16 bytes!
-// this would be not only mean less memory usage, but also be much faster because of
-// cache utilization. each slot (2 entries) would be loaded with a single cache line.
-#[derive(Clone, Copy)]
-struct HashEntry {
-    hash_hi: u32,        // 4 bytes (~3 low bytes are encoded in the HashTable idx)
-    game_move: GameMove, // 8 bytes
-    score: ScoreCutoff,  // 8 bytes (can this be 2 bytes?)
-    depth: u8,           // 1 byte
-    ply: u8,             // 1 byte
-}
-
-impl HashEntry {
-    fn new(hash: u64, game_move: GameMove, score: ScoreCutoff, depth: usize, ply: usize) -> Self {
-        Self {
-            hash_hi: (hash >> 32) as u32,
-            game_move,
-            score,
-            depth: depth as u8,
-            ply: ply as u8,
         }
     }
 }
@@ -351,8 +271,8 @@ where
             break;
         }
         print!(
-            "Depth: {} Score: {} Nodes: {} PV: ",
-            depth, best_score, info.nodes
+            "info depth {} score cp {} nodes {} hashfull {} pv ",
+            depth, best_score, info.nodes, info.pv_table.occupancy()
         );
         outcome = Some(SearchOutcome::new(
             best_score,
@@ -484,9 +404,15 @@ where
         // road_check.clear();
     }
 
-    if let Some(entry) = info.lookup_move(board) {
-        if entry.depth as usize >= depth {
-            match entry.score {
+    let mut pv_entry: Option<HashEntry> = None;
+    let pv_entry_foreign = info.lookup_move(board);
+    if let Some(entry) = pv_entry_foreign {
+        pv_entry = Some(entry.clone());
+    }
+
+    if let Some(entry) = pv_entry {
+        if entry.depth() as usize >= depth {
+            match entry.score() {
                 ScoreCutoff::Alpha(score) => {
                     if score <= alpha {
                         info.stats.transposition_cutoffs += 1;
@@ -553,47 +479,20 @@ where
             }
         }
     }
-    let mut moves = SmartMoveBuffer::new();
-    // Do a slower, more thorough move ordering near the root
-    if depth > 3 && board.ply() >= 6 {
-        moves.gen_score_place_moves(board);
-        let mut check_moves = Vec::new();
-        if let Some(mv) = board.can_make_road(&mut check_moves, None) {
-            let data = &[mv];
-            moves.add_move(mv);
-            moves.score_tak_threats(data);
-        } else {
-            check_moves.clear();
-            generate_aggressive_place_moves(board, &mut check_moves);
-            let tak_threats = board.get_tak_threats(&check_moves, None);
-            moves.score_tak_threats(&tak_threats);
-            if board.ply() >= 4 {
-                generate_all_stack_moves(board, &mut moves);
-                moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
-            }
-        }
-    } else {
-        if board.ply() >= 4 {
-            generate_all_stack_moves(board, &mut moves);
-            moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
-        }
-        moves.gen_score_place_moves(board);
-    }
-    // moves.gen_score_place_moves(board);
-    // if !must_capture {
-    //     // Note maybe it is possible to construct a situation with 0 legal moves
-    //     // Though it should not arise from real gameplay
-    //     moves.gen_score_place_moves(board);
-    // }
+
     let mut best_move = None;
     let mut best_score = None;
-    if let Some(pv_move) = info.pv_move(board) {
-        moves.score_pv_move(pv_move);
+    let old_alpha = alpha;
+
+    let mut moves = gen_and_score(depth, board, last_move);
+
+    if let Some(entry) = pv_entry {
+        moves.score_pv_move(entry.game_move);
     }
 
-    let old_alpha = alpha;
     for count in 0..moves.len() {
-        let m = moves.get_best(depth, info);
+        let m = moves.get_best(board.ply(), info);
+
         // if depth == 6 {
         //     println!("{}", m.to_ptn::<T>());
         // }
@@ -652,7 +551,7 @@ where
         //   value = PVS(-beta,-alpha);
         // }
 
-        let mut score = 0;
+        let mut score;
 
         // late move reduction
         if depth > LMR_DEPTH_LIMIT  && count >= LMR_FULL_SEARCH_MOVES {
@@ -716,7 +615,7 @@ where
                 info.stats.fail_high += 1;
                 info.stats.add_cut(count);
                 if m.is_place_move() {
-                    info.killer_moves[depth].add(m);
+                    info.killer_moves[board.ply() % info.max_depth].add(m);
                 } else {
                     // const WINNING: i32 = crate::eval::WIN_SCORE - 100;
                     // // Cannot be null?
@@ -753,6 +652,50 @@ where
         // Waste of time?
     }
     alpha
+}
+
+fn gen_and_score<T>(depth: usize, board: &mut T, last_move: Option<RevGameMove>) -> SmartMoveBuffer
+where
+    T: TakBoard,
+{
+    let mut moves = SmartMoveBuffer::new();
+    // Do a slower, more thorough move ordering near the root
+    if depth > GEN_THOROUGH_ORDER_DEPTH && board.ply() >= 6 {
+        moves.gen_score_place_moves(board);
+        let mut check_moves = Vec::new();
+        // board.can_make_road internally generates all stack moves!!!
+        if let Some(mv) = board.can_make_road(&mut check_moves, None) {
+            let data = &[mv];
+            moves.add_move(mv);
+            moves.score_tak_threats(data);
+        } else {
+            if board.ply() >= 4 {
+                for m in check_moves.iter() {
+                    moves.add_move(m.clone());
+                }
+            }
+            check_moves.clear();
+            generate_aggressive_place_moves(board, &mut check_moves);
+            let tak_threats = board.get_tak_threats(&check_moves, None);
+            moves.score_tak_threats(&tak_threats);
+            if board.ply() >= 4 {
+                moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
+            }
+        }
+    } else {
+        if board.ply() >= 4 {
+            generate_all_stack_moves(board, &mut moves);
+            moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
+        }
+        moves.gen_score_place_moves(board);
+    }
+    // moves.gen_score_place_moves(board);
+    // if !must_capture {
+    //     // Note maybe it is possible to construct a situation with 0 legal moves
+    //     // Though it should not arise from real gameplay
+    //     moves.gen_score_place_moves(board);
+    // }
+    moves
 }
 
 // fn q_search<T, E>(board: &mut T, evaluator: &E, info: &mut SearchInfo, data: SearchData) -> i32
