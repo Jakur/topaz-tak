@@ -155,7 +155,6 @@ impl GameMove {
         if let Some(dir) = iter.next() {
             // Stack Move
             let pieces = pieces.unwrap_or(1) as u32;
-            dbg!(pieces);
             let dir = match dir {
                 '+' => 0,
                 '>' => 1,
@@ -183,15 +182,7 @@ impl GameMove {
             if counter == 0 {
                 mv = mv.set_next_tile(mv.number());
             }
-            dbg!(mv);
             Some(mv)
-            // Some(
-            //     Self(slide_bits << 12)
-            //         .set_number(pieces)
-            //         .set_direction(dir)
-            //         .chain_crush(crush)
-            //         .set_index(square as u64),
-            // )
         } else {
             // Placement
             let color = active_player;

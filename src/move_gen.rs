@@ -124,28 +124,8 @@ impl RevGameMove {
 /// The current data configuration is as follows:
 /// 0011 1111 Src Tile
 /// 1100 0000 Direction
-/// 000000000F00 Number Picked Up
-/// 00000000F000 Tile 1
-/// 0000000F0000 Tile 2
-/// 000000F00000 Tile 3
-/// 00000F000000 Tile 4
-/// 0000F0000000 Tile 5
-/// 000F00000000 Tile 6
-/// 00F000000000 Tile 7
-/// 010000000000 Wall Smash
-/// F00000000000 Placement Piece
-/// 64 - 52 = 12 bits for Score
-///
-///
-/// A struct tightly packing all information necessary to make a Tak move.
-///
-/// Bit shifts and bit masks are used to set / retrieve the necessary move info.
-/// There is enough space in this configuration to represent any move up to an 8x8 Tak Board.
-/// The current data configuration is as follows:
-/// 0011 1111 Src Tile
-/// 1100 0000 Direction
 /// 0000F00 Number Picked Up
-/// 00FF000 Spread
+/// 01FF000 Spread
 /// 0800000 Wall Smash
 /// F000000 Placement Piece
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -261,7 +241,7 @@ impl GameMove {
     }
     /// Legacy function for the old representation of sliding bits
     ///
-    /// Each tile in the slide gets 4 bits to represent how many pieces are left there
+    /// Each tile in the slide gets 4 bits to represent how many pieces are left there.
     #[deprecated]
     pub fn large_slide_bits(&self) -> u64 {
         let mut bits = 0;
@@ -361,20 +341,25 @@ struct QuantityMoveIterator {
     direction: u8,
     index: usize,
     board_size: usize,
-    dirty: bool,
 }
 
 impl QuantityMoveIterator {
     fn new(game_move: GameMove, board_size: usize) -> Self {
         let slide_bits = game_move.slide_bits();
+        let src_index = game_move.src_index();
         let direction = game_move.direction() as u8;
-        let index = game_move.src_index();
+        let index = match direction {
+            0 => src_index - board_size,
+            1 => src_index + 1,
+            2 => src_index + board_size,
+            3 => src_index - 1,
+            _ => unimplemented!(),
+        };
         Self {
             slide_bits,
             direction,
             index,
             board_size,
-            dirty: false,
         }
     }
 }
@@ -387,14 +372,14 @@ impl Iterator for QuantityMoveIterator {
         }
         let mut quantity = 1;
         // let quantity = self.slide_bits & 0xF;
-        self.slide_bits = self.slide_bits >> 1;
-        if self.slide_bits != 0 {
-            while 0 == self.slide_bits & 1 {
-                quantity += 1;
-                self.slide_bits = self.slide_bits >> 1;
-            }
+        // self.slide_bits = self.slide_bits >> 1;
+        while 0 == self.slide_bits & 1 {
+            quantity += 1;
+            self.slide_bits = self.slide_bits >> 1;
         }
-        if !self.dirty {
+        self.slide_bits = self.slide_bits >> 1;
+        let index = self.index;
+        if self.slide_bits != 0 {
             match self.direction {
                 0 => self.index -= self.board_size,
                 1 => self.index += 1,
@@ -403,11 +388,7 @@ impl Iterator for QuantityMoveIterator {
                 _ => unimplemented!(),
             }
         }
-        self.dirty = true;
-        let step = QuantityStep {
-            index: self.index,
-            quantity,
-        };
+        let step = QuantityStep { index, quantity };
         Some(step)
     }
 }
@@ -430,13 +411,8 @@ impl RevStackMoveIterator {
     fn new(rev_move: RevGameMove, board_size: usize) -> Self {
         let game_move = rev_move.game_move;
         let slide = game_move.slide_bits();
-        if slide == 0 {
-            dbg!(game_move.to_ptn::<crate::Board6>());
-        }
         debug_assert!(slide != 0);
         let zeros = slide.leading_zeros();
-        // let offset = zeros % 4;
-        // let shift = zeros - offset;
         let slide_bits = slide << zeros;
         let direction = game_move.direction() as u8;
         let index = rev_move.dest_sq;
@@ -667,8 +643,6 @@ mod test {
     use super::*;
     #[test]
     pub fn single_direction_move() {
-        let m = GameMove(0);
-        // assert_eq!(GameMove(0xF000), m.set_tile1(0xF));
         let mut moves = Vec::new();
         recursive_stack_moves(&mut moves, GameMove(0), 1, 3, 3);
         assert_eq!(moves.len(), 4);
@@ -787,13 +761,18 @@ mod test {
     }
 
     #[test]
-    pub fn small_move_test() {
-        let mut m = GameMove(0);
-        // m = m.set_next_tile(4);
-        m = m.set_next_tile(4);
-        m = m.set_next_tile(1);
-        m = m.set_next_tile(2);
-        // m = m.set_next_tile(1);
-        dbg!(m);
+    pub fn quantity_move_test() {
+        let ptn = "7a5>1231";
+        let m = GameMove::try_from_ptn_m(ptn, 7, Color::White).unwrap();
+        let mut iter = m.quantity_iter(7);
+        let st = m.src_index();
+        let mut counter = 1;
+        let vals = &[0, 1, 2, 3, 1];
+        while let Some(qstep) = iter.next() {
+            assert_eq!(qstep.index, st + counter); // True because > direction
+            assert_eq!(qstep.quantity, vals[counter]);
+            counter += 1;
+        }
+        assert_eq!(counter, 5);
     }
 }
