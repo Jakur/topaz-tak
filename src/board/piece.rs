@@ -11,7 +11,7 @@ pub enum Piece {
 }
 
 impl Piece {
-    pub fn from_index(index: u64) -> Self {
+    pub fn from_index(index: u32) -> Self {
         match index {
             1 => Piece::WhiteFlat,
             2 => Piece::WhiteWall,

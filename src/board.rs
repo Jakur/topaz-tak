@@ -280,12 +280,13 @@ macro_rules! board_impl {
                 road_pieces: <Self as TakBoard>::Bits,
                 stack_move: GameMove,
             ) -> bool {
+                // todo!();
                 let color = self.active_player();
                 let src_sq = stack_move.src_index();
                 let dir = stack_move.direction();
                 let stack = &self.board[src_sq];
-                let mut pickup = stack_move.number();
-                let mut slide_bits = stack_move.slide_bits();
+                let mut pickup = stack_move.number() as u64;
+                let mut slide_bits = stack_move.large_slide_bits();
                 let mut update = <Self as TakBoard>::Bits::ZERO;
                 let mut index = src_sq;
                 let mut mask = <Self as TakBoard>::Bits::index_to_bit(index);

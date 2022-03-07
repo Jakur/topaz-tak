@@ -20,7 +20,9 @@ impl GameMove {
             3 => "<",
             _ => unimplemented!(),
         };
-        let spread_bits = (self.0 & 0xFFFFFFF000) >> 12;
+        let spread_bits = self.large_slide_bits();
+        // let spread_bits = 0;
+        // todo!();
         let spread = format!("{:X}", spread_bits);
         // Our bitwise order is reversed, so we need to reverse this String
         let spread: String = spread.chars().rev().collect();
@@ -73,7 +75,7 @@ impl GameMove {
         };
         let origin = parse_playtak_sq(split.next()?, size)?;
         if stack_move {
-            let mut game_move = GameMove(0).set_index(origin as u64);
+            let mut game_move = GameMove(0).set_index(origin as u32);
             let dest = parse_playtak_sq(split.next()?, size)?;
             let dir = if origin > dest {
                 // North or West
@@ -97,7 +99,7 @@ impl GameMove {
                     1..=7 => {
                         let pieces = num.parse().ok()?;
                         total_pieces += pieces;
-                        game_move.set_tile(tile_counter, pieces)
+                        game_move.set_next_tile(pieces)
                     }
                     _ => return None,
                 };
@@ -152,7 +154,8 @@ impl GameMove {
 
         if let Some(dir) = iter.next() {
             // Stack Move
-            let pieces = pieces.unwrap_or(1) as u64;
+            let pieces = pieces.unwrap_or(1) as u32;
+            dbg!(pieces);
             let dir = match dir {
                 '+' => 0,
                 '>' => 1,
@@ -161,28 +164,34 @@ impl GameMove {
                 _ => return None,
             };
             let crush = s.ends_with("*");
-            let mut slide_bits = 0u64;
-
+            let mut mv = Self(0)
+                .set_number(pieces)
+                .set_direction(dir)
+                .chain_crush(crush)
+                .set_index(square as u32);
             let mut counter = 0;
             while let Some(ch) = iter.next() {
                 if let Some(num) = ch.to_digit(16) {
-                    let value = (num as u64) << (4 * counter);
-                    slide_bits |= value;
+                    mv = mv.set_next_tile(num);
+                    // let value = (num as u64) << (4 * counter);
+                    // slide_bits |= value;
                     counter += 1;
                 } else {
                     break;
                 }
             }
-            if slide_bits == 0 {
-                slide_bits = pieces;
+            if counter == 0 {
+                mv = mv.set_next_tile(mv.number());
             }
-            Some(
-                Self(slide_bits << 12)
-                    .set_number(pieces)
-                    .set_direction(dir)
-                    .chain_crush(crush)
-                    .set_index(square as u64),
-            )
+            dbg!(mv);
+            Some(mv)
+            // Some(
+            //     Self(slide_bits << 12)
+            //         .set_number(pieces)
+            //         .set_direction(dir)
+            //         .chain_crush(crush)
+            //         .set_index(square as u64),
+            // )
         } else {
             // Placement
             let color = active_player;
