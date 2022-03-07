@@ -392,7 +392,7 @@ fn tei_loop() {
     let (sender, r) = unbounded();
     let mut receiver = Some(r);
     let mut buffer = String::new();
-    let mut init = GameInitializer::new(2<<22, 80, 0, false);
+    let mut init = GameInitializer::new(2 << 22, 80, 0, false);
     identify();
     loop {
         std::io::stdin()

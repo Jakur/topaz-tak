@@ -208,7 +208,7 @@ impl GameMove {
         StackMoveIterator::new(self, board_size)
     }
     /// Returns an iterator that returns the quantity and board index for each stack step
-    fn quantity_iter(self, board_size: usize) -> QuantityMoveIterator {
+    pub fn quantity_iter(self, board_size: usize) -> QuantityMoveIterator {
         QuantityMoveIterator::new(self, board_size)
     }
     #[must_use = "Forgot to assign next move step!"]
@@ -336,7 +336,7 @@ impl Iterator for StackMoveIterator {
     }
 }
 
-struct QuantityMoveIterator {
+pub struct QuantityMoveIterator {
     slide_bits: u32,
     direction: u8,
     index: usize,
@@ -370,16 +370,15 @@ impl Iterator for QuantityMoveIterator {
         if self.slide_bits == 0 {
             return None;
         }
-        let mut quantity = 1;
-        // let quantity = self.slide_bits & 0xF;
-        // self.slide_bits = self.slide_bits >> 1;
+        let mut quantity = 1; // Account for the final 1 bit
         while 0 == self.slide_bits & 1 {
             quantity += 1;
             self.slide_bits = self.slide_bits >> 1;
         }
-        self.slide_bits = self.slide_bits >> 1;
+        self.slide_bits = self.slide_bits >> 1; // Remove the trailing 1
         let index = self.index;
         if self.slide_bits != 0 {
+            // Avoid underflow
             match self.direction {
                 0 => self.index -= self.board_size,
                 1 => self.index += 1,
@@ -393,9 +392,9 @@ impl Iterator for QuantityMoveIterator {
     }
 }
 
-struct QuantityStep {
-    index: usize,
-    quantity: u32,
+pub struct QuantityStep {
+    pub index: usize,
+    pub quantity: u32,
 }
 
 pub struct RevStackMoveIterator {
@@ -774,5 +773,17 @@ mod test {
             counter += 1;
         }
         assert_eq!(counter, 5);
+    }
+
+    #[test]
+    pub fn future_8s_compatibility() {
+        let ptn = "8a1+1111112";
+        let ptn2 = "8a1+2111111";
+        let mv = GameMove::try_from_ptn_m(ptn, 8, Color::White).unwrap();
+        let mv2 = GameMove::try_from_ptn_m(ptn2, 8, Color::White).unwrap();
+        assert!(mv.slide_bits() < 256);
+        assert!(mv2.slide_bits() < 256);
+        // dbg!(format!("{:#X}", mv.slide_bits()));
+        // dbg!(format!("{:#X}", mv2.slide_bits()));
     }
 }

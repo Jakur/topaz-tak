@@ -280,34 +280,22 @@ macro_rules! board_impl {
                 road_pieces: <Self as TakBoard>::Bits,
                 stack_move: GameMove,
             ) -> bool {
-                // todo!();
                 let color = self.active_player();
                 let src_sq = stack_move.src_index();
-                let dir = stack_move.direction();
                 let stack = &self.board[src_sq];
-                let mut pickup = stack_move.number() as u64;
-                let mut slide_bits = stack_move.large_slide_bits();
+                let mut pickup = stack_move.number() as u32;
                 let mut update = <Self as TakBoard>::Bits::ZERO;
-                let mut index = src_sq;
-                let mut mask = <Self as TakBoard>::Bits::index_to_bit(index);
+                let mut mask = <Self as TakBoard>::Bits::index_to_bit(src_sq);
                 let val = stack
                     .from_top(pickup as usize)
                     .map(|p| p.road_piece(color))
                     .unwrap_or(false); // Could have taken all pieces
                 if val {
-                    update |= <Self as TakBoard>::Bits::index_to_bit(index);
+                    update |= <Self as TakBoard>::Bits::index_to_bit(src_sq);
                 }
-                while slide_bits != 0 {
-                    match dir {
-                        0 => index -= Self::SIZE,
-                        1 => index += 1,
-                        2 => index += Self::SIZE,
-                        3 => index -= 1,
-                        _ => unimplemented!(),
-                    }
-                    pickup -= slide_bits & 0xF;
-                    slide_bits = slide_bits >> 4;
-                    let bb = <Self as TakBoard>::Bits::index_to_bit(index);
+                for qstep in stack_move.quantity_iter(Self::SIZE) {
+                    pickup -= qstep.quantity;
+                    let bb = <Self as TakBoard>::Bits::index_to_bit(qstep.index);
                     mask |= bb;
                     let val = stack
                         .from_top(pickup as usize)
