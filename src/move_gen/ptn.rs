@@ -20,7 +20,8 @@ impl GameMove {
             3 => "<",
             _ => unimplemented!(),
         };
-        let spread_bits = self.large_slide_bits();
+        let spread_bits = self.sparse_slide_bits();
+        debug_assert_eq!(spread_bits, crate::move_gen::long_slide(self));
         // let spread_bits = 0;
         // todo!();
         let spread = format!("{:X}", spread_bits);
