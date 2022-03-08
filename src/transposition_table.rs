@@ -1,9 +1,10 @@
 use crate::GameMove;
 
 // transposition table parameters
-const TT_BUCKET_SIZE: usize = 2; // how many HashEntries for each HashTable slot
+const TT_BUCKET_SIZE: usize = 5; // how many HashEntries for each HashTable slot
                                  // TT_BUCKET_SIZE *
-const TT_DISCARD_AGE: u8 = 5;  // adjusts which HashEntries are considered outdated
+const TT_DISCARD_AGE: u8 = 5;    // adjusts which HashEntries are considered outdated
+const TT_DEPTH_SHIFT: u8 = 2;    // how depth is weighted compared to ply
 
 // transposition table
 // implemented as hashtable with buckets
@@ -20,8 +21,6 @@ pub struct HashTable {
 
 impl HashTable {
     pub fn new(size: usize) -> Self {
-        println!("size of entry : {}", std::mem::size_of::<HashEntry>());
-        println!("size of bucket: {}", std::mem::size_of::<HashBucket>());
         Self {
             size: size / TT_BUCKET_SIZE,
             buckets: vec![HashBucket::new(); size/TT_BUCKET_SIZE],
@@ -31,7 +30,8 @@ impl HashTable {
     pub fn clear(&mut self) {
         for i in 0..self.size {
             for e_i in 0..TT_BUCKET_SIZE {
-                self.buckets[i].entries[e_i] = HashEntry::empty();
+                self.buckets[i].entries[e_i].ply = 0;
+                self.buckets[i].entries[e_i].depth_flags &= DEPTH_MASK;
             }
         }
     }
@@ -46,12 +46,21 @@ impl HashTable {
                 }
             }
         }
-        hits = hits / 3;
+        hits = hits / TT_BUCKET_SIZE;
         hits
     }
 
-    // put for 2 way hash table (bucket size == 2)
+    #[inline]
     pub fn put(&mut self, hash: u64, entry: HashEntry) {
+        if TT_BUCKET_SIZE == 2 {
+            self.put_2way(hash, entry);
+        } else {
+            self.put_any(hash, entry);
+        }
+    }
+
+    // put for 2 way hash table (bucket size == 2)
+    fn put_2way(&mut self, hash: u64, entry: HashEntry) {
         let bucket = &mut self.buckets[hash as usize % self.size];
         let depth_entry = bucket.entries[0];
         if entry.depth() > depth_entry.depth() ||
@@ -64,22 +73,22 @@ impl HashTable {
     }
 
     // put for arbitrary bucket size
-    pub fn put_any(&mut self, hash: u64, entry: HashEntry) {
+    fn put_any(&mut self, hash: u64, entry: HashEntry) {
         let slot: usize = hash as usize % self.size;
         let bucket = &mut self.buckets[slot];
 
-        let mut worst_idx = 1;
+        let mut worst_idx = 0;
         let mut worst_score = 10000;
         for i in 0..TT_BUCKET_SIZE {
             let cur_entry = bucket.entries[i];
-            // replace same position if possible
+            // we never want 2 entries of same position!!!
             if cur_entry.check_hash(hash) {
-                if entry.depth() > cur_entry.depth() {
+                if entry.depth() >= cur_entry.depth() {
                     bucket.entries[i] = entry;
                 }
                 return;
             }
-            let score = (cur_entry.depth() as usize) + (cur_entry.ply as usize);
+            let score = ((cur_entry.depth() as usize) << TT_DEPTH_SHIFT) + (cur_entry.ply as usize);
             if score < worst_score {
                 worst_score = score;
                 worst_idx = i;
@@ -88,11 +97,11 @@ impl HashTable {
         bucket.entries[worst_idx] = entry;
     }
 
+    #[inline]
     pub fn get(&self, hash: &u64) -> Option<&HashEntry> {
         let slot: usize = *hash as usize % self.size;
-        let hash_hi: u16 = (*hash >> 48) as u16;
         for i in 0..TT_BUCKET_SIZE {
-            if self.buckets[slot].entries[i].hash_hi == hash_hi && self.buckets[slot].entries[i].game_move != GameMove::null_move() {
+            if self.buckets[slot].entries[i].check_hash(*hash) {
                 return Some(&self.buckets[slot].entries[i]);
             }
         }
@@ -122,7 +131,7 @@ impl HashBucket {
 pub struct HashEntry {
     hash_hi: u16,            // 2 bytes (~3 low bytes are encoded in the HashTable idx)
     pub game_move: GameMove, // 8 bytes
-    score_val: i32,          // 2 bytes
+    score_val: i32,          // 4 bytes
     depth_flags: u8,         // 1 byte
     ply: u8,                 // 1 byte
 }
@@ -176,6 +185,7 @@ impl HashEntry {
         return ScoreCutoff::Exact(self.score_val);
     }
 
+    #[inline]
     pub fn check_hash(&self, hash: u64) -> bool {
         self.hash_hi == (hash >> 48) as u16
     }

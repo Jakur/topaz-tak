@@ -14,15 +14,36 @@ use std::time::Instant;
 
 pub mod proof;
 
+const NULL_REDUCTION_ENABLED: bool = true;
+const NULL_REDUCE_PV: bool = true;      // probably shouldn't
 const NULL_REDUCTION: usize = 2;
 
 // late move reduction parameters
+const LMR_ENABLED: bool = true;
 const LMR_FULL_SEARCH_MOVES: usize = 4; // number of moves that don't get reduced
-const LMR_DEPTH_LIMIT: usize = 3;       // don't reduce low depth searches up to this depth
+const LMR_DEPTH_LIMIT: usize = 2;       // don't reduce low depth searches up to this depth
+const LMR_REDUCE_PV: bool = true;       // probably shouldn't
+const LMR_REDUCE_ROOT: bool = true;     // probably shouldn't
+
+const PV_SEARCH_ENABLED: bool = true;  // no speedup, worse playing strength
+const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF TRUE
+
+// aspiration window parameters
+// !!!CAREFUL, CAN FAIL CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
+const ASPIRATION_ENABLED: bool = false; // TERRIBLE performance!
+const ASPIRATION_WINDOW: i32 = 55;
+const ASPIRATION_SCALAR: i32 = 2;
 
 // move generation and ordering parameters
 const GEN_THOROUGH_ORDER_DEPTH: usize = 1; // where to stop bothering with accurate move ordering
 
+// internal iterative deepening parameters TODO not tuned yet
+// doesn't have much cost attached to it, so why not
+const IID_ENABLED: bool = true;
+const IID_NON_PV: bool = true;
+const IID_MIN_DEPTH: usize = 5;
+const IID_REDUCTION: usize = 3;
+const IID_DIVISION: usize = 2;
 
 pub struct SearchInfo {
     pub max_depth: usize,
@@ -233,6 +254,8 @@ where
     let mut outcome = None;
     let mut node_counts = vec![1];
     info.set_start_ply(board.ply());
+    let mut alpha = -1_000_000;
+    let mut beta = 1_000_000;
     for depth in 1..=info.max_depth {
         // Abort if we are unlikely to finish the search at this depth
         if info.estimate_time && depth >= 6 {
@@ -254,12 +277,32 @@ where
                 break;
             }
         }
-        let best_score = alpha_beta(
+        let mut best_score = alpha_beta(
             board,
             eval,
             info,
-            SearchData::new(-1_000_000, 1_000_000, depth, true, None, 0, TakHistory(0)),
+            SearchData::new(alpha, beta, depth, true, None, 0, TakHistory(0), true, true),
         );
+        if ASPIRATION_ENABLED {
+            let mut window_change = ASPIRATION_WINDOW;
+            while (best_score <= alpha) || (best_score >= beta) {
+                window_change *= ASPIRATION_SCALAR;
+                if best_score <= alpha {
+                    alpha -= window_change;
+                }
+                if best_score >= beta {
+                    beta += window_change;
+                }
+                best_score = alpha_beta(
+                    board,
+                    eval,
+                    info,
+                    SearchData::new(alpha, beta, depth, true, None, 0, TakHistory(0), true, true),
+                )
+            }
+            alpha = best_score - ASPIRATION_WINDOW;
+            beta = best_score + ASPIRATION_WINDOW;
+        }
         node_counts.push(info.nodes);
         let pv_moves = info.full_pv(board);
         // If we had an incomplete depth search, use the previous depth's vals
@@ -316,6 +359,8 @@ struct SearchData {
     last_move: Option<RevGameMove>,
     extensions: u8,
     tak_history: TakHistory,
+    is_pv: bool,
+    is_root: bool,
 }
 
 impl SearchData {
@@ -327,6 +372,8 @@ impl SearchData {
         last_move: Option<RevGameMove>,
         extensions: u8,
         tak_history: TakHistory,
+        is_pv: bool,
+        is_root: bool,
     ) -> Self {
         Self {
             alpha,
@@ -336,6 +383,8 @@ impl SearchData {
             last_move,
             extensions,
             tak_history,
+            is_pv,
+            is_root,
         }
     }
 }
@@ -353,6 +402,8 @@ where
         last_move,
         extensions,
         mut tak_history,
+        is_pv,
+        is_root,
     } = data;
     info.nodes += 1;
     const FREQ: usize = (1 << 16) - 1; // Per 65k nodes
@@ -406,8 +457,9 @@ where
 
     let mut pv_entry: Option<HashEntry> = None;
     let pv_entry_foreign = info.lookup_move(board);
+
     if let Some(entry) = pv_entry_foreign {
-        pv_entry = Some(entry.clone());
+        pv_entry = Some(entry.clone()); // save for move lookup
     }
 
     if let Some(entry) = pv_entry {
@@ -432,7 +484,9 @@ where
             }
         }
     }
-    if null_move && depth >= 1 + NULL_REDUCTION {
+    if NULL_REDUCTION_ENABLED
+    && (!data.is_pv || NULL_REDUCE_PV)
+    && null_move && depth >= 1 + NULL_REDUCTION {
         // && road_move.is_none() {
 
         board.null_move();
@@ -450,6 +504,8 @@ where
                     None,
                     extensions,
                     tak_history,
+                    false,
+                    false,
                 ),
             );
         if one_depth_score <= LOSE_SCORE + 100 {
@@ -470,6 +526,8 @@ where
                         None,
                         extensions,
                         tak_history,
+                        false,
+                        false,
                     ),
                 );
             board.rev_null_move();
@@ -479,6 +537,35 @@ where
             }
         }
     }
+
+   // internal iterative deepening
+   if IID_ENABLED
+   && depth >= IID_MIN_DEPTH
+   && (is_pv || IID_NON_PV)
+   && !pv_entry.is_some() {
+       let reduction = std::cmp::max(IID_REDUCTION, depth / IID_DIVISION);
+       alpha_beta(
+           board,
+           evaluator,
+           info,
+           SearchData::new(
+               alpha,
+               beta,
+               data.depth-reduction,
+               false,
+               data.last_move,
+               extensions,
+               tak_history,
+               data.is_pv,
+               false,
+           ),
+       );
+       let pv_entry_foreign_2 = info.lookup_move(board);
+       // this should always be true, because we literally just created an entry!!!
+       if let Some(entry) = pv_entry_foreign_2 {
+           pv_entry = Some(entry.clone());
+       }
+   }
 
     let mut best_move = None;
     let mut best_score = None;
@@ -553,41 +640,89 @@ where
 
         let mut score;
 
-        // late move reduction
-        if depth > LMR_DEPTH_LIMIT  && count >= LMR_FULL_SEARCH_MOVES {
+        // search first move fully!
+        if count == 0 {
             score = -1 * alpha_beta(
+                board,
+                evaluator,
+                info,
+                SearchData::new(
+                    -beta,
+                    -alpha,
+                    next_depth,
+                    true,
+                    Some(rev_move),
+                    next_extensions,
+                    tak_history,
+                    data.is_pv,
+                    false,
+                ),
+            );
+        } else {
+            let mut needs_re_search_on_alpha = false;
+            let mut needs_re_search_on_alpha_beta = false;
+            let mut next_alpha = -beta;
+            let mut reduced_depth = next_depth;
+
+            // late move reduction
+            if LMR_ENABLED
+            && depth > LMR_DEPTH_LIMIT
+            && count >= LMR_FULL_SEARCH_MOVES
+            && (LMR_REDUCE_PV || !is_pv)
+            && (LMR_REDUCE_ROOT || !is_root)
+            {
+                reduced_depth -= 2;
+                needs_re_search_on_alpha = true;
+            }
+            if PV_SEARCH_ENABLED && depth > 1 && !data.is_root {
+                next_alpha = -(alpha+1);
+                needs_re_search_on_alpha_beta = true;
+            }
+
+            score = -1 * alpha_beta(
+                board,
+                evaluator,
+                info,
+                SearchData::new(
+                    next_alpha,
+                    -alpha,
+                    reduced_depth,
+                    true,
+                    Some(rev_move),
+                    next_extensions,
+                    tak_history,
+                    false,
+                    false,
+                ),
+            );
+
+            // re-search full depth moves and those that don't fail low
+            if needs_re_search_on_alpha
+            && score > alpha {
+                score = -1 * alpha_beta(
                     board,
                     evaluator,
                     info,
                     SearchData::new(
-                        -beta,
+                        next_alpha,
                         -alpha,
-                        next_depth - 2,
+                        next_depth,
                         true,
                         Some(rev_move),
                         next_extensions,
                         tak_history,
+                        false,
+                        false,
                     ),
                 );
-            // re-search full depth moves and those that don't fail low
-            if score > alpha {
-                score = -1 * alpha_beta(
-                        board,
-                        evaluator,
-                        info,
-                        SearchData::new(
-                            -beta,
-                            -alpha,
-                            next_depth,
-                            true,
-                            Some(rev_move),
-                            next_extensions,
-                            tak_history,
-                        ),
-                    );
             }
-        } else {
-            score = -1 * alpha_beta(
+
+            // research with full windows if PV-Search doesn't fail
+            if needs_re_search_on_alpha_beta
+            && score > alpha
+            && score < beta
+            && (PV_RE_SEARCH_NON_PV || data.is_pv) {
+                score = -1 * alpha_beta(
                     board,
                     evaluator,
                     info,
@@ -599,8 +734,11 @@ where
                         Some(rev_move),
                         next_extensions,
                         tak_history,
+                        data.is_pv,
+                        false,
                     ),
                 );
+            }
         }
 
         board.reverse_move(rev_move);
@@ -670,8 +808,8 @@ where
             moves.score_tak_threats(data);
         } else {
             if board.ply() >= 4 {
-                for m in check_moves.iter() {
-                    moves.add_move(m.clone());
+                for m in check_moves.iter().cloned() {
+                    moves.add_move(m);
                 }
             }
             check_moves.clear();
