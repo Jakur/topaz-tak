@@ -738,17 +738,18 @@ where
 
             // late move reduction
             if LMR_ENABLED
-            && depth > LMR_DEPTH_LIMIT
-            && count >= LMR_FULL_SEARCH_MOVES
-            && (LMR_REDUCE_PV || !is_pv)
-            && (LMR_REDUCE_ROOT || !is_root)
+                && depth > LMR_DEPTH_LIMIT
+                && count >= LMR_FULL_SEARCH_MOVES
+                && (LMR_REDUCE_PV || !is_pv)
+                && (LMR_REDUCE_ROOT || !is_root)
             {
                 reduced_depth -= 2;
                 needs_re_search_on_alpha = true;
             }
             if PV_SEARCH_ENABLED
-            && depth > 1
-            && !data.is_root {
+                && depth > 1
+                && !data.is_root
+            {
                 next_alpha = -(alpha+1);
                 needs_re_search_on_alpha_beta = true;
             }
@@ -772,7 +773,8 @@ where
 
             // re-search full depth moves and those that don't fail low
             if needs_re_search_on_alpha
-            && score > alpha {
+                && score > alpha
+            {
                 score = -1 * alpha_beta(
                     board,
                     evaluator,
@@ -793,9 +795,10 @@ where
 
             // research with full windows if PV-Search doesn't fail
             if needs_re_search_on_alpha_beta
-            && score > alpha
-            && score < beta
-            && (PV_RE_SEARCH_NON_PV || data.is_pv) {
+                && score > alpha
+                && score < beta
+                && (PV_RE_SEARCH_NON_PV || data.is_pv)
+            {
                 score = -1 * alpha_beta(
                     board,
                     evaluator,
