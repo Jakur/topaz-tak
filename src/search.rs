@@ -26,13 +26,12 @@ const LMR_REDUCE_PV: bool = true;       // probably shouldn't
 const LMR_REDUCE_ROOT: bool = true;     // probably shouldn't
 
 const PV_SEARCH_ENABLED: bool = true;  // no speedup, worse playing strength
-const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF TRUE
+const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF
 
 // aspiration window parameters
-// !!!CAREFUL, CAN FAIL CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
-const ASPIRATION_ENABLED: bool = false; // TERRIBLE performance!
+// CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
+const ASPIRATION_ENABLED: bool = false; // TERRIBLE performance, search not stable enough
 const ASPIRATION_WINDOW: i32 = 55;
-const ASPIRATION_SCALAR: i32 = 2;
 
 // move generation and ordering parameters
 const GEN_THOROUGH_ORDER_DEPTH: usize = 1; // where to stop bothering with accurate move ordering
@@ -284,20 +283,12 @@ where
             SearchData::new(alpha, beta, depth, true, None, 0, TakHistory(0), true, true),
         );
         if ASPIRATION_ENABLED {
-            let mut window_change = ASPIRATION_WINDOW;
-            while (best_score <= alpha) || (best_score >= beta) {
-                window_change *= ASPIRATION_SCALAR;
-                if best_score <= alpha {
-                    alpha -= window_change;
-                }
-                if best_score >= beta {
-                    beta += window_change;
-                }
+            if (best_score <= alpha) || (best_score >= beta) {
                 best_score = alpha_beta(
                     board,
                     eval,
                     info,
-                    SearchData::new(alpha, beta, depth, true, None, 0, TakHistory(0), true, true),
+                    SearchData::new(-1_000_000, 1_000_000, depth, true, None, 0, TakHistory(0), true, true),
                 )
             }
             alpha = best_score - ASPIRATION_WINDOW;
@@ -561,7 +552,7 @@ where
            ),
        );
        let pv_entry_foreign_2 = info.lookup_move(board);
-       // this should always be true, because we literally just created an entry!!!
+
        if let Some(entry) = pv_entry_foreign_2 {
            pv_entry = Some(entry.clone());
        }
@@ -571,13 +562,94 @@ where
     let mut best_score = None;
     let old_alpha = alpha;
 
-    let mut moves = gen_and_score(depth, board, last_move);
+    // incremental move generation:
+    // step 1: check for placement wins in board.can_make_road()
+    // step 2: generate all spreads in board.can_make_road()
+    // step 3: check for spread wins in board.can_make_road()
+    // step 4: check for TT-Move and search it immediately
+    // step 5: score spread moves, generate and score placements in gen_and_score()
+    // step 6: search all moves ordered by score.
+    let mut stack_moves = Vec::new();
+    let mut moves = SmartMoveBuffer::new();
 
-    if let Some(entry) = pv_entry {
-        moves.score_pv_move(entry.game_move);
+    if board.ply() >= 6 && depth > GEN_THOROUGH_ORDER_DEPTH {
+        if let Some(mv) = board.can_make_road(&mut stack_moves, None) {
+            let data = &[mv];
+            moves.add_move(mv);
+            moves.score_wins(data);
+        }
     }
 
-    for count in 0..moves.len() {
+    let mut has_searched_pv = false;
+    if moves.len() == 0 { // if we don't have an immediate win, check TT move first
+        if let Some(entry) = pv_entry {
+            if (entry.game_move.is_place_move() && board.legal_move(entry.game_move))
+            || stack_moves.contains(&entry.game_move) // TODO maybe a really fast legal checker is faster
+            {
+                let m = entry.game_move.clone();
+                let rev_move = board.do_move(m);
+
+                let score = -1 * alpha_beta(
+                    board,
+                    evaluator,
+                    info,
+                    SearchData::new(
+                        -beta,
+                        -alpha,
+                        depth-1,
+                        true,
+                        Some(rev_move),
+                        extensions,
+                        tak_history,
+                        data.is_pv,
+                        false,
+                    ),
+                );
+
+                board.reverse_move(rev_move);
+                if info.stopped {
+                    return 0;
+                }
+                if score > alpha {
+                    if score >= beta {
+                        info.stats.fail_high_first += 1;
+                        info.stats.fail_high += 1;
+                        info.stats.add_cut(0);
+                        if m.is_place_move() {
+                            info.killer_moves[board.ply() % info.max_depth].add(m);
+                        } else {
+                            // const WINNING: i32 = crate::eval::WIN_SCORE - 100;
+                            // // Cannot be null?
+                            // if score >= WINNING {
+                            //     info.hist_moves.update(depth, m);
+                            // }
+                        }
+                        info.store_move(board, HashEntry::new(board.hash(), m, ScoreCutoff::Beta(beta), depth, board.ply()));
+                        return beta;
+                    }
+                    info.stats.add_alpha(0);
+                    alpha = score;
+                    best_move = Some(m);
+                    best_score = Some(score);
+                }
+                has_searched_pv = true;
+            }
+        }
+    }
+
+    gen_and_score(depth, board, last_move, &mut stack_moves, &mut moves);
+
+    if let Some(entry) = pv_entry {
+        if has_searched_pv {
+            moves.remove(entry.game_move);
+        } else {
+            moves.score_pv_move(entry.game_move);
+        }
+    }
+
+    for c in 0..moves.len() {
+        let count = if has_searched_pv { c + 1 } else { c };
+
         let m = moves.get_best(board.ply(), info);
 
         // if depth == 6 {
@@ -674,7 +746,9 @@ where
                 reduced_depth -= 2;
                 needs_re_search_on_alpha = true;
             }
-            if PV_SEARCH_ENABLED && depth > 1 && !data.is_root {
+            if PV_SEARCH_ENABLED
+            && depth > 1
+            && !data.is_root {
                 next_alpha = -(alpha+1);
                 needs_re_search_on_alpha_beta = true;
             }
@@ -792,37 +866,37 @@ where
     alpha
 }
 
-fn gen_and_score<T>(depth: usize, board: &mut T, last_move: Option<RevGameMove>) -> SmartMoveBuffer
+fn gen_and_score<T>(
+    depth: usize,
+    board: &mut T,
+    last_move: Option<RevGameMove>,
+    stack_moves: &mut Vec<GameMove>,
+    moves: &mut SmartMoveBuffer,
+)
 where
     T: TakBoard,
 {
-    let mut moves = SmartMoveBuffer::new();
     // Do a slower, more thorough move ordering near the root
     if depth > GEN_THOROUGH_ORDER_DEPTH && board.ply() >= 6 {
-        moves.gen_score_place_moves(board);
-        let mut check_moves = Vec::new();
-        // board.can_make_road internally generates all stack moves!!!
-        if let Some(mv) = board.can_make_road(&mut check_moves, None) {
-            let data = &[mv];
-            moves.add_move(mv);
-            moves.score_tak_threats(data);
-        } else {
-            if board.ply() >= 4 {
-                for m in check_moves.iter().cloned() {
-                    moves.add_move(m);
-                }
-            }
-            check_moves.clear();
-            generate_aggressive_place_moves(board, &mut check_moves);
-            let tak_threats = board.get_tak_threats(&check_moves, None);
-            moves.score_tak_threats(&tak_threats);
-            if board.ply() >= 4 {
-                moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
-            }
+        if moves.len() > 0 {
+            // we have a road in 1, no further move generation needed!
+            return;
         }
+        for m in stack_moves.iter().cloned() {
+            moves.add_move(m);
+        }
+        let mut check_moves = Vec::new();
+        generate_aggressive_place_moves(board, &mut check_moves);
+        let tak_threats = board.get_tak_threats(&mut check_moves, None);
+        moves.score_tak_threats(&tak_threats);
+        if board.ply() >= 4 {
+            moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
+        }
+        // generate placements last, so score_tak_threats doesn't have to search through them
+        moves.gen_score_place_moves(board);
     } else {
         if board.ply() >= 4 {
-            generate_all_stack_moves(board, &mut moves);
+            generate_all_stack_moves(board, moves);
             moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
         }
         moves.gen_score_place_moves(board);
@@ -833,7 +907,6 @@ where
     //     // Though it should not arise from real gameplay
     //     moves.gen_score_place_moves(board);
     // }
-    moves
 }
 
 // fn q_search<T, E>(board: &mut T, evaluator: &E, info: &mut SearchInfo, data: SearchData) -> i32

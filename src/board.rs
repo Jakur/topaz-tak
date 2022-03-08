@@ -151,10 +151,25 @@ macro_rules! board_impl {
             fn hash(&self) -> u64 {
                 self.zobrist()
             }
-            fn legal_move(&self, game_move: GameMove) -> bool {
-                let mut vec = Vec::new();
-                self.generate_moves(&mut vec);
-                vec.into_iter().find(|&m| m == game_move).is_some()
+            fn legal_move(&self, game_move: GameMove) -> bool
+            {
+                if game_move.is_place_move() {
+                    let p = game_move.place_piece();
+                    if p.owner() != self.side_to_move() {
+                        return false;
+                    }
+                    if p.is_cap() && self.caps_reserve(self.side_to_move()) == 0 {
+                        return false;
+                    }
+                    if !p.is_cap() && self.pieces_reserve(self.side_to_move()) == 0 {
+                        return false;
+                    }
+                    (self.bits().empty() & <$bits>::index_to_bit(game_move.src_index())).nonzero()
+                } else { // TODO make check of legal stack moves fast as well!
+                    let mut vec = Vec::new();
+                    self.generate_moves(&mut vec);
+                    vec.into_iter().find(|&m| m == game_move).is_some()
+                }
             }
             fn ply(&self) -> usize {
                 match self.side_to_move() {
