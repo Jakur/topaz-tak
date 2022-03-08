@@ -133,6 +133,7 @@ pub struct GameMove(u32);
 
 impl GameMove {
     const PLACEMENT_BITS: u32 = 0xF000000;
+    const LONG_SLIDE_TABLE: [u32; 256] = gen_long_slide_table();
     /// Creates a placement move from the provided piece and board index
     pub fn from_placement(piece: Piece, index: usize) -> Self {
         let bits = ((piece as u32) << 24) | index as u32;
@@ -154,12 +155,13 @@ impl GameMove {
     }
     /// Returns the bits corresponding to the movement of the stack
     ///
-    /// There is one nibble reserved each new location that the stack could move to
-    /// where the value indicates how many pieces were dropped there. This requires 7 nibbles at maximum,
-    /// since even on an 8x8 board a stack cannot advance more than 7 squares. The
-    /// lower value bits correspond to piece drops closer to the origin. By the rules
-    /// of Tak, once a single nibble is 0, all higher bits of the slide must also be 0.
-    pub fn slide_bits(self) -> u32 {
+    /// This compact representation can be thought of as a state machine. A value of
+    /// 0 indicates that the number of pieces dropped should be incremented by 1. A
+    /// value of 1 indicates that the number of pieces dropped should be incremented by
+    /// 1 and then the "write head" should be moved to the next square in the slide.
+    /// To avoid underflows, the consumer should check if the slide is complete
+    /// before moving the "write head", although underflows should not impact correctness.
+    pub const fn slide_bits(self) -> u32 {
         let bits = self.0 & 0x1FF000;
         bits >> 12
     }
@@ -211,6 +213,10 @@ impl GameMove {
     pub fn quantity_iter(self, board_size: usize) -> QuantityMoveIterator {
         QuantityMoveIterator::new(self, board_size)
     }
+    /// Returns a move with count pieces dropped on the next forward tile.
+    ///
+    /// This should only be called on incomplete moves, and thus is only useful for
+    /// move generation.
     #[must_use = "Forgot to assign next move step!"]
     fn set_next_tile(self, count: u32) -> Self {
         const INIT: u32 = 31 - (0x800u32).leading_zeros();
@@ -222,6 +228,7 @@ impl GameMove {
         };
         Self(self.0 | 1 << (start + count))
     }
+    /// Returns a move with a crush if the provided boolean is true, else returns self.
     fn chain_crush(self, cond: bool) -> Self {
         if cond {
             self.set_crush()
@@ -239,31 +246,27 @@ impl GameMove {
     pub fn crush(&self) -> bool {
         (self.0 & 0x800000) > 0
     }
-    /// Legacy function for the old representation of sliding bits
+    /// Returns a slide representation where 4 bits indicate the number of pieces dropped.
     ///
-    /// Each tile in the slide gets 4 bits to represent how many pieces are left there.
-    #[deprecated]
-    pub fn large_slide_bits(&self) -> u64 {
-        let mut bits = 0;
-        let mut last_sq = self.src_index();
-        let mut iter = self.forward_iter(6); // Board size doesn't matter
-        let mut counts = [0; 8];
-        let mut idx = 0;
-        while let Some(sq) = iter.next() {
-            if sq != last_sq {
-                idx += 1;
-            }
-            counts[idx] += 1;
-            last_sq = sq;
-        }
-        for (offset, count) in counts.iter().skip(1).enumerate() {
-            let count = *count;
-            if count == 0 {
-                break;
-            }
-            bits |= count << (offset * 4);
-        }
-        bits
+    /// There is one nibble reserved each new location that the stack could move to
+    /// where the value indicates how many pieces were dropped there. This requires 7 nibbles at maximum,
+    /// since even on an 8x8 board a stack cannot advance more than 7 squares. The
+    /// lower value bits correspond to piece drops closer to the origin. By the rules
+    /// of Tak, once a single nibble is 0, all higher bits of the slide must also be 0.
+    pub fn sparse_slide_bits(&self) -> u32 {
+        let slide_bits = self.slide_bits();
+        let bits = Self::LONG_SLIDE_TABLE[slide_bits as usize];
+        let mask = match slide_bits.count_ones() {
+            1 => 0xF,
+            2 => 0xFF,
+            3 => 0xFFF,
+            4 => 0xFFFF,
+            5 => 0xF_FFFF,
+            6 => 0xFF_FFFF,
+            7 => 0xFFF_FFFF,
+            _ => unimplemented!(),
+        };
+        bits & mask
     }
 }
 
@@ -345,16 +348,10 @@ pub struct QuantityMoveIterator {
 
 impl QuantityMoveIterator {
     fn new(game_move: GameMove, board_size: usize) -> Self {
-        let slide_bits = game_move.slide_bits();
+        let slide_bits = game_move.sparse_slide_bits();
         let src_index = game_move.src_index();
         let direction = game_move.direction() as u8;
-        let index = match direction {
-            0 => src_index - board_size,
-            1 => src_index + 1,
-            2 => src_index + board_size,
-            3 => src_index - 1,
-            _ => unimplemented!(),
-        };
+        let index = src_index;
         Self {
             slide_bits,
             direction,
@@ -370,24 +367,19 @@ impl Iterator for QuantityMoveIterator {
         if self.slide_bits == 0 {
             return None;
         }
-        let mut quantity = 1; // Account for the final 1 bit
-        while 0 == self.slide_bits & 1 {
-            quantity += 1;
-            self.slide_bits = self.slide_bits >> 1;
+        let quantity = self.slide_bits & 0xF;
+        self.slide_bits = self.slide_bits >> 4;
+        match self.direction {
+            0 => self.index -= self.board_size,
+            1 => self.index += 1,
+            2 => self.index += self.board_size,
+            3 => self.index -= 1,
+            _ => unimplemented!(),
         }
-        self.slide_bits = self.slide_bits >> 1; // Remove the trailing 1
-        let index = self.index;
-        if self.slide_bits != 0 {
-            // Avoid underflow
-            match self.direction {
-                0 => self.index -= self.board_size,
-                1 => self.index += 1,
-                2 => self.index += self.board_size,
-                3 => self.index -= 1,
-                _ => unimplemented!(),
-            }
-        }
-        let step = QuantityStep { index, quantity };
+        let step = QuantityStep {
+            index: self.index,
+            quantity,
+        };
         Some(step)
     }
 }
@@ -632,6 +624,34 @@ pub fn recursive_crush_moves<B: MoveBuffer>(
             pieces_left - piece_count,
         );
     }
+}
+
+const fn gen_long_slide_table() -> [u32; 256] {
+    let mut arr: [u32; 256] = [0; 256];
+    let mut init = 1;
+    while init < 256 {
+        let mv = GameMove(init << 12);
+        arr[init as usize] = long_slide(mv);
+        init += 1;
+    }
+    arr
+}
+
+pub const fn long_slide(mv: GameMove) -> u32 {
+    let mut long_slide = 0;
+    let mut slide_bits = mv.slide_bits();
+    let mut count = 0;
+    while slide_bits != 0 {
+        let mut quantity = 1; // Account for the final 1 bit
+        while 0 == slide_bits & 1 {
+            quantity += 1;
+            slide_bits = slide_bits >> 1;
+        }
+        slide_bits = slide_bits >> 1; // Remove the trailing 1
+        long_slide |= quantity << count;
+        count += 4;
+    }
+    long_slide
 }
 
 #[cfg(test)]
