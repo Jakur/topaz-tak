@@ -540,7 +540,6 @@ pub fn directional_stack_moves<B: MoveBuffer>(
         recursive_stack_moves(
             moves,
             init_move.set_number(take_pieces),
-            1,
             max_move,
             take_pieces,
         );
@@ -570,7 +569,6 @@ pub fn directional_crush_moves<B: MoveBuffer>(
         recursive_crush_moves(
             moves,
             init_move.set_number(take_pieces + 1),
-            1,
             max_steps,
             take_pieces,
         );
@@ -580,7 +578,6 @@ pub fn directional_crush_moves<B: MoveBuffer>(
 pub fn recursive_stack_moves<B: MoveBuffer>(
     moves: &mut B,
     in_progress: GameMove,
-    tile_num: usize,
     moves_left: u8,
     pieces_left: u32,
 ) {
@@ -593,7 +590,6 @@ pub fn recursive_stack_moves<B: MoveBuffer>(
         recursive_stack_moves(
             moves,
             in_progress.set_next_tile(piece_count),
-            tile_num + 1,
             moves_left - 1,
             pieces_left - piece_count,
         );
@@ -604,7 +600,6 @@ pub fn recursive_stack_moves<B: MoveBuffer>(
 pub fn recursive_crush_moves<B: MoveBuffer>(
     moves: &mut B,
     in_progress: GameMove,
-    tile_num: usize,
     moves_left: u8,
     pieces_left: u32,
 ) {
@@ -619,7 +614,6 @@ pub fn recursive_crush_moves<B: MoveBuffer>(
         recursive_crush_moves(
             moves,
             in_progress.set_next_tile(piece_count),
-            tile_num + 1,
             moves_left - 1,
             pieces_left - piece_count,
         );
@@ -663,11 +657,11 @@ mod test {
     #[test]
     pub fn single_direction_move() {
         let mut moves = Vec::new();
-        recursive_stack_moves(&mut moves, GameMove(0), 1, 3, 3);
+        recursive_stack_moves(&mut moves, GameMove(0), 3, 3);
         assert_eq!(moves.len(), 4);
-        recursive_stack_moves(&mut moves, GameMove(0), 1, 3, 2);
+        recursive_stack_moves(&mut moves, GameMove(0), 3, 2);
         assert_eq!(moves.len(), 4 + 2);
-        recursive_stack_moves(&mut moves, GameMove(0), 1, 3, 1);
+        recursive_stack_moves(&mut moves, GameMove(0), 3, 1);
         assert_eq!(moves.len(), 4 + 2 + 1);
 
         for stack_size in 4..7 {
@@ -677,7 +671,7 @@ mod test {
         }
 
         moves.clear();
-        recursive_crush_moves(&mut moves, GameMove(0), 1, 1, 2);
+        recursive_crush_moves(&mut moves, GameMove(0), 1, 2);
         assert_eq!(moves.len(), 1);
     }
     #[test]
@@ -708,6 +702,7 @@ mod test {
         generate_all_moves(board, &mut vec);
         vec
     }
+    #[allow(dead_code)]
     fn compare_move_lists<T: TakBoard>(my_moves: Vec<GameMove>, source_file: &str) {
         use std::collections::HashSet;
         let file_data = std::fs::read_to_string(source_file).unwrap();

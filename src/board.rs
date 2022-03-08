@@ -385,7 +385,7 @@ macro_rules! board_impl {
                     if rev_m.game_move.crush() {
                         // Stand the wall back up
                         let dest_tile = &mut self.board[rev_m.dest_sq];
-                        dest_tile.uncrush_wall(&mut self.bits);
+                        dest_tile.uncrush_wall::<<Self as TakBoard>::Bits>();
                     }
                     let iter = rev_m.rev_iter(Self::SIZE);
                     // We need to get a mutable reference to multiple areas of the array. Hold on.
@@ -443,7 +443,7 @@ macro_rules! board_impl {
                     let last_square = &mut self.board[last_idx];
                     let len = last_square.len();
                     if len >= 2 {
-                        if last_square.try_crush_wall(&mut self.bits) {
+                        if last_square.try_crush_wall::<<Self as TakBoard>::Bits>() {
                             return RevGameMove::new(m.set_crush(), last_idx);
                         }
                     }
