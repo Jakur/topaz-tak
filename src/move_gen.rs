@@ -83,10 +83,10 @@ pub fn generate_all_stack_moves<T: TakBoard, B: MoveBuffer>(board: &T, moves: &m
     let start_locs = board.active_stacks(board.side_to_move());
     for index in start_locs {
         let stack_height = board.index(index).len();
-        let start_move = GameMove(index as u64);
+        let start_move = GameMove(index as u32);
         let limits = find_move_limits(board, index);
         for dir in 0..4 {
-            let dir_move = start_move.set_direction(dir as u64);
+            let dir_move = start_move.set_direction(dir as u32);
             let max_steps = limits.steps[dir];
             let max_pieces = std::cmp::min(T::SIZE, stack_height);
             if limits.can_crush[dir] {
@@ -124,25 +124,19 @@ impl RevGameMove {
 /// The current data configuration is as follows:
 /// 0011 1111 Src Tile
 /// 1100 0000 Direction
-/// 000000000F00 Number Picked Up
-/// 00000000F000 Tile 1
-/// 0000000F0000 Tile 2
-/// 000000F00000 Tile 3
-/// 00000F000000 Tile 4
-/// 0000F0000000 Tile 5
-/// 000F00000000 Tile 6
-/// 00F000000000 Tile 7
-/// 010000000000 Wall Smash
-/// F00000000000 Placement Piece
-/// 64 - 52 = 12 bits for Score
-#[derive(Clone, Copy, Eq)]
-pub struct GameMove(u64);
+/// 0000F00 Number Picked Up
+/// 01FF000 Spread
+/// 0800000 Wall Smash
+/// F000000 Placement Piece
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct GameMove(u32);
 
 impl GameMove {
-    const PLACEMENT_BITS: u64 = 0xF00000000000;
+    const PLACEMENT_BITS: u32 = 0xF000000;
+    const LONG_SLIDE_TABLE: [u32; 256] = gen_long_slide_table();
     /// Creates a placement move from the provided piece and board index
     pub fn from_placement(piece: Piece, index: usize) -> Self {
-        let bits = ((piece as u64) << 44) | index as u64;
+        let bits = ((piece as u32) << 24) | index as u32;
         Self(bits)
     }
     /// Creates a null move which can be used to pass without changing the game state
@@ -161,13 +155,14 @@ impl GameMove {
     }
     /// Returns the bits corresponding to the movement of the stack
     ///
-    /// There is one nibble reserved each new location that the stack could move to
-    /// where the value indicates how many pieces were dropped there. This requires 7 nibbles at maximum,
-    /// since even on an 8x8 board a stack cannot advance more than 7 squares. The
-    /// lower value bits correspond to piece drops closer to the origin. By the rules
-    /// of Tak, once a single nibble is 0, all higher bits of the slide must also be 0.
-    pub fn slide_bits(self) -> u64 {
-        let bits = self.0 & 0xFFFFFFF000;
+    /// This compact representation can be thought of as a state machine. A value of
+    /// 0 indicates that the number of pieces dropped should be incremented by 1. A
+    /// value of 1 indicates that the number of pieces dropped should be incremented by
+    /// 1 and then the "write head" should be moved to the next square in the slide.
+    /// To avoid underflows, the consumer should check if the slide is complete
+    /// before moving the "write head", although underflows should not impact correctness.
+    pub const fn slide_bits(self) -> u32 {
+        let bits = self.0 & 0x1FF000;
         bits >> 12
     }
     /// Returns the piece being placed.
@@ -176,7 +171,7 @@ impl GameMove {
     ///
     /// If this is not a placement move
     pub fn place_piece(self) -> Piece {
-        Piece::from_index((self.0 >> 44) & 0xF)
+        Piece::from_index((self.0 >> 24) & 0xF)
     }
     /// Returns true if the move is a stack (sliding) move
     pub fn is_stack_move(self) -> bool {
@@ -187,23 +182,23 @@ impl GameMove {
         self.0 as usize & 0x3F
     }
     /// Returns the direction of the movement. 0 &harr; N, 1 &harr; E, 2 &harr; S, 3 &harr; W
-    pub fn direction(self) -> u64 {
+    pub fn direction(self) -> u32 {
         (self.0 & 0xC0) >> 6
     }
     /// Sets square index bits for the placement or stack move
-    fn set_index(self, index: u64) -> Self {
+    fn set_index(self, index: u32) -> Self {
         Self(self.0 | index)
     }
     /// North, East, South, West respectively
-    fn set_direction(self, dir: u64) -> Self {
+    fn set_direction(self, dir: u32) -> Self {
         GameMove(self.0 | (dir << 6))
     }
     /// Sets the number of pieces being picked up by a stack move
-    fn set_number(self, num: u64) -> Self {
+    fn set_number(self, num: u32) -> Self {
         GameMove(self.0 | (num << 8))
     }
     /// Returns the number of pieces being picked up by a stack move
-    pub fn number(self) -> u64 {
+    pub fn number(self) -> u32 {
         (self.0 & 0xF00) >> 8
     }
     /// Returns an iterator representing the forward movement of a stack
@@ -215,42 +210,25 @@ impl GameMove {
         StackMoveIterator::new(self, board_size)
     }
     /// Returns an iterator that returns the quantity and board index for each stack step
-    fn quantity_iter(self, board_size: usize) -> QuantityMoveIterator {
+    pub fn quantity_iter(self, board_size: usize) -> QuantityMoveIterator {
         QuantityMoveIterator::new(self, board_size)
     }
-    fn set_tile(self, tile_num: usize, count: u64) -> Self {
-        match tile_num {
-            1 => self.set_tile1(count),
-            2 => self.set_tile2(count),
-            3 => self.set_tile3(count),
-            4 => self.set_tile4(count),
-            5 => self.set_tile5(count),
-            6 => self.set_tile6(count),
-            7 => self.set_tile7(count),
-            _ => unimplemented!(),
-        }
+    /// Returns a move with count pieces dropped on the next forward tile.
+    ///
+    /// This should only be called on incomplete moves, and thus is only useful for
+    /// move generation.
+    #[must_use = "Forgot to assign next move step!"]
+    fn set_next_tile(self, count: u32) -> Self {
+        const INIT: u32 = 31 - (0x800u32).leading_zeros();
+        let sliding = self.0 & 0x1FF000;
+        let start = if sliding == 0 {
+            INIT
+        } else {
+            31 - sliding.leading_zeros()
+        };
+        Self(self.0 | 1 << (start + count))
     }
-    fn set_tile1(self, count: u64) -> Self {
-        Self(self.0 | (count << 12))
-    }
-    fn set_tile2(self, count: u64) -> Self {
-        Self(self.0 | (count << 16))
-    }
-    fn set_tile3(self, count: u64) -> Self {
-        Self(self.0 | (count << 20))
-    }
-    fn set_tile4(self, count: u64) -> Self {
-        Self(self.0 | (count << 24))
-    }
-    fn set_tile5(self, count: u64) -> Self {
-        Self(self.0 | (count << 28))
-    }
-    fn set_tile6(self, count: u64) -> Self {
-        Self(self.0 | (count << 32))
-    }
-    fn set_tile7(self, count: u64) -> Self {
-        Self(self.0 | (count << 36))
-    }
+    /// Returns a move with a crush if the provided boolean is true, else returns self.
     fn chain_crush(self, cond: bool) -> Self {
         if cond {
             self.set_crush()
@@ -260,20 +238,35 @@ impl GameMove {
     }
     /// Sets the crush bit according to the given value
     pub fn set_crush(self) -> Self {
-        Self(self.0 | 0x10000000000)
+        Self(self.0 | 0x800000)
     }
     /// Returns true if move is a stack move that crushes a wall
     ///
     /// This is necessary to properly implement [RevGameMove].
     pub fn crush(&self) -> bool {
-        (self.0 & 0x10000000000) > 0
+        (self.0 & 0x800000) > 0
     }
-}
-
-impl std::cmp::PartialEq for GameMove {
-    fn eq(&self, rhs: &GameMove) -> bool {
-        const NON_SCORE_BITS: u64 = 0xFFFFFFFFFFFF;
-        (self.0 & NON_SCORE_BITS) == (rhs.0 & NON_SCORE_BITS)
+    /// Returns a slide representation where 4 bits indicate the number of pieces dropped.
+    ///
+    /// There is one nibble reserved each new location that the stack could move to
+    /// where the value indicates how many pieces were dropped there. This requires 7 nibbles at maximum,
+    /// since even on an 8x8 board a stack cannot advance more than 7 squares. The
+    /// lower value bits correspond to piece drops closer to the origin. By the rules
+    /// of Tak, once a single nibble is 0, all higher bits of the slide must also be 0.
+    pub fn sparse_slide_bits(&self) -> u32 {
+        let slide_bits = self.slide_bits();
+        let bits = Self::LONG_SLIDE_TABLE[slide_bits as usize];
+        let mask = match slide_bits.count_ones() {
+            1 => 0xF,
+            2 => 0xFF,
+            3 => 0xFFF,
+            4 => 0xFFFF,
+            5 => 0xF_FFFF,
+            6 => 0xFF_FFFF,
+            7 => 0xFFF_FFFF,
+            _ => unimplemented!(),
+        };
+        bits & mask
     }
 }
 
@@ -288,10 +281,11 @@ impl fmt::Debug for GameMove {
 }
 
 pub struct StackMoveIterator {
-    slide_bits: u64,
+    slide_bits: u32,
     direction: u8,
     index: usize,
     board_size: usize,
+    count: u32,
 }
 
 impl StackMoveIterator {
@@ -312,6 +306,7 @@ impl StackMoveIterator {
             direction,
             index,
             board_size,
+            count: game_move.number() + 1,
         }
     }
 }
@@ -319,12 +314,19 @@ impl StackMoveIterator {
 impl Iterator for StackMoveIterator {
     type Item = usize;
     fn next(&mut self) -> Option<<Self as Iterator>::Item> {
-        if self.slide_bits == 0 {
+        self.count -= 1;
+        if self.count == 0 {
             return None;
         }
-        let bits = self.slide_bits & 0xF;
-        if bits == 0 {
-            self.slide_bits = self.slide_bits >> 4;
+        let bit = self.slide_bits & 1;
+        self.slide_bits = self.slide_bits >> 1;
+        let index = self.index;
+        if bit != 0 {
+            // Move
+            // Avoid underflow
+            if self.slide_bits == 0 {
+                return Some(self.index);
+            }
             match self.direction {
                 0 => self.index -= self.board_size,
                 1 => self.index += 1,
@@ -333,13 +335,12 @@ impl Iterator for StackMoveIterator {
                 _ => unimplemented!(),
             }
         }
-        self.slide_bits -= 1;
-        Some(self.index)
+        Some(index)
     }
 }
 
-struct QuantityMoveIterator {
-    slide_bits: u64,
+pub struct QuantityMoveIterator {
+    slide_bits: u32,
     direction: u8,
     index: usize,
     board_size: usize,
@@ -347,9 +348,10 @@ struct QuantityMoveIterator {
 
 impl QuantityMoveIterator {
     fn new(game_move: GameMove, board_size: usize) -> Self {
-        let slide_bits = game_move.slide_bits();
+        let slide_bits = game_move.sparse_slide_bits();
+        let src_index = game_move.src_index();
         let direction = game_move.direction() as u8;
-        let index = game_move.src_index();
+        let index = src_index;
         Self {
             slide_bits,
             direction,
@@ -382,26 +384,27 @@ impl Iterator for QuantityMoveIterator {
     }
 }
 
-struct QuantityStep {
-    index: usize,
-    quantity: u64,
+pub struct QuantityStep {
+    pub index: usize,
+    pub quantity: u32,
 }
 
 pub struct RevStackMoveIterator {
-    slide_bits: u64,
+    slide_bits: u32,
     direction: u8,
     index: usize,
     board_size: usize,
+    count: u32,
+    dirty: bool,
 }
 
 impl RevStackMoveIterator {
     fn new(rev_move: RevGameMove, board_size: usize) -> Self {
         let game_move = rev_move.game_move;
         let slide = game_move.slide_bits();
+        debug_assert!(slide != 0);
         let zeros = slide.leading_zeros();
-        let offset = zeros % 4;
-        let shift = zeros - offset;
-        let slide_bits = slide << shift;
+        let slide_bits = slide << zeros;
         let direction = game_move.direction() as u8;
         let index = rev_move.dest_sq;
         Self {
@@ -409,6 +412,8 @@ impl RevStackMoveIterator {
             direction,
             index,
             board_size,
+            count: game_move.number() + 1,
+            dirty: false,
         }
     }
 }
@@ -416,13 +421,14 @@ impl RevStackMoveIterator {
 impl Iterator for RevStackMoveIterator {
     type Item = usize;
     fn next(&mut self) -> Option<<Self as Iterator>::Item> {
-        if self.slide_bits == 0 {
+        self.count -= 1;
+        if self.count == 0 {
             return None;
         }
         // Drop the high bits instead of the low bits
-        let bits = self.slide_bits & 0xF000_0000_0000_0000;
-        if bits == 0 {
-            self.slide_bits = self.slide_bits << 4;
+        let bits = self.slide_bits & 0x8000_0000;
+        self.slide_bits = self.slide_bits << 1;
+        if bits != 0 && self.dirty {
             // Reversed from the normal direction step, since we're going backwards
             match self.direction {
                 0 => self.index += self.board_size,
@@ -432,7 +438,7 @@ impl Iterator for RevStackMoveIterator {
                 _ => unimplemented!(),
             }
         }
-        self.slide_bits -= 0x1000_0000_0000_0000;
+        self.dirty = true;
         Some(self.index)
     }
 }
@@ -530,11 +536,10 @@ pub fn directional_stack_moves<B: MoveBuffer>(
     max_move: u8,
     pieces_available: usize,
 ) {
-    for take_pieces in 1..pieces_available as u64 + 1 {
+    for take_pieces in 1..pieces_available as u32 + 1 {
         recursive_stack_moves(
             moves,
             init_move.set_number(take_pieces),
-            1,
             max_move,
             take_pieces,
         );
@@ -553,17 +558,17 @@ pub fn directional_crush_moves<B: MoveBuffer>(
     max_steps: u8,
     pieces_available: usize,
 ) {
-    let init_move = init_move.set_crush().set_tile(max_steps as usize + 1, 1);
+    let init_move = init_move.set_crush();
+    // let init_move = init_move.set_crush().set_tile(max_steps as usize + 1, 1);
     if max_steps == 0 {
-        moves.add_move(init_move.set_number(1));
+        moves.add_move(init_move.set_number(1).set_next_tile(1));
         return;
     }
     // Todo figure out upper bound for number of pieces to take to save some cycles?
-    for take_pieces in max_steps as u64..pieces_available as u64 + 1 {
+    for take_pieces in max_steps as u32..pieces_available as u32 + 1 {
         recursive_crush_moves(
             moves,
             init_move.set_number(take_pieces + 1),
-            1,
             max_steps,
             take_pieces,
         );
@@ -573,36 +578,34 @@ pub fn directional_crush_moves<B: MoveBuffer>(
 pub fn recursive_stack_moves<B: MoveBuffer>(
     moves: &mut B,
     in_progress: GameMove,
-    tile_num: usize,
     moves_left: u8,
-    pieces_left: u64,
+    pieces_left: u32,
 ) {
     if moves_left == 1 || pieces_left == 1 {
-        let last_move = in_progress.set_tile(tile_num, pieces_left);
+        let last_move = in_progress.set_next_tile(pieces_left);
         moves.add_move(last_move);
         return;
     }
     for piece_count in 1..pieces_left {
         recursive_stack_moves(
             moves,
-            in_progress.set_tile(tile_num, piece_count),
-            tile_num + 1,
+            in_progress.set_next_tile(piece_count),
             moves_left - 1,
             pieces_left - piece_count,
         );
     }
-    moves.add_move(in_progress.set_tile(tile_num, pieces_left));
+    moves.add_move(in_progress.set_next_tile(pieces_left));
 }
 
 pub fn recursive_crush_moves<B: MoveBuffer>(
     moves: &mut B,
     in_progress: GameMove,
-    tile_num: usize,
     moves_left: u8,
-    pieces_left: u64,
+    pieces_left: u32,
 ) {
     if moves_left == 1 && pieces_left > 0 {
-        let last_move = in_progress.set_tile(tile_num, pieces_left);
+        let last_move = in_progress.set_next_tile(pieces_left).set_next_tile(1);
+        // let last_move = in_progress.set_tile(tile_num, pieces_left);
         moves.add_move(last_move);
         return;
     }
@@ -610,12 +613,39 @@ pub fn recursive_crush_moves<B: MoveBuffer>(
     for piece_count in 1..pieces_left {
         recursive_crush_moves(
             moves,
-            in_progress.set_tile(tile_num, piece_count),
-            tile_num + 1,
+            in_progress.set_next_tile(piece_count),
             moves_left - 1,
             pieces_left - piece_count,
         );
     }
+}
+
+const fn gen_long_slide_table() -> [u32; 256] {
+    let mut arr: [u32; 256] = [0; 256];
+    let mut init = 1;
+    while init < 256 {
+        let mv = GameMove(init << 12);
+        arr[init as usize] = long_slide(mv);
+        init += 1;
+    }
+    arr
+}
+
+pub const fn long_slide(mv: GameMove) -> u32 {
+    let mut long_slide = 0;
+    let mut slide_bits = mv.slide_bits();
+    let mut count = 0;
+    while slide_bits != 0 {
+        let mut quantity = 1; // Account for the final 1 bit
+        while 0 == slide_bits & 1 {
+            quantity += 1;
+            slide_bits = slide_bits >> 1;
+        }
+        slide_bits = slide_bits >> 1; // Remove the trailing 1
+        long_slide |= quantity << count;
+        count += 4;
+    }
+    long_slide
 }
 
 #[cfg(test)]
@@ -626,14 +656,12 @@ mod test {
     use super::*;
     #[test]
     pub fn single_direction_move() {
-        let m = GameMove(0);
-        assert_eq!(GameMove(0xF000), m.set_tile1(0xF));
         let mut moves = Vec::new();
-        recursive_stack_moves(&mut moves, GameMove(0), 1, 3, 3);
+        recursive_stack_moves(&mut moves, GameMove(0), 3, 3);
         assert_eq!(moves.len(), 4);
-        recursive_stack_moves(&mut moves, GameMove(0), 1, 3, 2);
+        recursive_stack_moves(&mut moves, GameMove(0), 3, 2);
         assert_eq!(moves.len(), 4 + 2);
-        recursive_stack_moves(&mut moves, GameMove(0), 1, 3, 1);
+        recursive_stack_moves(&mut moves, GameMove(0), 3, 1);
         assert_eq!(moves.len(), 4 + 2 + 1);
 
         for stack_size in 4..7 {
@@ -643,7 +671,7 @@ mod test {
         }
 
         moves.clear();
-        recursive_crush_moves(&mut moves, GameMove(0), 1, 1, 2);
+        recursive_crush_moves(&mut moves, GameMove(0), 1, 2);
         assert_eq!(moves.len(), 1);
     }
     #[test]
@@ -674,6 +702,7 @@ mod test {
         generate_all_moves(board, &mut vec);
         vec
     }
+    #[allow(dead_code)]
     fn compare_move_lists<T: TakBoard>(my_moves: Vec<GameMove>, source_file: &str) {
         use std::collections::HashSet;
         let file_data = std::fs::read_to_string(source_file).unwrap();
@@ -743,5 +772,33 @@ mod test {
         }
 
         assert_eq!(moves.len(), 190);
+    }
+
+    #[test]
+    pub fn quantity_move_test() {
+        let ptn = "7a5>1231";
+        let m = GameMove::try_from_ptn_m(ptn, 7, Color::White).unwrap();
+        let mut iter = m.quantity_iter(7);
+        let st = m.src_index();
+        let mut counter = 1;
+        let vals = &[0, 1, 2, 3, 1];
+        while let Some(qstep) = iter.next() {
+            assert_eq!(qstep.index, st + counter); // True because > direction
+            assert_eq!(qstep.quantity, vals[counter]);
+            counter += 1;
+        }
+        assert_eq!(counter, 5);
+    }
+
+    #[test]
+    pub fn future_8s_compatibility() {
+        let ptn = "8a1+1111112";
+        let ptn2 = "8a1+2111111";
+        let mv = GameMove::try_from_ptn_m(ptn, 8, Color::White).unwrap();
+        let mv2 = GameMove::try_from_ptn_m(ptn2, 8, Color::White).unwrap();
+        assert!(mv.slide_bits() < 256);
+        assert!(mv2.slide_bits() < 256);
+        // dbg!(format!("{:#X}", mv.slide_bits()));
+        // dbg!(format!("{:#X}", mv2.slide_bits()));
     }
 }

@@ -2,27 +2,47 @@ use super::{Color, GameResult};
 use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
+use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::move_gen::{
     generate_aggressive_place_moves, generate_all_stack_moves, GameMove, HistoryMoves, KillerMoves,
     MoveBuffer, RevGameMove, SmartMoveBuffer,
 };
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
-use lru::LruCache;
 use std::marker::PhantomData;
 use std::time::Instant;
 
 pub mod proof;
 
+const NULL_REDUCTION_ENABLED: bool = true;
+const NULL_REDUCE_PV: bool = true;      // probably shouldn't
 const NULL_REDUCTION: usize = 2;
 
 // late move reduction parameters
-const LMR_FULL_SEARCH_MOVES: usize = 8; // number of moves that don't get reduced
-const LMR_DEPTH_LIMIT: usize = 3;       // don't reduce low depth searches up to this depth
+const LMR_ENABLED: bool = true;
+const LMR_FULL_SEARCH_MOVES: usize = 4; // number of moves that don't get reduced
+const LMR_DEPTH_LIMIT: usize = 2;       // don't reduce low depth searches up to this depth
+const LMR_REDUCE_PV: bool = true;       // probably shouldn't
+const LMR_REDUCE_ROOT: bool = true;     // probably shouldn't
 
-// transposition table parameters
-const TT_DISCARD_AGE: u8 = 5; // adjusts which HashEntries are considered outdated
+const PV_SEARCH_ENABLED: bool = true;  // no speedup, worse playing strength
+const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF
 
+// aspiration window parameters
+// CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
+const ASPIRATION_ENABLED: bool = false; // TERRIBLE performance, search not stable enough
+const ASPIRATION_WINDOW: i32 = 55;
+
+// move generation and ordering parameters
+const GEN_THOROUGH_ORDER_DEPTH: usize = 1; // where to stop bothering with accurate move ordering
+
+// internal iterative deepening parameters TODO not tuned yet
+// doesn't have much cost attached to it, so why not
+const IID_ENABLED: bool = true;
+const IID_NON_PV: bool = true;
+const IID_MIN_DEPTH: usize = 5;
+const IID_REDUCTION: usize = 3;
+const IID_DIVISION: usize = 2;
 
 pub struct SearchInfo {
     pub max_depth: usize,
@@ -125,6 +145,9 @@ impl SearchInfo {
     fn ply_depth<E: TakBoard>(&self, position: &E) -> usize {
         position.ply() - self.start_ply
     }
+    pub fn clear_tt(&mut self) {
+        self.pv_table.clear();
+    }
 }
 
 #[derive(Debug)]
@@ -160,89 +183,6 @@ impl SearchStats {
             *self.ordering_alpha.last_mut().unwrap() += 1;
         } else {
             self.ordering_alpha[order] += 1;
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum ScoreCutoff {
-    Alpha(i32),
-    Beta(i32),
-    Exact(i32),
-}
-
-// drop-in replacement for LruCache<u64, hashEntry>
-//
-// for every slot, there are two entries consecutive in memory.
-// first entry is the "depth table" entry, always replace on depth.
-// second entry is the "recency table" entry, always replace if not in depth table.
-// this way, depth table and recency table entries lie consecutively in memory and will
-// hopefully be fetched in a single cache line.
-//
-// possible improvements:
-// - Buckets:  instead of having 2 entries with different replacement schemes for every slot,
-//             have 4 entries with some fancy common replacement scheme.
-// - Bleeding: have put and get also "bleed over" to next slot if that is free,
-//             so that a better table utilization can be reached.
-struct HashTable {
-    size: usize,
-    two_way_table: Vec<HashEntry>,
-}
-
-impl HashTable {
-    fn new(size: usize) -> Self {
-        Self {
-            size: size / 2,
-            two_way_table: vec![HashEntry::new(1, GameMove::null_move(), ScoreCutoff::Alpha(0), 0, 0); size],
-        }
-    }
-
-    fn put(&mut self, hash: u64, entry: HashEntry) {
-        let slot: usize = (hash as usize % self.size) * 2;
-        let depth_entry = self.two_way_table[slot];
-        if entry.depth > depth_entry.depth
-            || entry.depth + entry.ply > depth_entry.depth + depth_entry.ply + TT_DISCARD_AGE
-            {
-                self.two_way_table[slot] = entry;
-            } else {
-                self.two_way_table[slot+1] = entry;
-            }
-    }
-
-    fn get(&self, hash: &u64) -> Option<&HashEntry> {
-        let slot: usize = (*hash as usize % self.size) * 2;
-        let hash_hi: u32 = (*hash >> 32) as u32;
-        if self.two_way_table[slot].hash_hi == hash_hi {
-            return Some(&self.two_way_table[slot]);
-        }
-        if self.two_way_table[slot+1].hash_hi == hash_hi {
-            return Some(&self.two_way_table[slot+1]);
-        }
-        None
-    }
-}
-
-// right now this totals to 22 bytes, extended to 24 bytes for 8 byte memory alignment.
-// it would be nice to get this into 16 bytes!
-// this would be not only mean less memory usage, but also be much faster because of
-// cache utilization. each slot (2 entries) would be loaded with a single cache line.
-#[derive(Clone, Copy)]
-struct HashEntry {
-    hash_hi: u32,        // 4 bytes (~3 low bytes are encoded in the HashTable idx)
-    game_move: GameMove, // 8 bytes
-    score: ScoreCutoff,  // 8 bytes (can this be 2 bytes?)
-    depth: u8,           // 1 byte
-    ply: u8,             // 1 byte
-}
-
-impl HashEntry {
-    fn new(hash: u64, game_move: GameMove, score: ScoreCutoff, depth: usize, ply: usize) -> Self {
-        Self {
-            hash_hi: (hash >> 32) as u32,
-            game_move,
-            score,
-            depth: depth as u8,
-            ply: ply as u8,
         }
     }
 }
@@ -313,6 +253,8 @@ where
     let mut outcome = None;
     let mut node_counts = vec![1];
     info.set_start_ply(board.ply());
+    let mut alpha = -1_000_000;
+    let mut beta = 1_000_000;
     for depth in 1..=info.max_depth {
         // Abort if we are unlikely to finish the search at this depth
         if info.estimate_time && depth >= 6 {
@@ -334,12 +276,24 @@ where
                 break;
             }
         }
-        let best_score = alpha_beta(
+        let mut best_score = alpha_beta(
             board,
             eval,
             info,
-            SearchData::new(-1_000_000, 1_000_000, depth, true, None, 0, TakHistory(0)),
+            SearchData::new(alpha, beta, depth, true, None, 0, TakHistory(0), true, true),
         );
+        if ASPIRATION_ENABLED {
+            if (best_score <= alpha) || (best_score >= beta) {
+                best_score = alpha_beta(
+                    board,
+                    eval,
+                    info,
+                    SearchData::new(-1_000_000, 1_000_000, depth, true, None, 0, TakHistory(0), true, true),
+                )
+            }
+            alpha = best_score - ASPIRATION_WINDOW;
+            beta = best_score + ASPIRATION_WINDOW;
+        }
         node_counts.push(info.nodes);
         let pv_moves = info.full_pv(board);
         // If we had an incomplete depth search, use the previous depth's vals
@@ -351,8 +305,8 @@ where
             break;
         }
         print!(
-            "Depth: {} Score: {} Nodes: {} PV: ",
-            depth, best_score, info.nodes
+            "info depth {} score cp {} nodes {} hashfull {} pv ",
+            depth, best_score, info.nodes, info.pv_table.occupancy()
         );
         outcome = Some(SearchOutcome::new(
             best_score,
@@ -396,6 +350,8 @@ struct SearchData {
     last_move: Option<RevGameMove>,
     extensions: u8,
     tak_history: TakHistory,
+    is_pv: bool,
+    is_root: bool,
 }
 
 impl SearchData {
@@ -407,6 +363,8 @@ impl SearchData {
         last_move: Option<RevGameMove>,
         extensions: u8,
         tak_history: TakHistory,
+        is_pv: bool,
+        is_root: bool,
     ) -> Self {
         Self {
             alpha,
@@ -416,6 +374,8 @@ impl SearchData {
             last_move,
             extensions,
             tak_history,
+            is_pv,
+            is_root,
         }
     }
 }
@@ -433,6 +393,8 @@ where
         last_move,
         extensions,
         mut tak_history,
+        is_pv,
+        is_root,
     } = data;
     info.nodes += 1;
     const FREQ: usize = (1 << 16) - 1; // Per 65k nodes
@@ -484,9 +446,16 @@ where
         // road_check.clear();
     }
 
-    if let Some(entry) = info.lookup_move(board) {
-        if entry.depth as usize >= depth {
-            match entry.score {
+    let mut pv_entry: Option<HashEntry> = None;
+    let pv_entry_foreign = info.lookup_move(board);
+
+    if let Some(entry) = pv_entry_foreign {
+        pv_entry = Some(entry.clone()); // save for move lookup
+    }
+
+    if let Some(entry) = pv_entry {
+        if entry.depth() as usize >= depth {
+            match entry.score() {
                 ScoreCutoff::Alpha(score) => {
                     if score <= alpha {
                         info.stats.transposition_cutoffs += 1;
@@ -506,7 +475,9 @@ where
             }
         }
     }
-    if null_move && depth >= 1 + NULL_REDUCTION {
+    if NULL_REDUCTION_ENABLED
+    && (!data.is_pv || NULL_REDUCE_PV)
+    && null_move && depth >= 1 + NULL_REDUCTION {
         // && road_move.is_none() {
 
         board.null_move();
@@ -524,6 +495,8 @@ where
                     None,
                     extensions,
                     tak_history,
+                    false,
+                    false,
                 ),
             );
         if one_depth_score <= LOSE_SCORE + 100 {
@@ -544,6 +517,8 @@ where
                         None,
                         extensions,
                         tak_history,
+                        false,
+                        false,
                     ),
                 );
             board.rev_null_move();
@@ -553,47 +528,130 @@ where
             }
         }
     }
-    let mut moves = SmartMoveBuffer::new();
-    // Do a slower, more thorough move ordering near the root
-    if depth > 3 && board.ply() >= 6 {
-        moves.gen_score_place_moves(board);
-        let mut check_moves = Vec::new();
-        if let Some(mv) = board.can_make_road(&mut check_moves, None) {
-            let data = &[mv];
-            moves.add_move(mv);
-            moves.score_tak_threats(data);
-        } else {
-            check_moves.clear();
-            generate_aggressive_place_moves(board, &mut check_moves);
-            let tak_threats = board.get_tak_threats(&check_moves, None);
-            moves.score_tak_threats(&tak_threats);
-            if board.ply() >= 4 {
-                generate_all_stack_moves(board, &mut moves);
-                moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
-            }
-        }
-    } else {
-        if board.ply() >= 4 {
-            generate_all_stack_moves(board, &mut moves);
-            moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
-        }
-        moves.gen_score_place_moves(board);
-    }
-    // moves.gen_score_place_moves(board);
-    // if !must_capture {
-    //     // Note maybe it is possible to construct a situation with 0 legal moves
-    //     // Though it should not arise from real gameplay
-    //     moves.gen_score_place_moves(board);
-    // }
+
+   // internal iterative deepening
+   if IID_ENABLED
+   && depth >= IID_MIN_DEPTH
+   && (is_pv || IID_NON_PV)
+   && !pv_entry.is_some() {
+       let reduction = std::cmp::max(IID_REDUCTION, depth / IID_DIVISION);
+       alpha_beta(
+           board,
+           evaluator,
+           info,
+           SearchData::new(
+               alpha,
+               beta,
+               data.depth-reduction,
+               false,
+               data.last_move,
+               extensions,
+               tak_history,
+               data.is_pv,
+               false,
+           ),
+       );
+       let pv_entry_foreign_2 = info.lookup_move(board);
+
+       if let Some(entry) = pv_entry_foreign_2 {
+           pv_entry = Some(entry.clone());
+       }
+   }
+
     let mut best_move = None;
     let mut best_score = None;
-    if let Some(pv_move) = info.pv_move(board) {
-        moves.score_pv_move(pv_move);
+    let old_alpha = alpha;
+
+    // incremental move generation:
+    // step 1: check for placement wins in board.can_make_road()
+    // step 2: generate all spreads in board.can_make_road()
+    // step 3: check for spread wins in board.can_make_road()
+    // step 4: check for TT-Move and search it immediately
+    // step 5: score spread moves, generate and score placements in gen_and_score()
+    // step 6: search all moves ordered by score.
+    let mut stack_moves = Vec::new();
+    let mut moves = SmartMoveBuffer::new();
+
+    if board.ply() >= 6 && depth > GEN_THOROUGH_ORDER_DEPTH {
+        if let Some(mv) = board.can_make_road(&mut stack_moves, None) {
+            let data = &[mv];
+            moves.add_move(mv);
+            moves.score_wins(data);
+        }
     }
 
-    let old_alpha = alpha;
-    for count in 0..moves.len() {
-        let m = moves.get_best(depth, info);
+    let mut has_searched_pv = false;
+    if moves.len() == 0 { // if we don't have an immediate win, check TT move first
+        if let Some(entry) = pv_entry {
+            if (entry.game_move.is_place_move() && board.legal_move(entry.game_move))
+            || stack_moves.contains(&entry.game_move) // TODO maybe a really fast legal checker is faster
+            {
+                let m = entry.game_move.clone();
+                let rev_move = board.do_move(m);
+
+                let score = -1 * alpha_beta(
+                    board,
+                    evaluator,
+                    info,
+                    SearchData::new(
+                        -beta,
+                        -alpha,
+                        depth-1,
+                        true,
+                        Some(rev_move),
+                        extensions,
+                        tak_history,
+                        data.is_pv,
+                        false,
+                    ),
+                );
+
+                board.reverse_move(rev_move);
+                if info.stopped {
+                    return 0;
+                }
+                if score > alpha {
+                    if score >= beta {
+                        info.stats.fail_high_first += 1;
+                        info.stats.fail_high += 1;
+                        info.stats.add_cut(0);
+                        if m.is_place_move() {
+                            info.killer_moves[board.ply() % info.max_depth].add(m);
+                        } else {
+                            // const WINNING: i32 = crate::eval::WIN_SCORE - 100;
+                            // // Cannot be null?
+                            // if score >= WINNING {
+                            //     info.hist_moves.update(depth, m);
+                            // }
+                        }
+                        info.store_move(board, HashEntry::new(board.hash(), m, ScoreCutoff::Beta(beta), depth, board.ply()));
+                        return beta;
+                    }
+                    info.stats.add_alpha(0);
+                    alpha = score;
+                    best_move = Some(m);
+                    best_score = Some(score);
+                }
+                has_searched_pv = true;
+            }
+        }
+    }
+
+    gen_and_score(depth, board, last_move, &mut stack_moves, &mut moves);
+
+    if let Some(entry) = pv_entry {
+        if has_searched_pv {
+            moves.remove(entry.game_move);
+        } else {
+            moves.score_pv_move(entry.game_move);
+        }
+    }
+
+    for c in 0..moves.len() {
+        let count = if has_searched_pv { c + 1 } else { c };
+
+        let m = moves.get_best(board.ply(), info);
+
         // if depth == 6 {
         //     println!("{}", m.to_ptn::<T>());
         // }
@@ -652,43 +710,96 @@ where
         //   value = PVS(-beta,-alpha);
         // }
 
-        let mut score = 0;
+        let mut score;
 
-        // late move reduction
-        if depth > LMR_DEPTH_LIMIT  && count >= LMR_FULL_SEARCH_MOVES {
+        // search first move fully!
+        if count == 0 {
             score = -1 * alpha_beta(
+                board,
+                evaluator,
+                info,
+                SearchData::new(
+                    -beta,
+                    -alpha,
+                    next_depth,
+                    true,
+                    Some(rev_move),
+                    next_extensions,
+                    tak_history,
+                    data.is_pv,
+                    false,
+                ),
+            );
+        } else {
+            let mut needs_re_search_on_alpha = false;
+            let mut needs_re_search_on_alpha_beta = false;
+            let mut next_alpha = -beta;
+            let mut reduced_depth = next_depth;
+
+            // late move reduction
+            if LMR_ENABLED
+                && depth > LMR_DEPTH_LIMIT
+                && count >= LMR_FULL_SEARCH_MOVES
+                && (LMR_REDUCE_PV || !is_pv)
+                && (LMR_REDUCE_ROOT || !is_root)
+            {
+                reduced_depth -= 2;
+                needs_re_search_on_alpha = true;
+            }
+            if PV_SEARCH_ENABLED
+                && depth > 1
+                && !data.is_root
+            {
+                next_alpha = -(alpha+1);
+                needs_re_search_on_alpha_beta = true;
+            }
+
+            score = -1 * alpha_beta(
+                board,
+                evaluator,
+                info,
+                SearchData::new(
+                    next_alpha,
+                    -alpha,
+                    reduced_depth,
+                    true,
+                    Some(rev_move),
+                    next_extensions,
+                    tak_history,
+                    false,
+                    false,
+                ),
+            );
+
+            // re-search full depth moves and those that don't fail low
+            if needs_re_search_on_alpha
+                && score > alpha
+            {
+                score = -1 * alpha_beta(
                     board,
                     evaluator,
                     info,
                     SearchData::new(
-                        -beta,
+                        next_alpha,
                         -alpha,
-                        next_depth - 2,
+                        next_depth,
                         true,
                         Some(rev_move),
                         next_extensions,
                         tak_history,
+                        false,
+                        false,
                     ),
                 );
-            // re-search full depth moves and those that don't fail low
-            if score > alpha {
-                score = -1 * alpha_beta(
-                        board,
-                        evaluator,
-                        info,
-                        SearchData::new(
-                            -beta,
-                            -alpha,
-                            next_depth,
-                            true,
-                            Some(rev_move),
-                            next_extensions,
-                            tak_history,
-                        ),
-                    );
             }
-        } else {
-            score = -1 * alpha_beta(
+
+            // research with full windows if PV-Search doesn't fail
+            if needs_re_search_on_alpha_beta
+                && score > alpha
+                && score < beta
+                && (PV_RE_SEARCH_NON_PV || data.is_pv)
+            {
+                score = -1 * alpha_beta(
                     board,
                     evaluator,
                     info,
@@ -700,8 +811,11 @@ where
                         Some(rev_move),
                         next_extensions,
                         tak_history,
+                        data.is_pv,
+                        false,
                     ),
                 );
+            }
         }
 
         board.reverse_move(rev_move);
@@ -716,7 +830,7 @@ where
                 info.stats.fail_high += 1;
                 info.stats.add_cut(count);
                 if m.is_place_move() {
-                    info.killer_moves[depth].add(m);
+                    info.killer_moves[board.ply() % info.max_depth].add(m);
                 } else {
                     // const WINNING: i32 = crate::eval::WIN_SCORE - 100;
                     // // Cannot be null?
@@ -753,6 +867,49 @@ where
         // Waste of time?
     }
     alpha
+}
+
+fn gen_and_score<T>(
+    depth: usize,
+    board: &mut T,
+    last_move: Option<RevGameMove>,
+    stack_moves: &mut Vec<GameMove>,
+    moves: &mut SmartMoveBuffer,
+)
+where
+    T: TakBoard,
+{
+    // Do a slower, more thorough move ordering near the root
+    if depth > GEN_THOROUGH_ORDER_DEPTH && board.ply() >= 6 {
+        if moves.len() > 0 {
+            // we have a road in 1, no further move generation needed!
+            return;
+        }
+        for m in stack_moves.iter().cloned() {
+            moves.add_move(m);
+        }
+        let mut check_moves = Vec::new();
+        generate_aggressive_place_moves(board, &mut check_moves);
+        let tak_threats = board.get_tak_threats(&mut check_moves, None);
+        moves.score_tak_threats(&tak_threats);
+        if board.ply() >= 4 {
+            moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
+        }
+        // generate placements last, so score_tak_threats doesn't have to search through them
+        moves.gen_score_place_moves(board);
+    } else {
+        if board.ply() >= 4 {
+            generate_all_stack_moves(board, moves);
+            moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
+        }
+        moves.gen_score_place_moves(board);
+    }
+    // moves.gen_score_place_moves(board);
+    // if !must_capture {
+    //     // Note maybe it is possible to construct a situation with 0 legal moves
+    //     // Though it should not arise from real gameplay
+    //     moves.gen_score_place_moves(board);
+    // }
 }
 
 // fn q_search<T, E>(board: &mut T, evaluator: &E, info: &mut SearchInfo, data: SearchData) -> i32

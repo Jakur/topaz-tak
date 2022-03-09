@@ -151,10 +151,25 @@ macro_rules! board_impl {
             fn hash(&self) -> u64 {
                 self.zobrist()
             }
-            fn legal_move(&self, game_move: GameMove) -> bool {
-                let mut vec = Vec::new();
-                self.generate_moves(&mut vec);
-                vec.into_iter().find(|&m| m == game_move).is_some()
+            fn legal_move(&self, game_move: GameMove) -> bool
+            {
+                if game_move.is_place_move() {
+                    let p = game_move.place_piece();
+                    if p.owner() != self.side_to_move() {
+                        return false;
+                    }
+                    if p.is_cap() && self.caps_reserve(self.side_to_move()) == 0 {
+                        return false;
+                    }
+                    if !p.is_cap() && self.pieces_reserve(self.side_to_move()) == 0 {
+                        return false;
+                    }
+                    (self.bits().empty() & <$bits>::index_to_bit(game_move.src_index())).nonzero()
+                } else { // TODO make check of legal stack moves fast as well!
+                    let mut vec = Vec::new();
+                    self.generate_moves(&mut vec);
+                    vec.into_iter().find(|&m| m == game_move).is_some()
+                }
             }
             fn ply(&self) -> usize {
                 match self.side_to_move() {
@@ -282,31 +297,20 @@ macro_rules! board_impl {
             ) -> bool {
                 let color = self.active_player();
                 let src_sq = stack_move.src_index();
-                let dir = stack_move.direction();
                 let stack = &self.board[src_sq];
-                let mut pickup = stack_move.number();
-                let mut slide_bits = stack_move.slide_bits();
+                let mut pickup = stack_move.number() as u32;
                 let mut update = <Self as TakBoard>::Bits::ZERO;
-                let mut index = src_sq;
-                let mut mask = <Self as TakBoard>::Bits::index_to_bit(index);
+                let mut mask = <Self as TakBoard>::Bits::index_to_bit(src_sq);
                 let val = stack
                     .from_top(pickup as usize)
                     .map(|p| p.road_piece(color))
                     .unwrap_or(false); // Could have taken all pieces
                 if val {
-                    update |= <Self as TakBoard>::Bits::index_to_bit(index);
+                    update |= <Self as TakBoard>::Bits::index_to_bit(src_sq);
                 }
-                while slide_bits != 0 {
-                    match dir {
-                        0 => index -= Self::SIZE,
-                        1 => index += 1,
-                        2 => index += Self::SIZE,
-                        3 => index -= 1,
-                        _ => unimplemented!(),
-                    }
-                    pickup -= slide_bits & 0xF;
-                    slide_bits = slide_bits >> 4;
-                    let bb = <Self as TakBoard>::Bits::index_to_bit(index);
+                for qstep in stack_move.quantity_iter(Self::SIZE) {
+                    pickup -= qstep.quantity;
+                    let bb = <Self as TakBoard>::Bits::index_to_bit(qstep.index);
                     mask |= bb;
                     let val = stack
                         .from_top(pickup as usize)
@@ -396,7 +400,7 @@ macro_rules! board_impl {
                     if rev_m.game_move.crush() {
                         // Stand the wall back up
                         let dest_tile = &mut self.board[rev_m.dest_sq];
-                        dest_tile.uncrush_wall(&mut self.bits);
+                        dest_tile.uncrush_wall::<<Self as TakBoard>::Bits>();
                     }
                     let iter = rev_m.rev_iter(Self::SIZE);
                     // We need to get a mutable reference to multiple areas of the array. Hold on.
@@ -454,7 +458,7 @@ macro_rules! board_impl {
                     let last_square = &mut self.board[last_idx];
                     let len = last_square.len();
                     if len >= 2 {
-                        if last_square.try_crush_wall(&mut self.bits) {
+                        if last_square.try_crush_wall::<<Self as TakBoard>::Bits>() {
                             return RevGameMove::new(m.set_crush(), last_idx);
                         }
                     }

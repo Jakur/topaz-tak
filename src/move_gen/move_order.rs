@@ -163,9 +163,14 @@ impl SmartMoveBuffer {
         // let neighbors = T::Bits::index_to_bit(idx).adjacent();
         // todo!()
     }
+    pub fn remove(&mut self, mv: GameMove) {
+        if let Some(pos) = self.moves.iter().position(|m| m.mv == mv) {
+            self.moves.remove(pos);
+        }
+    }
     pub fn score_pv_move(&mut self, pv_move: GameMove) {
         if let Some(found) = self.moves.iter_mut().find(|m| m.mv == pv_move) {
-            found.score += 1000;
+            found.score += 250;
         }
     }
     pub fn score_tak_threats(&mut self, tak_threats: &[GameMove]) {
@@ -175,14 +180,22 @@ impl SmartMoveBuffer {
             }
         }
     }
-    pub fn get_best(&mut self, depth: usize, info: &SearchInfo) -> GameMove {
+    pub fn score_wins(&mut self, winning_moves: &[GameMove]) {
+        for m in self.moves.iter_mut() {
+            if winning_moves.contains(&m.mv) {
+                m.score += 1000
+            }
+        }
+    }
+    pub fn get_best(&mut self, ply: usize, info: &SearchInfo) -> GameMove {
         if self.queries <= 16 {
+            self.queries += 1;
             let (idx, m) = self
                 .moves
                 .iter()
                 .enumerate()
                 .max_by_key(|(_i, &m)| {
-                    m.score + info.killer_moves[depth].score(m.mv) as i16
+                    m.score + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
                         - self.stack_hist_score(m.mv)
                 })
                 .unwrap();

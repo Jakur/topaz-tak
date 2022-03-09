@@ -83,6 +83,7 @@ pub const LOSE_SCORE: i32 = -1 * WIN_SCORE;
 
 impl Evaluator for Weights6 {
     type Game = Board6;
+    #[inline(never)]
     fn evaluate(&self, game: &Self::Game, depth: usize) -> i32 {
         let mut score = 0;
         // let white_res = game.pieces_reserve(Color::White) as i32;
@@ -92,7 +93,7 @@ impl Evaluator for Weights6 {
         // flat_diff *= 2;
         // flat_diff -= game.komi() as i32;
         // let white_res_lead = black_res - white_res;
-        // let white_leading = white_res_lead >= 4 && 
+        // let white_leading = white_res_lead >= 4 &&
 
         for (idx, stack) in game.board.iter().enumerate() {
             if stack.len() == 1 {
@@ -192,7 +193,7 @@ impl Evaluator for Weights6 {
             score -= 30;
         }
 
-        
+
         // // Danger FOR the associated color
         // const DANGER_MUL: i32 = 40; // 20
         // let white_danger = (game.bits.road_pieces(Color::Black).critical_squares()
@@ -478,7 +479,7 @@ const LOCATION_WEIGHT: [i32; 36] = [
     05, 15, 20, 20, 15, 05,
     05, 15, 20, 20, 15, 05,
     05, 10, 15, 15, 10, 05,
-    00, 05, 05, 05, 05, 00, 
+    00, 05, 05, 05, 05, 00,
 ];
 
 #[cfg(test)]

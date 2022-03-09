@@ -64,7 +64,7 @@ impl Stack {
             self.push(item, bits);
         }
     }
-    pub fn try_crush_wall<T: Bitboard>(&mut self, bits: &mut BitboardStorage<T>) -> bool {
+    pub fn try_crush_wall<T: Bitboard>(&mut self) -> bool {
         if self.len() >= 2 {
             let wall_idx = self.len() - 2;
             if let Some(crushed) = self.data[wall_idx].crush() {
@@ -74,7 +74,7 @@ impl Stack {
         }
         false
     }
-    pub fn uncrush_wall<T: Bitboard>(&mut self, bits: &mut BitboardStorage<T>) {
+    pub fn uncrush_wall<T: Bitboard>(&mut self) {
         if self.len() >= 2 {
             let wall_idx = self.len() - 2;
             if let Some(uncrushed) = self.data[wall_idx].uncrush() {
