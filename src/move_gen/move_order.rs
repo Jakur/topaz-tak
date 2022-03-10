@@ -195,7 +195,9 @@ impl SmartMoveBuffer {
                 .iter()
                 .enumerate()
                 .max_by_key(|(_i, &m)| {
-                    m.score + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
+                    m.score
+                        + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
+                        + info.stack_win_kill[ply % info.max_depth].score(m.mv) as i16
                         - self.stack_hist_score(m.mv)
                 })
                 .unwrap();

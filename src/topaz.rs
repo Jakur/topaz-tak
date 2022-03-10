@@ -33,7 +33,7 @@ pub fn main() {
             // println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
             // info.print_cuts();
             // let node_counts = search_efficiency(&["empty6"], 8);
-            let examine = vec![("temp", 8)];
+            let examine = vec![("start2", 12)];
             let node_counts = search_efficiency(&examine, false).unwrap();
             // let node_counts =
             //     search_efficiency(&[("opening1", 8), ("opening2", 8), ("midgame1", 6)], false)
@@ -128,6 +128,8 @@ fn saved_tps(name: &str) -> Option<&str> {
         "midgame2" => "x4,1,1/1,12S,2,2,1,1/1,1221S,1,21C,1,x/1,21112C,2,1,22221S,2/2,2,2,2S,1,2/x2,21,21,x,2 1 32",
         "midgame3" => "2,1,1,1,x2/x,2,2,1,x2/x,1,2,1C,1,1/x2,2,1112C,12S,2/x,2,2,1,x,1/2,2,x2,1,1 1 17",
         "temp" => "x2,2,112,x,1/2,21S,2,12,x2/x2,2,112,x,2/x2,1112111112C,1,1,1/2,221C,x,1,1,x/2,x,1,2,x2 1 31",
+        "start" => "x6/x2,2,2,x2/x6/x6/x6/1,x3,1,x 1 3",
+        "start2" => "x6/x2,2,2,x2/x3,2,x2/x6/x6/x,1,x,1,1,x 2 4",
         _ => {return None}
     };
     Some(s)

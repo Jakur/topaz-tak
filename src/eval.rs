@@ -174,7 +174,9 @@ impl Evaluator for Weights6 {
                 if safety < 0 {
                     captive *= 2;
                 }
-                let stack_score = captive * c_mul + friendly * f_mul + pw;
+                let friendly_score = friendly * f_mul;
+                // let friendly_score = std::cmp::min(friendly * f_mul, 300);
+                let stack_score = captive * c_mul + friendly_score + pw;
                 if let Color::White = top.owner() {
                     score += stack_score;
                 } else {
@@ -183,16 +185,17 @@ impl Evaluator for Weights6 {
             }
         }
 
-        let black_c_lonely = (game.bits.cap & game.bits.black).adjacent() & (game.bits.flat | game.bits.wall);
+        let black_c_lonely =
+            (game.bits.cap & game.bits.black).adjacent() & (game.bits.flat | game.bits.wall);
         if black_c_lonely == <Self::Game as TakBoard>::Bits::ZERO {
             score += 30;
         }
 
-        let white_c_lonely = (game.bits.cap & game.bits.white).adjacent() & (game.bits.flat | game.bits.wall);
+        let white_c_lonely =
+            (game.bits.cap & game.bits.white).adjacent() & (game.bits.flat | game.bits.wall);
         if white_c_lonely == <Self::Game as TakBoard>::Bits::ZERO {
             score -= 30;
         }
-
 
         // // Danger FOR the associated color
         // const DANGER_MUL: i32 = 40; // 20
@@ -288,29 +291,13 @@ impl Evaluator for Weights6 {
 }
 
 fn simple_road_est<T: TakBoard>(bits: T::Bits) -> usize {
-    let north = repeat_slide(
-        bits,
-        T::Bits::north,
-        T::Bits::top(),
-    );
+    let north = repeat_slide(bits, T::Bits::north, T::Bits::top());
 
-    let east = repeat_slide(
-        bits,
-        T::Bits::east,
-        T::Bits::right(),
-    );
+    let east = repeat_slide(bits, T::Bits::east, T::Bits::right());
 
-    let south = repeat_slide(
-        bits,
-        T::Bits::south,
-        T::Bits::bottom(),
-    );
+    let south = repeat_slide(bits, T::Bits::south, T::Bits::bottom());
 
-    let west = repeat_slide(
-        bits,
-        T::Bits::west,
-        T::Bits::left(),
-    );
+    let west = repeat_slide(bits, T::Bits::west, T::Bits::left());
 
     std::cmp::min(north.steps + south.steps, east.steps + west.steps)
 }

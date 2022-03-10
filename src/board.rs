@@ -12,7 +12,7 @@ mod zobrist;
 pub use piece::*;
 pub use stack::*;
 
-pub trait TakBoard: Position<Move = GameMove, ReverseMove = RevGameMove> {
+pub trait TakBoard: Position<Move = GameMove, ReverseMove = RevGameMove> + std::fmt::Debug {
     type Bits: Bitboard;
     const SIZE: usize;
     const FLATS: usize;
@@ -151,11 +151,10 @@ macro_rules! board_impl {
             fn hash(&self) -> u64 {
                 self.zobrist()
             }
-            fn legal_move(&self, game_move: GameMove) -> bool
-            {
+            fn legal_move(&self, game_move: GameMove) -> bool {
                 if game_move.is_place_move() {
                     let p = game_move.place_piece();
-                    if p.owner() != self.side_to_move() {
+                    if p.owner() != self.side_to_move() && self.move_num != 1 {
                         return false;
                     }
                     if p.is_cap() && self.caps_reserve(self.side_to_move()) == 0 {
@@ -165,7 +164,8 @@ macro_rules! board_impl {
                         return false;
                     }
                     (self.bits().empty() & <$bits>::index_to_bit(game_move.src_index())).nonzero()
-                } else { // TODO make check of legal stack moves fast as well!
+                } else {
+                    // TODO make check of legal stack moves fast as well!
                     let mut vec = Vec::new();
                     self.generate_moves(&mut vec);
                     vec.into_iter().find(|&m| m == game_move).is_some()
@@ -236,8 +236,11 @@ macro_rules! board_impl {
                 self.move_num
             }
             fn flat_game(&self) -> Option<GameResult> {
-                assert!(self.flats_left[0] < 1_000 && self.flats_left[1] < 1_000);
-                if self.flats_left[0] == 0 || self.flats_left[1] == 0 || self.bits.board_fill() {
+                debug_assert!(self.flats_left[0] < 1_000 && self.flats_left[1] < 1_000);
+                if (self.flats_left[0] == 0 && self.caps_left[0] == 0)
+                    || (self.flats_left[1] == 0 && self.caps_left[1] == 0)
+                    || self.bits.board_fill()
+                {
                     Some(self.flat_winner())
                 } else {
                     None

@@ -2,11 +2,11 @@ use super::{Color, GameResult};
 use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
-use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::move_gen::{
     generate_aggressive_place_moves, generate_all_stack_moves, GameMove, HistoryMoves, KillerMoves,
     MoveBuffer, RevGameMove, SmartMoveBuffer,
 };
+use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
 use std::marker::PhantomData;
@@ -15,17 +15,17 @@ use std::time::Instant;
 pub mod proof;
 
 const NULL_REDUCTION_ENABLED: bool = true;
-const NULL_REDUCE_PV: bool = true;      // probably shouldn't
+const NULL_REDUCE_PV: bool = true; // probably shouldn't
 const NULL_REDUCTION: usize = 2;
 
 // late move reduction parameters
 const LMR_ENABLED: bool = true;
 const LMR_FULL_SEARCH_MOVES: usize = 4; // number of moves that don't get reduced
-const LMR_DEPTH_LIMIT: usize = 2;       // don't reduce low depth searches up to this depth
-const LMR_REDUCE_PV: bool = true;       // probably shouldn't
-const LMR_REDUCE_ROOT: bool = true;     // probably shouldn't
+const LMR_DEPTH_LIMIT: usize = 2; // don't reduce low depth searches up to this depth
+const LMR_REDUCE_PV: bool = true; // probably shouldn't
+const LMR_REDUCE_ROOT: bool = true; // probably shouldn't
 
-const PV_SEARCH_ENABLED: bool = true;  // no speedup, worse playing strength
+const PV_SEARCH_ENABLED: bool = true; // no speedup, worse playing strength
 const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF
 
 // aspiration window parameters
@@ -50,6 +50,7 @@ pub struct SearchInfo {
     pv_table: HashTable,
     pub killer_moves: Vec<KillerMoves>,
     pub hist_moves: HistoryMoves,
+    pub stack_win_kill: Vec<KillerMoves>,
     stopped: bool,
     input: Option<Receiver<TeiCommand>>,
     max_time: u64,
@@ -65,6 +66,7 @@ impl SearchInfo {
             max_depth,
             pv_table: HashTable::new(pv_size),
             killer_moves: vec![KillerMoves::new(); max_depth + 1],
+            stack_win_kill: vec![KillerMoves::new(); max_depth + 1],
             hist_moves: HistoryMoves::new(6), // Todo init in search
             nodes: 0,
             stopped: false,
@@ -130,6 +132,7 @@ impl SearchInfo {
         let mut backward = Vec::new();
         while let Some(m) = self.pv_move(position) {
             if !position.legal_move(m) {
+                dbg!("Illegal pv move in {:?}", &position);
                 dbg!("Illegal Move in Pv {}", m.to_ptn::<E>());
                 break;
             }
@@ -288,7 +291,17 @@ where
                     board,
                     eval,
                     info,
-                    SearchData::new(-1_000_000, 1_000_000, depth, true, None, 0, TakHistory(0), true, true),
+                    SearchData::new(
+                        -1_000_000,
+                        1_000_000,
+                        depth,
+                        true,
+                        None,
+                        0,
+                        TakHistory(0),
+                        true,
+                        true,
+                    ),
                 )
             }
             alpha = best_score - ASPIRATION_WINDOW;
@@ -306,7 +319,10 @@ where
         }
         print!(
             "info depth {} score cp {} nodes {} hashfull {} pv ",
-            depth, best_score, info.nodes, info.pv_table.occupancy()
+            depth,
+            best_score,
+            info.nodes,
+            info.pv_table.occupancy()
         );
         outcome = Some(SearchOutcome::new(
             best_score,
@@ -339,6 +355,9 @@ impl TakHistory {
         }
         let mask = (1 << depth) | (1 << depth - 2);
         (self.0 & mask) == mask
+    }
+    fn check(self, depth: usize) -> bool {
+        self.0 & (1 << depth) != 0
     }
 }
 
@@ -476,8 +495,10 @@ where
         }
     }
     if NULL_REDUCTION_ENABLED
-    && (!data.is_pv || NULL_REDUCE_PV)
-    && null_move && depth >= 1 + NULL_REDUCTION {
+        && (!data.is_pv || NULL_REDUCE_PV)
+        && null_move
+        && depth >= 1 + NULL_REDUCTION
+    {
         // && road_move.is_none() {
 
         board.null_move();
@@ -500,8 +521,8 @@ where
                 ),
             );
         if one_depth_score <= LOSE_SCORE + 100 {
-            tak_history = tak_history.add(info.ply_depth(board));
             board.rev_null_move();
+            tak_history = tak_history.add(info.ply_depth(board));
         } else {
             // Check if our position is so good that passing still gives opp a bad pos
             let score = -1
@@ -529,34 +550,31 @@ where
         }
     }
 
-   // internal iterative deepening
-   if IID_ENABLED
-   && depth >= IID_MIN_DEPTH
-   && (is_pv || IID_NON_PV)
-   && !pv_entry.is_some() {
-       let reduction = std::cmp::max(IID_REDUCTION, depth / IID_DIVISION);
-       alpha_beta(
-           board,
-           evaluator,
-           info,
-           SearchData::new(
-               alpha,
-               beta,
-               data.depth-reduction,
-               false,
-               data.last_move,
-               extensions,
-               tak_history,
-               data.is_pv,
-               false,
-           ),
-       );
-       let pv_entry_foreign_2 = info.lookup_move(board);
+    // internal iterative deepening
+    if IID_ENABLED && depth >= IID_MIN_DEPTH && (is_pv || IID_NON_PV) && !pv_entry.is_some() {
+        let reduction = std::cmp::max(IID_REDUCTION, depth / IID_DIVISION);
+        alpha_beta(
+            board,
+            evaluator,
+            info,
+            SearchData::new(
+                alpha,
+                beta,
+                data.depth - reduction,
+                false,
+                data.last_move,
+                extensions,
+                tak_history,
+                data.is_pv,
+                false,
+            ),
+        );
+        let pv_entry_foreign_2 = info.lookup_move(board);
 
-       if let Some(entry) = pv_entry_foreign_2 {
-           pv_entry = Some(entry.clone());
-       }
-   }
+        if let Some(entry) = pv_entry_foreign_2 {
+            pv_entry = Some(entry.clone());
+        }
+    }
 
     let mut best_move = None;
     let mut best_score = None;
@@ -581,30 +599,33 @@ where
     }
 
     let mut has_searched_pv = false;
-    if moves.len() == 0 { // if we don't have an immediate win, check TT move first
+    if moves.len() == 0 {
+        // if we don't have an immediate win, check TT move first
         if let Some(entry) = pv_entry {
             if (entry.game_move.is_place_move() && board.legal_move(entry.game_move))
-            || stack_moves.contains(&entry.game_move) // TODO maybe a really fast legal checker is faster
+                || stack_moves.contains(&entry.game_move)
+            // TODO maybe a really fast legal checker is faster
             {
                 let m = entry.game_move.clone();
                 let rev_move = board.do_move(m);
 
-                let score = -1 * alpha_beta(
-                    board,
-                    evaluator,
-                    info,
-                    SearchData::new(
-                        -beta,
-                        -alpha,
-                        depth-1,
-                        true,
-                        Some(rev_move),
-                        extensions,
-                        tak_history,
-                        data.is_pv,
-                        false,
-                    ),
-                );
+                let score = -1
+                    * alpha_beta(
+                        board,
+                        evaluator,
+                        info,
+                        SearchData::new(
+                            -beta,
+                            -alpha,
+                            depth - 1,
+                            true,
+                            Some(rev_move),
+                            extensions,
+                            tak_history,
+                            data.is_pv,
+                            false,
+                        ),
+                    );
 
                 board.reverse_move(rev_move);
                 if info.stopped {
@@ -624,7 +645,16 @@ where
                             //     info.hist_moves.update(depth, m);
                             // }
                         }
-                        info.store_move(board, HashEntry::new(board.hash(), m, ScoreCutoff::Beta(beta), depth, board.ply()));
+                        info.store_move(
+                            board,
+                            HashEntry::new(
+                                board.hash(),
+                                m,
+                                ScoreCutoff::Beta(beta),
+                                depth,
+                                board.ply(),
+                            ),
+                        );
                         return beta;
                     }
                     info.stats.add_alpha(0);
@@ -652,154 +682,17 @@ where
 
         let m = moves.get_best(board.ply(), info);
 
-        // if depth == 6 {
-        //     println!("{}", m.to_ptn::<T>());
-        // }
-        // if depth == 5 && last_move.is_some() {
-        //     println!("    {}", m.to_ptn::<T>());
-        // }
-        // let pv_move = info.pv_move(board);
-        // let side = board.side_to_move();
-        // let flat_diff = board.flat_diff(side);
         let rev_move = board.do_move(m);
-        let mut next_extensions = extensions;
-        // Extend if the pv is to make a "bad capture"
-        // if let Some(pv_move) = pv_move {
-        //     if m == pv_move && m.is_stack_move() {
-        //         next_extensions += 1;
-        //         // if let Some(last_move) = last_move {
-        //         //     if last_move.dest_sq == rev_move.dest_sq {
-        //         //         next_extensions += 1;
-        //         //     }
-        //         // }
-        //         // let new_flat_diff = board.flat_diff(side);
-        //         // if new_flat_diff - flat_diff <= 1 {
-        //         //     next_extensions += 1;
-        //         // }
-        //     } else {
-        //         next_extensions = 0;
-        //     }
-        //     // } else {
-        //     //     next_extensions = 0;
-        //     // }
-        // }
-        let next_depth = if tak_history.consecutive(info.ply_depth(board)) && extensions < 2 {
-            // dbg!("extending!");
-            next_extensions += 1;
-            depth - 1
-        } else {
-            depth - 1
-        };
-        // if next_extensions >= 3 {
-        //     // dbg!(info.ply_depth(board));
-        //     next_extensions = 0;
-        //     next_depth += 1;
-        // }
-        // match last_move {
-        //     Some(last_rev) if last_rev.game_move.is_stack_move() => {
-        //         if extensions <= 2 && last_rev.dest_sq == rev_move.dest_sq {
-        //             // Must be a capture, I think
-        //             extensions += 1;
-        //             next_depth += 1;
-        //         }
-        //     }
-        //     _ => {}
-        // }
-        //         value = PVS(-(alpha+1),-alpha)
-        // if(value > alpha && value < beta) {
-        //   value = PVS(-beta,-alpha);
-        // }
+        let next_extensions = extensions;
+
+        let next_depth = depth - 1;
 
         let mut score;
 
         // search first move fully!
         if count == 0 {
-            score = -1 * alpha_beta(
-                board,
-                evaluator,
-                info,
-                SearchData::new(
-                    -beta,
-                    -alpha,
-                    next_depth,
-                    true,
-                    Some(rev_move),
-                    next_extensions,
-                    tak_history,
-                    data.is_pv,
-                    false,
-                ),
-            );
-        } else {
-            let mut needs_re_search_on_alpha = false;
-            let mut needs_re_search_on_alpha_beta = false;
-            let mut next_alpha = -beta;
-            let mut reduced_depth = next_depth;
-
-            // late move reduction
-            if LMR_ENABLED
-                && depth > LMR_DEPTH_LIMIT
-                && count >= LMR_FULL_SEARCH_MOVES
-                && (LMR_REDUCE_PV || !is_pv)
-                && (LMR_REDUCE_ROOT || !is_root)
-            {
-                reduced_depth -= 2;
-                needs_re_search_on_alpha = true;
-            }
-            if PV_SEARCH_ENABLED
-                && depth > 1
-                && !data.is_root
-            {
-                next_alpha = -(alpha+1);
-                needs_re_search_on_alpha_beta = true;
-            }
-
-            score = -1 * alpha_beta(
-                board,
-                evaluator,
-                info,
-                SearchData::new(
-                    next_alpha,
-                    -alpha,
-                    reduced_depth,
-                    true,
-                    Some(rev_move),
-                    next_extensions,
-                    tak_history,
-                    false,
-                    false,
-                ),
-            );
-
-            // re-search full depth moves and those that don't fail low
-            if needs_re_search_on_alpha
-                && score > alpha
-            {
-                score = -1 * alpha_beta(
-                    board,
-                    evaluator,
-                    info,
-                    SearchData::new(
-                        next_alpha,
-                        -alpha,
-                        next_depth,
-                        true,
-                        Some(rev_move),
-                        next_extensions,
-                        tak_history,
-                        false,
-                        false,
-                    ),
-                );
-            }
-
-            // research with full windows if PV-Search doesn't fail
-            if needs_re_search_on_alpha_beta
-                && score > alpha
-                && score < beta
-                && (PV_RE_SEARCH_NON_PV || data.is_pv)
-            {
-                score = -1 * alpha_beta(
+            score = -1
+                * alpha_beta(
                     board,
                     evaluator,
                     info,
@@ -815,6 +708,90 @@ where
                         false,
                     ),
                 );
+        } else {
+            let mut needs_re_search_on_alpha = false;
+            let mut needs_re_search_on_alpha_beta = false;
+            let mut next_alpha = -beta;
+            let mut reduced_depth = next_depth;
+
+            // late move reduction
+            if LMR_ENABLED
+                && depth > LMR_DEPTH_LIMIT
+                && count >= LMR_FULL_SEARCH_MOVES
+                && (LMR_REDUCE_PV || !is_pv)
+                && (LMR_REDUCE_ROOT || !is_root)
+                && !tak_history.consecutive(info.ply_depth(board))
+            {
+                reduced_depth -= 2;
+                needs_re_search_on_alpha = true;
+            }
+            if PV_SEARCH_ENABLED && depth > 1 && !data.is_root {
+                next_alpha = -(alpha + 1);
+                needs_re_search_on_alpha_beta = true;
+            }
+
+            score = -1
+                * alpha_beta(
+                    board,
+                    evaluator,
+                    info,
+                    SearchData::new(
+                        next_alpha,
+                        -alpha,
+                        reduced_depth,
+                        true,
+                        Some(rev_move),
+                        next_extensions,
+                        tak_history,
+                        false,
+                        false,
+                    ),
+                );
+
+            // re-search full depth moves and those that don't fail low
+            if needs_re_search_on_alpha && score > alpha {
+                score = -1
+                    * alpha_beta(
+                        board,
+                        evaluator,
+                        info,
+                        SearchData::new(
+                            next_alpha,
+                            -alpha,
+                            next_depth,
+                            true,
+                            Some(rev_move),
+                            next_extensions,
+                            tak_history,
+                            false,
+                            false,
+                        ),
+                    );
+            }
+
+            // research with full windows if PV-Search doesn't fail
+            if needs_re_search_on_alpha_beta
+                && score > alpha
+                && score < beta
+                && (PV_RE_SEARCH_NON_PV || data.is_pv)
+            {
+                score = -1
+                    * alpha_beta(
+                        board,
+                        evaluator,
+                        info,
+                        SearchData::new(
+                            -beta,
+                            -alpha,
+                            next_depth,
+                            true,
+                            Some(rev_move),
+                            next_extensions,
+                            tak_history,
+                            data.is_pv,
+                            false,
+                        ),
+                    );
             }
         }
 
@@ -832,13 +809,16 @@ where
                 if m.is_place_move() {
                     info.killer_moves[board.ply() % info.max_depth].add(m);
                 } else {
-                    // const WINNING: i32 = crate::eval::WIN_SCORE - 100;
+                    const WINNING: i32 = crate::eval::WIN_SCORE - 100;
                     // // Cannot be null?
-                    // if score >= WINNING {
-                    //     info.hist_moves.update(depth, m);
-                    // }
+                    if score >= WINNING && count >= 8 {
+                        info.stack_win_kill[board.ply() % info.max_depth].add(m);
+                    }
                 }
-                info.store_move(board, HashEntry::new(board.hash(), m, ScoreCutoff::Beta(beta), depth, board.ply()));
+                info.store_move(
+                    board,
+                    HashEntry::new(board.hash(), m, ScoreCutoff::Beta(beta), depth, board.ply()),
+                );
                 return beta;
             }
             info.stats.add_alpha(count);
@@ -853,12 +833,24 @@ where
             if alpha != old_alpha {
                 info.store_move(
                     board,
-                    HashEntry::new(board.hash(), best, ScoreCutoff::Exact(best_score), depth, board.ply()),
+                    HashEntry::new(
+                        board.hash(),
+                        best,
+                        ScoreCutoff::Exact(best_score),
+                        depth,
+                        board.ply(),
+                    ),
                 );
             } else {
                 info.store_move(
                     board,
-                    HashEntry::new(board.hash(), best, ScoreCutoff::Alpha(alpha), depth, board.ply()),
+                    HashEntry::new(
+                        board.hash(),
+                        best,
+                        ScoreCutoff::Alpha(alpha),
+                        depth,
+                        board.ply(),
+                    ),
                 )
             }
         }
@@ -875,8 +867,7 @@ fn gen_and_score<T>(
     last_move: Option<RevGameMove>,
     stack_moves: &mut Vec<GameMove>,
     moves: &mut SmartMoveBuffer,
-)
-where
+) where
     T: TakBoard,
 {
     // Do a slower, more thorough move ordering near the root
@@ -891,12 +882,11 @@ where
         let mut check_moves = Vec::new();
         generate_aggressive_place_moves(board, &mut check_moves);
         let tak_threats = board.get_tak_threats(&mut check_moves, None);
+        moves.gen_score_place_moves(board);
         moves.score_tak_threats(&tak_threats);
         if board.ply() >= 4 {
             moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
         }
-        // generate placements last, so score_tak_threats doesn't have to search through them
-        moves.gen_score_place_moves(board);
     } else {
         if board.ply() >= 4 {
             generate_all_stack_moves(board, moves);
