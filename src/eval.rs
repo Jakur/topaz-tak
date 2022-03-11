@@ -136,7 +136,8 @@ impl Evaluator for Weights6 {
                 }
                 let neighbors = <Board6 as TakBoard>::Bits::index_to_bit(idx).adjacent();
                 for sq in BitIndexIterator::new(neighbors) {
-                    if let Some(piece) = game.board[sq].last() {
+                    let stack = &game.board[sq];
+                    if let Some(piece) = stack.last() {
                         if piece.owner() == top.owner() {
                             match piece {
                                 Piece::WhiteFlat | Piece::BlackFlat => {
@@ -144,10 +145,14 @@ impl Evaluator for Weights6 {
                                     mobility += 1;
                                 }
                                 Piece::WhiteWall | Piece::BlackWall => {
-                                    safety += 4;
+                                    if stack.len() < Self::Game::SIZE {
+                                        safety += 4;
+                                    }
                                 }
                                 Piece::WhiteCap | Piece::BlackCap => {
-                                    safety += 32;
+                                    if stack.len() < Self::Game::SIZE {
+                                        safety += 32;
+                                    }
                                     mobility += 1;
                                 }
                             }
@@ -157,10 +162,14 @@ impl Evaluator for Weights6 {
                                     mobility += 2;
                                 }
                                 Piece::WhiteWall | Piece::BlackWall => {
-                                    safety -= 4;
+                                    if stack.len() < Self::Game::SIZE {
+                                        safety -= 4;
+                                    }
                                 }
                                 Piece::WhiteCap | Piece::BlackCap => {
-                                    safety -= 32;
+                                    if stack.len() < Self::Game::SIZE {
+                                        safety -= 32;
+                                    }
                                 }
                             }
                         }
@@ -184,17 +193,23 @@ impl Evaluator for Weights6 {
                 }
             }
         }
-
-        let black_c_lonely =
-            (game.bits.cap & game.bits.black).adjacent() & (game.bits.flat | game.bits.wall);
-        if black_c_lonely == <Self::Game as TakBoard>::Bits::ZERO {
-            score += 30;
+        let black_cap = game.bits.cap & game.bits.black;
+        if black_cap != <Self::Game as TakBoard>::Bits::ZERO {
+            // let black_c_lonely =
+            //     black_cap.adjacent() & (game.bits.white & (game.bits.flat | game.bits.wall));
+            let black_c_lonely = black_cap.adjacent() & (game.bits.flat | game.bits.wall);
+            if black_c_lonely == <Self::Game as TakBoard>::Bits::ZERO {
+                score += 30;
+            }
         }
-
-        let white_c_lonely =
-            (game.bits.cap & game.bits.white).adjacent() & (game.bits.flat | game.bits.wall);
-        if white_c_lonely == <Self::Game as TakBoard>::Bits::ZERO {
-            score -= 30;
+        let white_cap = game.bits.cap & game.bits.white;
+        if white_cap != <Self::Game as TakBoard>::Bits::ZERO {
+            // let white_c_lonely =
+            //     white_cap.adjacent() & (game.bits.black & (game.bits.flat | game.bits.wall));
+            let white_c_lonely = white_cap.adjacent() & (game.bits.flat | game.bits.wall);
+            if white_c_lonely == <Self::Game as TakBoard>::Bits::ZERO {
+                score -= 30;
+            }
         }
 
         // // Danger FOR the associated color
