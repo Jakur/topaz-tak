@@ -1,5 +1,6 @@
 use super::{Bitboard, Piece, Stack};
 use crate::board::BitIndexIterator;
+use crate::board::Bitboard6;
 use crate::board::Board6;
 use crate::board::TakBoard;
 use board_game_traits::{Color, Position};
@@ -220,21 +221,71 @@ impl Evaluator for Weights6 {
         // let black_danger = (game.bits.road_pieces(Color::White).critical_squares()
         //     & !game.bits.empty())
         // .pop_count() >= 1;
-        let white_comp = connected_components(game.bits.road_pieces(Color::White));
-        let black_comp = connected_components(game.bits.road_pieces(Color::Black));
+        let white_comp =
+            connected_components(game.bits.road_pieces(Color::White), Bitboard6::flood);
+        let black_comp =
+            connected_components(game.bits.road_pieces(Color::Black), Bitboard6::flood);
         // Punish more components?
         score -= white_comp.steps as i32 * self.connectivity;
         score += black_comp.steps as i32 * self.connectivity;
 
         // Examine the largest components
+        // let mut white_road_pc = white_comp.bits.simple_road_est();
+        // let mut black_road_pc = black_comp.bits.simple_road_est();
+        let loose_white_comp =
+            connected_components(game.bits.road_pieces(Color::White), Bitboard6::loose_flood);
+        let loose_black_comp =
+            connected_components(game.bits.road_pieces(Color::Black), Bitboard6::loose_flood);
+        let loose_white_pc = loose_white_comp.bits.simple_road_est();
+        let loose_black_pc = loose_black_comp.bits.simple_road_est();
+        // score -= loose_white_comp.steps as i32 * self.connectivity;
+        // score += loose_black_comp.steps as i32 * self.connectivity;
+        // if loose_white > white_road_pc {
+        //     white_road_pc += 1;
+        // }
+        // if loose_black > black_road_pc {
+        //     black_road_pc += 1;
+        // }
+        let mut white_road_score = match loose_white_pc {
+            6 => 50,
+            5 => 35,
+            4 => 20,
+            3 => 10,
+            _ => 0,
+        };
+        let mut black_road_score = match loose_black_pc {
+            6 => 50,
+            5 => 35,
+            4 => 20,
+            3 => 10,
+            _ => 0,
+        };
+        if loose_white_pc > loose_black_pc {
+            white_road_score *= 2;
+        } else if loose_black_pc > loose_white_pc {
+            black_road_score *= 2;
+        } else {
+            match game.side_to_move() {
+                Color::White => white_road_score *= 2,
+                Color::Black => black_road_score *= 2,
+            }
+        }
+        let white_res = game.pieces_reserve(Color::White);
+        let black_res = game.pieces_reserve(Color::Black);
+        let pieces_left = white_res + black_res;
+        let mul = (pieces_left as i32 * 100) / 60;
+
+        score += (white_road_score * mul) / 100;
+        score -= (black_road_score * mul) / 100;
         // let white_steps = simple_road_est::<Board6>(white_comp.bits);
         // let black_steps = simple_road_est::<Board6>(black_comp.bits);
-        // if white_res < 16 || black_res < 16 {
-        //     // Half flats in white's favor
-        //     let mut flat_diff = (game.bits.flat & game.bits.white).pop_count() as i32
-        //         - (game.bits.flat & game.bits.black).pop_count() as i32;
-        //     flat_diff *= 2;
-        //     flat_diff -= game.komi() as i32;
+        if white_res < 10 || black_res < 10 {
+            // Half flats in white's favor
+            let mut flat_diff = (game.bits.flat & game.bits.white).pop_count() as i32
+                - (game.bits.flat & game.bits.black).pop_count() as i32;
+            flat_diff *= 2;
+            flat_diff -= game.komi() as i32;
+        }
         //     let res_adv = white_res - black_res;
         //     flat_diff += res_adv / 2;
         //     if res_adv > 0 {
@@ -305,18 +356,6 @@ impl Evaluator for Weights6 {
     }
 }
 
-fn simple_road_est<T: TakBoard>(bits: T::Bits) -> usize {
-    let north = repeat_slide(bits, T::Bits::north, T::Bits::top());
-
-    let east = repeat_slide(bits, T::Bits::east, T::Bits::right());
-
-    let south = repeat_slide(bits, T::Bits::south, T::Bits::bottom());
-
-    let west = repeat_slide(bits, T::Bits::west, T::Bits::left());
-
-    std::cmp::min(north.steps + south.steps, east.steps + west.steps)
-}
-
 struct BitOutcome<B> {
     bits: B,
     steps: usize,
@@ -353,12 +392,12 @@ fn repeat_slide<B: Bitboard, F: Fn(B) -> B>(mut b: B, f: F, end: B) -> BitOutcom
     BitOutcome::new(b, counter)
 }
 
-fn connected_components<B: Bitboard>(mut bits: B) -> BitOutcome<B> {
+fn connected_components<B: Bitboard, F: Fn(B, B) -> B>(mut bits: B, flood_fn: F) -> BitOutcome<B> {
     let mut count = 0;
     let mut largest = B::ZERO;
     while bits != B::ZERO {
         let lowest = bits.lowest();
-        let set = bits.flood(lowest);
+        let set = flood_fn(bits, lowest);
         if set.pop_count() > largest.pop_count() {
             largest = set;
         }
@@ -506,11 +545,11 @@ mod test {
         let board = Board6::try_from_tps(s).unwrap();
         assert_eq!(
             2,
-            connected_components(board.bits.road_pieces(Color::White)).steps
+            connected_components(board.bits.road_pieces(Color::White), Bitboard6::flood).steps
         );
         assert_eq!(
             4,
-            connected_components(board.bits.road_pieces(Color::Black)).steps
+            connected_components(board.bits.road_pieces(Color::Black), Bitboard6::flood).steps
         );
     }
 }

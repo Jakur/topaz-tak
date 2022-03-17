@@ -453,6 +453,13 @@ where
         //         SearchData::new(alpha, beta, 2, false, last_move, 1, true),
         //     );
         // }
+        // // Todo make this work with pv?
+        // let side = board.side_to_move();
+        // if board.pieces_reserve(side) == 1 && board.caps_reserve(side) == 0 {
+        //     if board.flat_diff(side) >= 0 {
+        //         return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
+        //     }
+        // }
         let ply_depth = info.ply_depth(board);
         return evaluator.evaluate(board, ply_depth);
         // let mut road_check = Vec::new();

@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::Board6;
-use topaz_tak::eval::Weights6;
+use topaz_tak::eval::{Evaluator, Weights6};
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
 
@@ -33,7 +33,11 @@ pub fn main() {
             // println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
             // info.print_cuts();
             // let node_counts = search_efficiency(&["empty6"], 8);
-            let examine = vec![("start2", 12)];
+            let examine = vec![("endgame1", 12)];
+            // let mut board = Board6::try_from_tps(saved_tps("start4").unwrap()).unwrap();
+            // let eval = Weights6::default();
+            // eval.evaluate(&board, 0);
+            // board.do_move(GameMove::try_from_ptn("d3", &board).unwrap());
             let node_counts = search_efficiency(&examine, false).unwrap();
             // let node_counts =
             //     search_efficiency(&[("opening1", 8), ("opening2", 8), ("midgame1", 6)], false)
@@ -130,6 +134,11 @@ fn saved_tps(name: &str) -> Option<&str> {
         "temp" => "x2,2,112,x,1/2,21S,2,12,x2/x2,2,112,x,2/x2,1112111112C,1,1,1/2,221C,x,1,1,x/2,x,1,2,x2 1 31",
         "start" => "x6/x2,2,2,x2/x6/x6/x6/1,x3,1,x 1 3",
         "start2" => "2,x5/x6/x6/x6/x2,1,x3/1,x5 2 2",
+        "start3" => "x6/x4,2,1/x2,2,2C,1,2/x2,2,x,1,1/x5,1/x6 1 6",
+        "start4" => "2,x4,1/x4,1,1/x2,2,21C,12C,x/1,1,1,2,1,1/x2,2,2,2,2/x6 2 11",
+        "tt1" => "1,x4,2/1,12,1,1,1,2/2,12C,21C,2,21,1/1,1,2,2,2,1/1,x3,2,2/x6 2 16",
+        "endgame1" => "1,2,1,1,1S,212212/112,22,x,1,1S,2/1,2,212C,2,1112S,x/x,2,1,1,12221C,2/1,1S,1S,12,x,22121S/1,12,1,2,x,2 1 46",
+        "endgame2" => "2,x,2,2,1,1/1,2,2,1,12,1/1,2112S,x,1,2,1/21,2,2221S,2,2112C,2/2,121,1,2S,11221C,1/12,222221S,12,1,1,1 1 43",
         _ => {return None}
     };
     Some(s)

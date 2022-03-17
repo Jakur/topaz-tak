@@ -352,8 +352,9 @@ macro_rules! board_impl {
             }
 
             fn flat_diff(&self, player: Color) -> i32 {
-                let white = self.bits.flat_score(Color::White) as i32;
-                let black = self.bits.flat_score(Color::Black) as i32;
+                let white = (self.bits.flat_score(Color::White) * 2) as i32;
+                let black = (self.bits.flat_score(Color::Black) * 2) as i32 + self.komi as i32;
+
                 match player {
                     Color::White => white - black,
                     Color::Black => black - white,

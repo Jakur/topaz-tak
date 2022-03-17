@@ -141,6 +141,10 @@ pub trait Bitboard:
     /// the provided bit itself. However, because of the interactions between multiple bits, 
     /// many of the initial values may remain set depending on the input bit configuration. 
     fn adjacent(self) -> Self;
+
+    /// Returns all bits adjacent to a bitboard by sliding the entire bitboard in 
+    /// all 8 directions.
+    fn loose_adjacent(self) -> Self;
     /// Flood fills and sets bits where the left + right or top + bottom edges 
     /// are one square away from meeting. 
     /// 
@@ -274,6 +278,50 @@ impl Bitboard6 {
         ];
         arr
     }
+    pub fn loose_flood(self, edge: Self) -> Self {
+        let mut prev = Self::new(0);
+        let mut edge_connected = self & edge;
+        while edge_connected != prev {
+            prev = edge_connected;
+            edge_connected |= edge_connected.loose_adjacent() & self
+        }
+        edge_connected
+    }
+    pub fn simple_road_est(self) -> i32 {
+        const NS: [Bitboard6; 6] = [
+            Bitboard6(Bitboard6::TOP.0),
+            Bitboard6(Bitboard6::TOP.0 << 8),
+            Bitboard6(Bitboard6::TOP.0 << 16),
+            Bitboard6(Bitboard6::TOP.0 << 24),
+            Bitboard6(Bitboard6::TOP.0 << 32),
+            Bitboard6(Bitboard6::TOP.0 << 36)
+        ];
+        const EW: [Bitboard6; 6] = [
+            Bitboard6(Bitboard6::LEFT.0),
+            Bitboard6(Bitboard6::LEFT.0 << 1),
+            Bitboard6(Bitboard6::LEFT.0 << 2),
+            Bitboard6(Bitboard6::LEFT.0 << 3),
+            Bitboard6(Bitboard6::LEFT.0 << 4),
+            Bitboard6(Bitboard6::LEFT.0 << 5),
+        ];
+        let mut ew_count = 0;
+        for b in EW {
+            if (self & b).0 > 0 {
+                ew_count += 1;
+            }
+        }
+        let mut ns_count = 0;
+        for b in NS {
+            if (self & b).0 > 0 {
+                ns_count += 1;
+            }
+        }
+        if ew_count > ns_count {
+            ew_count
+        } else {
+            ns_count
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -394,6 +442,18 @@ macro_rules! bitboard_impl {
                 let left = data >> 1;
                 let right = data << 1;
                 Self::new(up | down | left | right)
+            }
+            fn loose_adjacent(self) -> Self {
+                let data = self.0;
+                let up = data >> 8;
+                let down = data << 8;
+                let left = data >> 1;
+                let right = data << 1;
+                let up_left = data >> 9;
+                let up_right = data >> 7;
+                let down_left = data << 7;
+                let down_right = data << 9;
+                Self::new(up | down | left | right | up_left | up_right | down_left | down_right)
             }
             fn critical_squares(self) -> Self {
                 let left = self.flood(Self::LEFT);
