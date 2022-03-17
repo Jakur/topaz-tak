@@ -130,7 +130,11 @@ impl SearchInfo {
     fn full_pv<E: TakBoard>(&mut self, position: &mut E) -> Vec<GameMove> {
         let mut forward = Vec::new();
         let mut backward = Vec::new();
+        let mut counter = 0;
         while let Some(m) = self.pv_move(position) {
+            if counter >= 32 {
+                break; // Cycle
+            }
             if !position.legal_move(m) {
                 dbg!("Illegal pv move in {:?}", &position);
                 dbg!("Illegal Move in Pv {}", m.to_ptn::<E>());
@@ -139,6 +143,7 @@ impl SearchInfo {
             let rev = position.do_move(m);
             backward.push(rev);
             forward.push(m);
+            counter += 1;
         }
         for rev_m in backward.into_iter().rev() {
             position.reverse_move(rev_m);

@@ -33,7 +33,7 @@ pub fn main() {
             // println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
             // info.print_cuts();
             // let node_counts = search_efficiency(&["empty6"], 8);
-            let examine = vec![("endgame1", 12)];
+            let examine = vec![("endgame2", 12)];
             // let mut board = Board6::try_from_tps(saved_tps("start4").unwrap()).unwrap();
             // let eval = Weights6::default();
             // eval.evaluate(&board, 0);
