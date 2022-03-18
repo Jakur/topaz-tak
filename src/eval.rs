@@ -285,6 +285,20 @@ impl Evaluator for Weights6 {
                 - (game.bits.flat & game.bits.black).pop_count() as i32;
             flat_diff *= 2;
             flat_diff -= game.komi() as i32;
+            // TODO board fill considerations?
+            if white_res < black_res {
+                match game.side_to_move() {
+                    Color::White => flat_diff += 2,
+                    _ => {}
+                }
+            } else if black_res < white_res {
+                match game.side_to_move() {
+                    Color::Black => flat_diff -= 2,
+                    _ => {}
+                }
+            }
+            let min_res = std::cmp::min(white_res, black_res);
+            score += (flat_diff * 100) / min_res as i32;
         }
         //     let res_adv = white_res - black_res;
         //     flat_diff += res_adv / 2;
