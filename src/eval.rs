@@ -297,8 +297,11 @@ impl Evaluator for Weights6 {
                     _ => {}
                 }
             }
-            let min_res = std::cmp::min(white_res, black_res);
-            score += (flat_diff * 100) / min_res as i32;
+            if flat_diff > 0 {
+                score += (flat_diff * 100) / white_res as i32;
+            } else if flat_diff < 0 {
+                score += (flat_diff * 100) / black_res as i32;
+            }
         }
         //     let res_adv = white_res - black_res;
         //     flat_diff += res_adv / 2;
