@@ -9,9 +9,11 @@ use crate::move_gen::{
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::TeiCommand;
 use crossbeam_channel::Receiver;
+use instant::Instant;
 use std::marker::PhantomData;
-use std::time::Instant;
+// use std::time::Instant;
 
+#[cfg(feature = "cli")]
 pub mod proof;
 
 const NULL_REDUCTION_ENABLED: bool = true;
@@ -226,6 +228,18 @@ where
     }
     pub fn best_move(&self) -> Option<String> {
         self.pv.get(0).map(|m| m.to_ptn::<T>())
+    }
+    pub fn pretty_string(&self) -> String {
+        let mut string = format!(
+            "info depth {} score cp {} nodes {} pv ",
+            self.depth, self.score, self.nodes
+        );
+        for mv in self.pv.iter().map(|x| x.to_ptn::<T>()) {
+            string.push_str(&mv);
+            string.push_str(" ");
+        }
+        string.pop();
+        string
     }
 }
 

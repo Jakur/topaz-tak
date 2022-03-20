@@ -2,8 +2,8 @@ use crate::board::Board7;
 use crate::Piece;
 use crate::TakBoard;
 use board_game_traits::Color;
-use rand_core::{RngCore, SeedableRng};
-use rand_xoshiro::Xoshiro256PlusPlus;
+// use rand_core::{RngCore, SeedableRng};
+// use rand_xoshiro::Xoshiro256PlusPlus;
 
 pub const TABLE: ZobristTable = ZobristTable::new();
 
@@ -61,6 +61,7 @@ impl ZobristTable {
         hash
     }
     #[allow(dead_code)]
+    #[cfg(random)]
     fn build_table() {
         use std::fs::File;
         use std::io::{BufWriter, Write};

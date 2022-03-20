@@ -6,18 +6,25 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = ["random", "cli"]
+cli = ["termtree", "colorful", "getopts", "telnet", "dotenv"]
+random = ["rand_core", "rand_xoshiro", "getrandom"]
+
 [dependencies]
 anyhow = "1.0"
 board-game-traits = "0.2.1"
-rand_core = "0.6.3"
-rand_xoshiro = "0.6.0"
 crossbeam-channel = "0.5"
-termtree = "0.2.3"
-colorful = "0.2"
-getopts = "0.2.21"
-getrandom = "*"
-telnet = "0.2"
-dotenv = "0.15.0"
+cfg-if = "1.0.0"
+instant = "0.1.12"
+rand_core = {version = "0.6.3", optional = true}
+rand_xoshiro = {version = "0.6.0", optional = true}
+getrandom = {version = "*", optional = true}
+termtree = {version = "0.2.3", optional = true}
+colorful = {version = "0.2", optional = true}
+getopts = {version = "0.2.21", optional = true}
+telnet = {version = "0.2", optional = true}
+dotenv = {version = "0.15.0", optional = true}
 
 [profile.release]
 debug = true
@@ -29,6 +36,7 @@ criterion = "0.3"
 [[bin]]
 name = "topaz"
 path = "src/topaz.rs"
+required-features = ["cli"]
 
 [[bench]]
 name = "benchmark"

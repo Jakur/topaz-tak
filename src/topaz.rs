@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::Board6;
-use topaz_tak::eval::{Evaluator, Weights6};
+use topaz_tak::eval::Weights6;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
 
@@ -35,7 +35,8 @@ pub fn main() {
             // let node_counts = search_efficiency(&["empty6"], 8);
             let examine = vec![("endgame1", 12)];
             // let mut board = Board6::try_from_tps(saved_tps("start4").unwrap()).unwrap();
-            // let eval = Weights6::default();
+            // let mut eval = Weights6::default();
+            // eval.add_noise();
             // eval.evaluate(&board, 0);
             // board.do_move(GameMove::try_from_ptn("d3", &board).unwrap());
             let node_counts = search_efficiency(&examine, false).unwrap();
@@ -380,8 +381,14 @@ fn play_game_tei(receiver: Receiver<TeiCommand>, init: GameInitializer) -> Resul
             TeiCommand::NewGame(_size) => {
                 info.clear_tt();
                 if init.add_noise {
-                    println!("Adding noise!");
-                    eval.add_noise();
+                    cfg_if::cfg_if! {
+                        if #[cfg(feature = "random")] {
+                            println!("Adding noise!");
+                            eval.add_noise();
+                        } else {
+                            panic!("Unable to add noise because no rng was compiled!");
+                        }
+                    }
                 }
             }
             TeiCommand::Quit => {
