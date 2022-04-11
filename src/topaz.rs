@@ -33,7 +33,7 @@ pub fn main() {
             // println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
             // info.print_cuts();
             // let node_counts = search_efficiency(&["empty6"], 8);
-            let examine = vec![("endgame1", 12)];
+            let examine = vec![("temp", 12)];
             // let mut board = Board6::try_from_tps(saved_tps("start4").unwrap()).unwrap();
             // let mut eval = Weights6::default();
             // eval.add_noise();
@@ -132,7 +132,7 @@ fn saved_tps(name: &str) -> Option<&str> {
         "midgame1" => "2,2,2222221C,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 1 31", // Tinue avoidance
         "midgame2" => "x4,1,1/1,12S,2,2,1,1/1,1221S,1,21C,1,x/1,21112C,2,1,22221S,2/2,2,2,2S,1,2/x2,21,21,x,2 1 32",
         "midgame3" => "2,1,1,1,x2/x,2,2,1,x2/x,1,2,1C,1,1/x2,2,1112C,12S,2/x,2,2,1,x,1/2,2,x2,1,1 1 17",
-        "temp" => "x2,2,112,x,1/2,21S,2,12,x2/x2,2,112,x,2/x2,1112111112C,1,1,1/2,221C,x,1,1,x/2,x,1,2,x2 1 31",
+        "temp" => "1,1,12,1,1,x/1,21C,x,112C,1,1/x2,2,2,x2/x,2,2,2,x2/x,2,1,x3/x6 2 13",
         "start" => "x6/x2,2,2,x2/x6/x6/x6/1,x3,1,x 1 3",
         "start2" => "2,x5/x6/x6/x6/x2,1,x3/1,x5 2 2",
         "start3" => "x6/x4,2,1/x2,2,2C,1,2/x2,2,x,1,1/x5,1/x6 1 6",
@@ -140,6 +140,7 @@ fn saved_tps(name: &str) -> Option<&str> {
         "tt1" => "1,x4,2/1,12,1,1,1,2/2,12C,21C,2,21,1/1,1,2,2,2,1/1,x3,2,2/x6 2 16",
         "endgame1" => "1,2,1,1,1S,212212/112,22,x,1,1S,2/1,2,212C,2,1112S,x/x,2,1,1,12221C,2/1,1S,1S,12,x,22121S/1,12,1,2,x,2 1 46",
         "endgame2" => "2,x,2,2,1,1/1,2,2,1,12,1/1,2112S,x,1,2,1/21,2,2221S,2,2112C,2/2,121,1,2S,11221C,1/12,222221S,12,1,1,1 1 43",
+        "endgame3" => "x2,21,122,1121S,112S/1S,x,1112,x,2S,x/112C,2S,x,1222221C,2,x/2,x2,1,2121S,x/112,1112111112S,x3,221S/2,2,x2,21,2 1 56",
         _ => {return None}
     };
     Some(s)

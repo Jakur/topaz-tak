@@ -60,6 +60,7 @@ pub struct SearchInfo {
     start_ply: usize,
     estimate_time: bool,
     pub stats: SearchStats,
+    early_abort_depth: usize,
 }
 
 impl SearchInfo {
@@ -78,6 +79,7 @@ impl SearchInfo {
             start_ply: 0,
             estimate_time: true,
             stats: SearchStats::new(16),
+            early_abort_depth: 6,
         }
     }
     pub fn print_cuts(&self) {
@@ -99,6 +101,10 @@ impl SearchInfo {
     }
     pub fn max_time(mut self, time: u64) -> Self {
         self.max_time = time;
+        self
+    }
+    pub fn abort_depth(mut self, depth: usize) -> Self {
+        self.early_abort_depth = depth;
         self
     }
     pub fn start_search(&mut self) {
@@ -279,7 +285,7 @@ where
     let mut beta = 1_000_000;
     for depth in 1..=info.max_depth {
         // Abort if we are unlikely to finish the search at this depth
-        if info.estimate_time && depth >= 6 {
+        if info.estimate_time && depth >= info.early_abort_depth {
             let mut est_branch = node_counts[depth - 2] as f64 / node_counts[depth - 3] as f64;
             if est_branch < 3.0 || est_branch > 100.0 {
                 // Transposition hits causing instability, just guess
