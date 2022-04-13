@@ -240,8 +240,8 @@ impl Evaluator for Weights6 {
                 Color::Black => black_road_score *= 2,
             }
         }
-        let white_res = game.pieces_reserve(Color::White);
-        let black_res = game.pieces_reserve(Color::Black);
+        let white_res = game.pieces_reserve(Color::White) + game.caps_reserve(Color::White);
+        let black_res = game.pieces_reserve(Color::Black) + game.caps_reserve(Color::Black);
         let pieces_left = white_res + black_res;
         let mul = (pieces_left as i32 * 100) / 60;
 
@@ -445,8 +445,8 @@ impl Evaluator for Weights5 {
                 Color::Black => black_road_score *= 2,
             }
         }
-        let white_res = game.pieces_reserve(Color::White);
-        let black_res = game.pieces_reserve(Color::Black);
+        let white_res = game.pieces_reserve(Color::White) + game.caps_reserve(Color::White);
+        let black_res = game.pieces_reserve(Color::Black) + game.caps_reserve(Color::Black);
         let pieces_left = white_res + black_res;
         let mul = (pieces_left as i32 * 100) / 60;
 

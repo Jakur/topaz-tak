@@ -1059,7 +1059,8 @@ mod test {
         let tps = "2,1,2,1,1,1/2,1,2,2,2,2/1,2,1,1,1,2/1,2,2,1,1,2/1,11112,1112,12,11112,1/1,1,2121,x,2,x 2 33";
         let mut board = Board6::try_from_tps(tps).unwrap();
         let eval = Weights6::default();
-        let mut info = SearchInfo::new(5, 1 << 12);
+        eval.evaluate(&board, 2);
+        let mut info = SearchInfo::new(5, 1 << 14);
         search(&mut board, &eval, &mut info);
     }
 }
