@@ -61,6 +61,7 @@ pub struct SearchInfo {
     estimate_time: bool,
     pub stats: SearchStats,
     early_abort_depth: usize,
+    quiet: bool,
 }
 
 impl SearchInfo {
@@ -80,6 +81,7 @@ impl SearchInfo {
             estimate_time: true,
             stats: SearchStats::new(16),
             early_abort_depth: 6,
+            quiet: false,
         }
     }
     pub fn print_cuts(&self) {
@@ -163,6 +165,10 @@ impl SearchInfo {
     }
     pub fn clear_tt(&mut self) {
         self.pv_table.clear();
+    }
+    pub fn quiet(mut self, val: bool) -> Self {
+        self.quiet = val;
+        self
     }
 }
 
@@ -336,29 +342,35 @@ where
         let pv_moves = info.full_pv(board);
         // If we had an incomplete depth search, use the previous depth's vals
         if info.stopped {
-            print!(
-                "Aborted Depth: {} Score: {} Nodes: {} PV: ",
-                depth, best_score, info.nodes
-            );
+            if !info.quiet {
+                print!(
+                    "Aborted Depth: {} Score: {} Nodes: {} PV: ",
+                    depth, best_score, info.nodes
+                );
+            }
             break;
         }
-        print!(
-            "info depth {} score cp {} nodes {} hashfull {} pv ",
-            depth,
-            best_score,
-            info.nodes,
-            info.pv_table.occupancy()
-        );
+        if !info.quiet {
+            print!(
+                "info depth {} score cp {} nodes {} hashfull {} pv ",
+                depth,
+                best_score,
+                info.nodes,
+                info.pv_table.occupancy()
+            );
+        }
         outcome = Some(SearchOutcome::new(
             best_score,
             pv_moves.clone(),
             depth,
             info,
         ));
-        for ptn in pv_moves.iter().map(|m| m.to_ptn::<T>()) {
-            print!("{} ", ptn);
+        if !info.quiet {
+            for ptn in pv_moves.iter().map(|m| m.to_ptn::<T>()) {
+                print!("{} ", ptn);
+            }
+            println!("");
         }
-        println!("");
         // Stop wasting time
         if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
             return Some(SearchOutcome::new(best_score, pv_moves, depth, info));
