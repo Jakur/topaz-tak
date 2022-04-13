@@ -162,6 +162,8 @@ pub trait Bitboard:
     fn critical_squares(self) -> Self;
     /// Performs a flood fill to reveal all bits connected to a provided edge 
     fn flood(self, edge: Self) -> Self;
+    /// Performs a flood fill including diagonal directions
+    fn loose_flood(self, edge: Self) -> Self;
     /// Returns true if two opposite edges are connected by the provided bits
     fn check_road(self) -> bool;
     /// Returns the lowest bit index in the bitboard without modifying self
@@ -234,6 +236,39 @@ impl Bitboard5 {
         ];
         arr
     }
+    pub fn simple_road_est(self) -> i32 {
+        const NS: [Bitboard5; 5] = [
+            Bitboard5(Bitboard5::TOP.0),
+            Bitboard5(Bitboard5::TOP.0 << 8),
+            Bitboard5(Bitboard5::TOP.0 << 16),
+            Bitboard5(Bitboard5::TOP.0 << 24),
+            Bitboard5(Bitboard5::TOP.0 << 32),
+        ];
+        const EW: [Bitboard5; 5] = [
+            Bitboard5(Bitboard5::LEFT.0),
+            Bitboard5(Bitboard5::LEFT.0 << 1),
+            Bitboard5(Bitboard5::LEFT.0 << 2),
+            Bitboard5(Bitboard5::LEFT.0 << 3),
+            Bitboard5(Bitboard5::LEFT.0 << 4),
+        ];
+        let mut ew_count = 0;
+        for b in EW {
+            if (self & b).0 > 0 {
+                ew_count += 1;
+            }
+        }
+        let mut ns_count = 0;
+        for b in NS {
+            if (self & b).0 > 0 {
+                ns_count += 1;
+            }
+        }
+        if ew_count > ns_count {
+            ew_count
+        } else {
+            ns_count
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -277,15 +312,6 @@ impl Bitboard6 {
             49,	50,	51,	52,	53,	54,
         ];
         arr
-    }
-    pub fn loose_flood(self, edge: Self) -> Self {
-        let mut prev = Self::new(0);
-        let mut edge_connected = self & edge;
-        while edge_connected != prev {
-            prev = edge_connected;
-            edge_connected |= edge_connected.loose_adjacent() & self
-        }
-        edge_connected
     }
     pub fn simple_road_est(self) -> i32 {
         const NS: [Bitboard6; 6] = [
@@ -473,6 +499,15 @@ macro_rules! bitboard_impl {
                 }
                 edge_connected
             }
+            fn loose_flood(self, edge: Self) -> Self {
+                let mut prev = Self::new(0);
+                let mut edge_connected = self & edge;
+                while edge_connected != prev {
+                    prev = edge_connected;
+                    edge_connected |= edge_connected.loose_adjacent() & self
+                }
+                edge_connected
+            }
             fn check_road(self) -> bool {
                 let mut unchecked = self & Self::LEFT_TOP; // Only need to start from two edges
                 while unchecked.nonzero() {
@@ -613,7 +648,7 @@ mod test {
     }
     #[test]
     pub fn bitboard_creation() {
-        use board_game_traits::Position;
+        use crate::Position;
         use crate::board::Board6;
         let tps =
             "2,x4,1/2,2,x2,1,x/2,212C,x,1,1,x/2,1,x,2S,12S,x/12,12221C,x,12,1,1/1S,12,x,1,1,x 1 22";

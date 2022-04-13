@@ -1026,12 +1026,12 @@ fn naive_minimax<T: TakBoard, E: Evaluator<Game = T>>(board: &mut T, eval: &E, d
 mod test {
     use super::*;
     use crate::board::Board6;
-    use crate::eval::{Evaluator6, LOSE_SCORE};
+    use crate::eval::{Weights6, LOSE_SCORE};
     #[test]
     fn small_minimax() {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let eval = Evaluator6 {};
+        let eval = Weights6::default();
         let (mv, score) = root_minimax(&mut board, &eval, 2);
         assert!(score != LOSE_SCORE);
         let only_move = GameMove::try_from_ptn("c5-", &board);
@@ -1043,16 +1043,23 @@ mod test {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut info = SearchInfo::new(4, 50000);
-        let eval = Evaluator6 {};
+        let eval = Weights6::default();
         search(&mut board, &eval, &mut info);
     }
     #[test]
     fn unk_puzzle() {
         let tps = "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27";
         let mut board = Board6::try_from_tps(tps).unwrap();
-        dbg!(board.ply());
-        let eval = Evaluator6 {};
+        let eval = Weights6::default();
         let mut info = SearchInfo::new(5, 100000);
+        search(&mut board, &eval, &mut info);
+    }
+    #[test]
+    fn no_capstone_zero_flats() {
+        let tps = "2,1,2,1,1,1/2,1,2,2,2,2/1,2,1,1,1,2/1,2,2,1,1,2/1,11112,1112,12,11112,1/1,1,2121,x,2,x 2 33";
+        let mut board = Board6::try_from_tps(tps).unwrap();
+        let eval = Weights6::default();
+        let mut info = SearchInfo::new(5, 1 << 12);
         search(&mut board, &eval, &mut info);
     }
 }

@@ -1,8 +1,8 @@
 use crate::move_gen::{generate_all_moves, generate_all_stack_moves};
-use crate::{GameMove, RevGameMove};
+use crate::{GameMove, Position, RevGameMove};
 use anyhow::{anyhow, bail, ensure, Result};
 pub use bitboard::*;
-use board_game_traits::{Color, GameResult, Position};
+use board_game_traits::{Color, GameResult};
 use std::fmt;
 
 mod bitboard;
@@ -11,9 +11,9 @@ mod stack;
 mod zobrist;
 pub use piece::*;
 pub use stack::*;
-
 pub trait TakBoard: Position<Move = GameMove, ReverseMove = RevGameMove> + std::fmt::Debug {
     type Bits: Bitboard;
+    // These consts break object safety
     const SIZE: usize;
     const FLATS: usize;
     const CAPS: usize;
@@ -53,7 +53,9 @@ pub trait TakBoard: Position<Move = GameMove, ReverseMove = RevGameMove> + std::
     fn make_ptn_moves(&mut self, moves: &[&str]) -> Option<()>;
     fn bits(&self) -> &BitboardStorage<Self::Bits>;
     fn board(&self) -> &[Stack];
-    fn with_komi(self, half_flats: u8) -> Self;
+    fn with_komi(self, half_flats: u8) -> Self
+    where
+        Self: Sized;
     fn komi(&self) -> u8;
     fn flat_diff(&self, player: Color) -> i32;
 }

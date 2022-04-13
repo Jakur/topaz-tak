@@ -1,6 +1,6 @@
 use crate::eval::Evaluator6;
+use crate::Position;
 use anyhow::Result;
-use board_game_traits::Position;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use getopts::Options;
 use std::env;
@@ -8,8 +8,8 @@ use std::io::{self, BufRead};
 use std::thread;
 use std::time::Instant;
 use telnet::Event;
-use topaz_tak::board::Board6;
-use topaz_tak::eval::Weights6;
+use topaz_tak::board::{Bitboard6, Board5, Board6};
+use topaz_tak::eval::{Evaluator, Weights5, Weights6};
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
 
@@ -33,7 +33,7 @@ pub fn main() {
             // println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
             // info.print_cuts();
             // let node_counts = search_efficiency(&["empty6"], 8);
-            let examine = vec![("temp", 12)];
+            let examine = vec![("opening1", 12)];
             // let mut board = Board6::try_from_tps(saved_tps("start4").unwrap()).unwrap();
             // let mut eval = Weights6::default();
             // eval.add_noise();
@@ -172,7 +172,7 @@ fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> 
         let tps = saved_tps(name).unwrap();
         let mut board = Board6::try_from_tps(tps).unwrap();
         let eval = Weights6::default();
-        let mut info = SearchInfo::new(*depth, 10_000_000);
+        let mut info = SearchInfo::new(*depth, 2 << 20).max_time(5).quiet(true);
         search(&mut board, &eval, &mut info);
         dbg!(info.stats);
         // for idx in 0..36 {
@@ -335,10 +335,13 @@ impl TimeLeft {
     }
 }
 
-fn play_game_tei(receiver: Receiver<TeiCommand>, init: GameInitializer) -> Result<()> {
-    let mut board = init.get_board();
+fn play_game_tei<E: Evaluator + Default>(
+    receiver: Receiver<TeiCommand>,
+    init: GameInitializer,
+) -> Result<()> {
+    let (mut board, mut eval) = init.get_board::<E>();
     let mut info = SearchInfo::new(init.max_depth, init.hash_size);
-    let mut eval = Weights6::default();
+    // let mut eval = Box::new(crate::eval::Weights5::default());
 
     loop {
         let message = receiver.recv()?;
@@ -353,9 +356,10 @@ fn play_game_tei(receiver: Receiver<TeiCommand>, init: GameInitializer) -> Resul
                 let use_time = time_left.use_time(est_plies, board.side_to_move());
                 info = SearchInfo::new(init.max_depth, 0)
                     .take_table(&mut info)
-                    .max_time(use_time);
+                    .max_time(use_time)
+                    .abort_depth(16);
                 if board.ply() == 8 || board.ply() == 9 {
-                    eval = Weights6::default();
+                    eval = E::default();
                 }
                 let res = search(&mut board, &eval, &mut info);
                 if let Some(outcome) = res {
@@ -372,7 +376,7 @@ fn play_game_tei(receiver: Receiver<TeiCommand>, init: GameInitializer) -> Resul
                 }
             }
             TeiCommand::Position(s) => {
-                board = init.get_board();
+                board = init.get_board::<E>().0;
                 for m in s.split_whitespace() {
                     if let Some(m) = GameMove::try_from_ptn(m, &board) {
                         board.do_move(m);
@@ -385,7 +389,7 @@ fn play_game_tei(receiver: Receiver<TeiCommand>, init: GameInitializer) -> Resul
                     cfg_if::cfg_if! {
                         if #[cfg(feature = "random")] {
                             println!("Adding noise!");
-                            eval.add_noise();
+                            // eval.add_noise();
                         } else {
                             panic!("Unable to add noise because no rng was compiled!");
                         }
@@ -441,8 +445,10 @@ fn tei_loop() {
                 .expect("Failed to parse size!");
             if let Some(recv) = receiver.take() {
                 let init = init.clone();
-                thread::spawn(move || {
-                    play_game_tei(recv, init).unwrap();
+                thread::spawn(move || match size {
+                    5 => play_game_tei::<Weights5>(recv, init).unwrap(),
+                    6 => play_game_tei::<Weights6>(recv, init).unwrap(),
+                    _ => unimplemented!(),
                 });
             }
             sender.send(TeiCommand::NewGame(size)).unwrap();
@@ -478,27 +484,29 @@ impl GameInitializer {
             add_noise,
         }
     }
-    fn get_board(&self) -> Board6 {
-        Board6::new().with_komi(self.komi)
+    fn get_board<E: Evaluator + Default>(&self) -> (E::Game, E) {
+        (E::Game::start_position().with_komi(self.komi), E::default())
+        // crate::board::Board5::new().with_komi(self.komi)
     }
 }
 
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
-    const MAX_DEPTH: usize = 8;
-    const KOMI: u8 = 0;
-    let mut board = Board6::new().with_komi(KOMI);
-    let mut info = SearchInfo::new(MAX_DEPTH, 5_000_000);
-    let eval = Weights6::default();
+    const MAX_DEPTH: usize = 32;
+    const KOMI: u8 = 4;
+    let mut board = Board5::new().with_komi(KOMI);
+    let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
+    let eval = Weights5::default();
     // eval.add_noise();
     // let eval = Evaluator6 {};
     loop {
         let message = server_recv.recv()?;
         match message {
             TeiCommand::Go(_) => {
-                let use_time = 15; // Todo better time management
+                let use_time = 12; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, 0)
                     .take_table(&mut info)
-                    .max_time(use_time);
+                    .max_time(use_time)
+                    .abort_depth(32);
                 let res = search(&mut board, &eval, &mut info);
                 if let Some(outcome) = res {
                     server_send
@@ -509,7 +517,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                 }
             }
             TeiCommand::Position(s) => {
-                board = Board6::new().with_komi(KOMI);
+                board = Board5::new().with_komi(KOMI);
                 for m in s.split(",") {
                     if let Some(m) = GameMove::try_from_playtak(m, &board) {
                         board.do_move(m);
@@ -526,7 +534,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 }
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
-    static OPP: &'static str = "TakticianBot";
+    static OPP: &'static str = "WilemBot";
     let (user, pass) = playtak_auth().expect("Could not read properly formatted .env file");
     std::thread::spawn(move || {
         let mut com = telnet::Telnet::connect(("playtak.com", 10_000), 2048).unwrap();

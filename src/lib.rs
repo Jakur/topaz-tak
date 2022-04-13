@@ -1,15 +1,28 @@
 use anyhow::{anyhow, ensure, Result};
 pub use board::{Bitboard, BitboardStorage, Piece, Stack, TakBoard};
-pub use board_game_traits::{Color, GameResult, Position};
+pub use board_game_traits::{Color, GameResult};
 pub use move_gen::{generate_all_moves, GameMove, RevGameMove};
 
 pub mod board;
-pub mod transposition_table;
 pub mod eval;
 mod move_gen;
 pub mod search;
+pub mod transposition_table;
 
 use crate::board::{Board5, Board6, Board7};
+
+pub trait Position {
+    type Move: Eq + Clone + std::fmt::Debug;
+    type ReverseMove;
+    fn start_position() -> Self
+    where
+        Self: Sized;
+    fn side_to_move(&self) -> Color;
+    fn generate_moves(&self, moves: &mut Vec<Self::Move>);
+    fn do_move(&mut self, mv: Self::Move) -> Self::ReverseMove;
+    fn reverse_move(&mut self, mv: Self::ReverseMove);
+    fn game_result(&self) -> Option<GameResult>;
+}
 
 #[non_exhaustive]
 pub enum TakGame {

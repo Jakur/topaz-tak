@@ -651,7 +651,7 @@ pub const fn long_slide(mv: GameMove) -> u32 {
 #[cfg(test)]
 mod test {
     use crate::board::Board6;
-    use board_game_traits::Position;
+    use crate::Position;
 
     use super::*;
     #[test]

@@ -33,9 +33,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "board-game-traits"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f142875a8746cee0aec9350872730b3960c2df6d43766882d85827a1938b12e"
+checksum = "3f0c0fc76324ee558f1c6239a069c3101d74286eedd7d9b1e307d47b4f039c23"
 
 [[package]]
 name = "bstr"

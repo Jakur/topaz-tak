@@ -13,7 +13,7 @@ random = ["rand_core", "rand_xoshiro", "getrandom"]
 
 [dependencies]
 anyhow = "1.0"
-board-game-traits = "0.2.1"
+board-game-traits = "0.3"
 crossbeam-channel = "0.5"
 cfg-if = "1.0.0"
 instant = "0.1.12"

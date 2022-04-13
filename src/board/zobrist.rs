@@ -91,7 +91,7 @@ mod test {
     use super::*;
     use crate::board::Board6;
     use crate::generate_all_moves;
-    use board_game_traits::Position;
+    use crate::Position;
     use std::collections::HashSet;
     #[test]
     pub fn test_zobrist_table() {
