@@ -408,7 +408,7 @@ fn play_game_tei<E: Evaluator + Default>(
 fn identify() {
     println!("id name Topaz");
     println!("id author Justin Kur");
-    println!("option name Komi type spin default 0 min 0 max 12");
+    println!("option name HalfKomi type spin default 0 min 0 max 12");
     println!("teiok");
 }
 
@@ -456,7 +456,7 @@ fn tei_loop() {
             let mut iter = line.split_whitespace();
             let name = iter.nth(2).unwrap();
             let value = iter.nth(1).unwrap();
-            if name == "Komi" {
+            if name == "HalfKomi" {
                 init.komi = value.parse().unwrap();
                 println!("Setting komi to {}", init.komi);
             }
