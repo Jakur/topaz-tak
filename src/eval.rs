@@ -201,20 +201,16 @@ impl Evaluator for Weights6 {
             }
         }
 
-        let white_comp =
-            connected_components(game.bits.road_pieces(Color::White), Bitboard6::flood);
-        let black_comp =
-            connected_components(game.bits.road_pieces(Color::Black), Bitboard6::flood);
-        // Punish more components?
-        score -= white_comp.steps as i32 * self.connectivity;
-        score += black_comp.steps as i32 * self.connectivity;
-
-        let loose_white_comp =
-            connected_components(game.bits.road_pieces(Color::White), Bitboard6::loose_flood);
-        let loose_black_comp =
-            connected_components(game.bits.road_pieces(Color::Black), Bitboard6::loose_flood);
-        let loose_white_pc = loose_white_comp.bits.simple_road_est();
-        let loose_black_pc = loose_black_comp.bits.simple_road_est();
+        let (loose_white_pc, white_comp) = one_gap_road(
+            game.bits.road_pieces(Color::White),
+            game.bits.blocker_pieces(Color::Black),
+        );
+        let (loose_black_pc, black_comp) = one_gap_road(
+            game.bits.road_pieces(Color::Black),
+            game.bits.blocker_pieces(Color::White),
+        );
+        score -= white_comp as i32 * self.connectivity;
+        score += black_comp as i32 * self.connectivity;
 
         let mut white_road_score = match loose_white_pc {
             6 => 50,
@@ -231,14 +227,20 @@ impl Evaluator for Weights6 {
             _ => 0,
         };
         if loose_white_pc > loose_black_pc {
-            white_road_score *= 2;
+            white_road_score += 50;
+            // white_road_score *= 2;
         } else if loose_black_pc > loose_white_pc {
-            black_road_score *= 2;
+            black_road_score += 50;
+            // black_road_score *= 2;
         } else {
             match game.side_to_move() {
-                Color::White => white_road_score *= 2,
-                Color::Black => black_road_score *= 2,
+                Color::White => white_road_score += 50,
+                Color::Black => black_road_score += 50,
             }
+            // match game.side_to_move() {
+            //     Color::White => white_road_score *= 2,
+            //     Color::Black => black_road_score *= 2,
+            // }
         }
         let white_res = game.pieces_reserve(Color::White) + game.caps_reserve(Color::White);
         let black_res = game.pieces_reserve(Color::Black) + game.caps_reserve(Color::Black);
@@ -332,7 +334,7 @@ impl Evaluator for Weights5 {
                         }
                     }
                 }
-                let neighbors = <Board5 as TakBoard>::Bits::index_to_bit(idx).adjacent();
+                let neighbors = <Board6 as TakBoard>::Bits::index_to_bit(idx).adjacent();
                 for sq in BitIndexIterator::new(neighbors) {
                     let stack = &game.board[sq];
                     if let Some(piece) = stack.last() {
@@ -406,20 +408,16 @@ impl Evaluator for Weights5 {
             }
         }
 
-        let white_comp =
-            connected_components(game.bits.road_pieces(Color::White), Bitboard5::flood);
-        let black_comp =
-            connected_components(game.bits.road_pieces(Color::Black), Bitboard5::flood);
-        // Punish more components?
-        score -= white_comp.steps as i32 * self.connectivity;
-        score += black_comp.steps as i32 * self.connectivity;
-
-        let loose_white_comp =
-            connected_components(game.bits.road_pieces(Color::White), Bitboard5::loose_flood);
-        let loose_black_comp =
-            connected_components(game.bits.road_pieces(Color::Black), Bitboard5::loose_flood);
-        let loose_white_pc = loose_white_comp.bits.simple_road_est();
-        let loose_black_pc = loose_black_comp.bits.simple_road_est();
+        let (loose_white_pc, white_comp) = one_gap_road(
+            game.bits.road_pieces(Color::White),
+            game.bits.blocker_pieces(Color::Black),
+        );
+        let (loose_black_pc, black_comp) = one_gap_road(
+            game.bits.road_pieces(Color::Black),
+            game.bits.blocker_pieces(Color::White),
+        );
+        score -= white_comp as i32 * self.connectivity;
+        score += black_comp as i32 * self.connectivity;
 
         let mut white_road_score = match loose_white_pc {
             6 => 50,
@@ -436,14 +434,20 @@ impl Evaluator for Weights5 {
             _ => 0,
         };
         if loose_white_pc > loose_black_pc {
-            white_road_score *= 2;
+            white_road_score += 50;
+            // white_road_score *= 2;
         } else if loose_black_pc > loose_white_pc {
-            black_road_score *= 2;
+            black_road_score += 50;
+            // black_road_score *= 2;
         } else {
             match game.side_to_move() {
-                Color::White => white_road_score *= 2,
-                Color::Black => black_road_score *= 2,
+                Color::White => white_road_score += 50,
+                Color::Black => black_road_score += 50,
             }
+            // match game.side_to_move() {
+            //     Color::White => white_road_score *= 2,
+            //     Color::Black => black_road_score *= 2,
+            // }
         }
         let white_res = game.pieces_reserve(Color::White) + game.caps_reserve(Color::White);
         let black_res = game.pieces_reserve(Color::Black) + game.caps_reserve(Color::Black);
@@ -513,6 +517,88 @@ impl<B> BitOutcome<B> {
 //     }
 //     BitOutcome::new(b, counter)
 // }
+
+fn one_gap_road_old<B: Bitboard + std::fmt::Debug>(road_bits: B, blocker_bits: B) -> (i32, usize) {
+    let mut iter = ComponentIterator::new(road_bits);
+    let mut best = 0;
+    let mut count = 0;
+    while let Some(comp) = iter.next() {
+        count += 1;
+        if comp.pop_count() >= 3 {
+            let score = comp.simple_road_est();
+            if score > best {
+                best = score;
+            }
+            let adj = comp.adjacent() & !comp & !blocker_bits;
+            let rest = road_bits & !comp;
+            let mut potential = adj & rest.adjacent();
+            while potential != B::ZERO {
+                let lowest = potential.pop_lowest();
+                let check = (lowest | road_bits).flood(lowest);
+                let score = check.simple_road_est();
+                if score > best {
+                    best = score;
+                }
+            }
+        }
+    }
+    (best, count)
+}
+
+fn one_gap_road<B: Bitboard + std::fmt::Debug>(road_bits: B, blocker_bits: B) -> (i32, usize) {
+    let mut iter = ComponentIterator::new(road_bits);
+    let mut best = 0;
+    let mut count = 0;
+    while let Some(comp) = iter.next() {
+        count += 1;
+        if comp.pop_count() >= 3 {
+            let score = comp.simple_road_est();
+            if score > best {
+                best = score;
+            }
+            let rest = road_bits & !comp;
+            let mut potential = comp.loose_adjacent() & rest;
+            while potential != B::ZERO {
+                let lowest = potential.pop_lowest();
+                let bend = (lowest.loose_adjacent() | lowest) & road_bits;
+                let fl = road_bits.flood(bend);
+                let score = fl.simple_road_est();
+                if score > best {
+                    best = score;
+                }
+            }
+        }
+    }
+    (best, count)
+}
+
+struct ComponentIterator<B> {
+    bits: B,
+}
+
+impl<B> ComponentIterator<B> {
+    fn new(bits: B) -> Self {
+        Self { bits }
+    }
+}
+
+impl<B> Iterator for ComponentIterator<B>
+where
+    B: Bitboard,
+{
+    type Item = B;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.bits == B::ZERO {
+            None
+        } else {
+            let lowest = self.bits.lowest();
+            let set = B::flood(self.bits, lowest);
+            self.bits = self.bits ^ set;
+            Some(set)
+        }
+    }
+}
 
 fn repeat_slide<B: Bitboard, F: Fn(B) -> B>(mut b: B, f: F, end: B) -> BitOutcome<B> {
     let mut counter = 0;
@@ -758,5 +844,40 @@ mod test {
             4,
             connected_components(board.bits.road_pieces(Color::Black), Bitboard6::flood).steps
         );
+    }
+
+    #[test]
+    fn one_gap_test() {
+        let s = "x3,2,x,1/x2,2,2,2,1/x,2,2,x,121,2/1,1,2221C,2S,1,1/x2,1,1,12,1112C/x2,2,x2,1 2 21";
+        let board = Board6::try_from_tps(s).unwrap();
+        let (white_s, white_c) = one_gap_road_old(
+            board.bits.road_pieces(Color::White),
+            board.bits.blocker_pieces(Color::Black),
+        );
+        assert_eq!(6, white_s);
+        assert_eq!(4, white_c);
+
+        let (black_s, black_c) = one_gap_road_old(
+            board.bits.road_pieces(Color::Black),
+            board.bits.blocker_pieces(Color::White),
+        );
+        assert_eq!(5, black_s);
+        assert_eq!(4, black_c);
+
+        let s = "x,1,x4/1,2,2,2,2,2/12C,1C,x4/1,1,x4/1,x5/1,x5 2 8";
+        let board = Board6::try_from_tps(s).unwrap();
+        let (white_s, white_c) = one_gap_road(
+            board.bits.road_pieces(Color::White),
+            board.bits.blocker_pieces(Color::Black),
+        );
+        assert_eq!(6, white_s);
+        assert_eq!(3, white_c);
+
+        let (black_s, black_c) = one_gap_road(
+            board.bits.road_pieces(Color::Black),
+            board.bits.blocker_pieces(Color::White),
+        );
+        assert_eq!(6, black_s);
+        assert_eq!(2, black_c);
     }
 }

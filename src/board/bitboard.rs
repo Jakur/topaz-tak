@@ -193,6 +193,7 @@ pub trait Bitboard:
     fn right() -> Self;
     /// Returns the board size that this bitboard corresponds to
     fn size() -> usize;
+    fn simple_road_est(self) -> i32;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -207,6 +208,20 @@ impl Bitboard5 {
     const RIGHT: Bitboard5 = Bitboard5::new(0x20202020200000);
     const LEFT_TOP: Bitboard5 = Bitboard5::new(Self::LEFT.0 | Self::TOP.0);
     const INNER: u64 = 0x3e3e3e3e3e0000; // 5x5 Board
+    const NS: [Bitboard5; 5] = [
+        Bitboard5(Bitboard5::TOP.0),
+        Bitboard5(Bitboard5::TOP.0 << 8),
+        Bitboard5(Bitboard5::TOP.0 << 16),
+        Bitboard5(Bitboard5::TOP.0 << 24),
+        Bitboard5(Bitboard5::TOP.0 << 32),
+    ];
+    const EW: [Bitboard5; 5] = [
+        Bitboard5(Bitboard5::LEFT.0),
+        Bitboard5(Bitboard5::LEFT.0 << 1),
+        Bitboard5(Bitboard5::LEFT.0 << 2),
+        Bitboard5(Bitboard5::LEFT.0 << 3),
+        Bitboard5(Bitboard5::LEFT.0 << 4),
+    ];
     pub const fn new(data: u64) -> Self {
         Self(data & Self::INNER)
     }
@@ -236,39 +251,6 @@ impl Bitboard5 {
         ];
         arr
     }
-    pub fn simple_road_est(self) -> i32 {
-        const NS: [Bitboard5; 5] = [
-            Bitboard5(Bitboard5::TOP.0),
-            Bitboard5(Bitboard5::TOP.0 << 8),
-            Bitboard5(Bitboard5::TOP.0 << 16),
-            Bitboard5(Bitboard5::TOP.0 << 24),
-            Bitboard5(Bitboard5::TOP.0 << 32),
-        ];
-        const EW: [Bitboard5; 5] = [
-            Bitboard5(Bitboard5::LEFT.0),
-            Bitboard5(Bitboard5::LEFT.0 << 1),
-            Bitboard5(Bitboard5::LEFT.0 << 2),
-            Bitboard5(Bitboard5::LEFT.0 << 3),
-            Bitboard5(Bitboard5::LEFT.0 << 4),
-        ];
-        let mut ew_count = 0;
-        for b in EW {
-            if (self & b).0 > 0 {
-                ew_count += 1;
-            }
-        }
-        let mut ns_count = 0;
-        for b in NS {
-            if (self & b).0 > 0 {
-                ns_count += 1;
-            }
-        }
-        if ew_count > ns_count {
-            ew_count
-        } else {
-            ns_count
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -283,6 +265,22 @@ impl Bitboard6 {
     const RIGHT: Bitboard6 = Bitboard6::new(0x40404040404000);
     const LEFT_TOP: Bitboard6 = Bitboard6::new(Self::LEFT.0 | Self::TOP.0);
     const INNER: u64 = 0x7e7e7e7e7e7e00; // 6x6 Board
+    const NS: [Bitboard6; 6] = [
+        Bitboard6(Bitboard6::TOP.0),
+        Bitboard6(Bitboard6::TOP.0 << 8),
+        Bitboard6(Bitboard6::TOP.0 << 16),
+        Bitboard6(Bitboard6::TOP.0 << 24),
+        Bitboard6(Bitboard6::TOP.0 << 32),
+        Bitboard6(Bitboard6::TOP.0 << 40)
+    ];
+    const EW: [Bitboard6; 6] = [
+        Bitboard6(Bitboard6::LEFT.0),
+        Bitboard6(Bitboard6::LEFT.0 << 1),
+        Bitboard6(Bitboard6::LEFT.0 << 2),
+        Bitboard6(Bitboard6::LEFT.0 << 3),
+        Bitboard6(Bitboard6::LEFT.0 << 4),
+        Bitboard6(Bitboard6::LEFT.0 << 5),
+    ];
     pub const fn new(data: u64) -> Self {
         Self(data & Self::INNER)
     }
@@ -313,41 +311,6 @@ impl Bitboard6 {
         ];
         arr
     }
-    pub fn simple_road_est(self) -> i32 {
-        const NS: [Bitboard6; 6] = [
-            Bitboard6(Bitboard6::TOP.0),
-            Bitboard6(Bitboard6::TOP.0 << 8),
-            Bitboard6(Bitboard6::TOP.0 << 16),
-            Bitboard6(Bitboard6::TOP.0 << 24),
-            Bitboard6(Bitboard6::TOP.0 << 32),
-            Bitboard6(Bitboard6::TOP.0 << 36)
-        ];
-        const EW: [Bitboard6; 6] = [
-            Bitboard6(Bitboard6::LEFT.0),
-            Bitboard6(Bitboard6::LEFT.0 << 1),
-            Bitboard6(Bitboard6::LEFT.0 << 2),
-            Bitboard6(Bitboard6::LEFT.0 << 3),
-            Bitboard6(Bitboard6::LEFT.0 << 4),
-            Bitboard6(Bitboard6::LEFT.0 << 5),
-        ];
-        let mut ew_count = 0;
-        for b in EW {
-            if (self & b).0 > 0 {
-                ew_count += 1;
-            }
-        }
-        let mut ns_count = 0;
-        for b in NS {
-            if (self & b).0 > 0 {
-                ns_count += 1;
-            }
-        }
-        if ew_count > ns_count {
-            ew_count
-        } else {
-            ns_count
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -362,6 +325,24 @@ impl Bitboard7 {
     const RIGHT: Bitboard7 = Bitboard7::new(0x4040404040404000);
     const LEFT_TOP: Bitboard7 = Bitboard7::new(Self::LEFT.0 | Self::TOP.0);
     const INNER: u64 = 0x7f7f7f7f7f7f7f00; // 7x7 Board
+    const NS: [Bitboard7; 7] = [
+        Bitboard7(Bitboard7::TOP.0),
+        Bitboard7(Bitboard7::TOP.0 << 8),
+        Bitboard7(Bitboard7::TOP.0 << 16),
+        Bitboard7(Bitboard7::TOP.0 << 24),
+        Bitboard7(Bitboard7::TOP.0 << 32),
+        Bitboard7(Bitboard7::TOP.0 << 40),
+        Bitboard7(Bitboard7::TOP.0 << 48),
+    ];
+    const EW: [Bitboard7; 7] = [
+        Bitboard7(Bitboard7::LEFT.0),
+        Bitboard7(Bitboard7::LEFT.0 << 1),
+        Bitboard7(Bitboard7::LEFT.0 << 2),
+        Bitboard7(Bitboard7::LEFT.0 << 3),
+        Bitboard7(Bitboard7::LEFT.0 << 4),
+        Bitboard7(Bitboard7::LEFT.0 << 5),
+        Bitboard7(Bitboard7::LEFT.0 << 6),
+    ];
     pub const fn new(data: u64) -> Self {
         Self(data & Self::INNER)
     }
@@ -593,6 +574,25 @@ macro_rules! bitboard_impl {
             }
             fn right() -> Self {
                 Self::RIGHT
+            }
+            fn simple_road_est(self) -> i32 {
+                let mut ew_count = 0;
+                for b in Self::EW {
+                    if (self & b).0 > 0 {
+                        ew_count += 1;
+                    }
+                }
+                let mut ns_count = 0;
+                for b in Self::NS {
+                    if (self & b).0 > 0 {
+                        ns_count += 1;
+                    }
+                }
+                if ew_count > ns_count {
+                    ew_count
+                } else {
+                    ns_count
+                }
             }
         }
     };

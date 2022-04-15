@@ -33,7 +33,7 @@ pub fn main() {
             // println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
             // info.print_cuts();
             // let node_counts = search_efficiency(&["empty6"], 8);
-            let examine = vec![("opening1", 12)];
+            let examine = vec![("temp", 16)];
             // let mut board = Board6::try_from_tps(saved_tps("start4").unwrap()).unwrap();
             // let mut eval = Weights6::default();
             // eval.add_noise();
@@ -132,7 +132,7 @@ fn saved_tps(name: &str) -> Option<&str> {
         "midgame1" => "2,2,2222221C,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 1 31", // Tinue avoidance
         "midgame2" => "x4,1,1/1,12S,2,2,1,1/1,1221S,1,21C,1,x/1,21112C,2,1,22221S,2/2,2,2,2S,1,2/x2,21,21,x,2 1 32",
         "midgame3" => "2,1,1,1,x2/x,2,2,1,x2/x,1,2,1C,1,1/x2,2,1112C,12S,2/x,2,2,1,x,1/2,2,x2,1,1 1 17",
-        "temp" => "1,1,12,1,1,x/1,21C,x,112C,1,1/x2,2,2,x2/x,2,2,2,x2/x,2,1,x3/x6 2 13",
+        "temp" => "x5,1/x6/x6/x6/x6/2,x5 1 2",
         "start" => "x6/x2,2,2,x2/x6/x6/x6/1,x3,1,x 1 3",
         "start2" => "2,x5/x6/x6/x6/x2,1,x3/1,x5 2 2",
         "start3" => "x6/x4,2,1/x2,2,2C,1,2/x2,2,x,1,1/x5,1/x6 1 6",
@@ -172,7 +172,7 @@ fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> 
         let tps = saved_tps(name).unwrap();
         let mut board = Board6::try_from_tps(tps).unwrap();
         let eval = Weights6::default();
-        let mut info = SearchInfo::new(*depth, 2 << 20).max_time(5).quiet(true);
+        let mut info = SearchInfo::new(*depth, 2 << 20);
         search(&mut board, &eval, &mut info);
         dbg!(info.stats);
         // for idx in 0..36 {
