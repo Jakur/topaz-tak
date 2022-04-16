@@ -201,37 +201,33 @@ impl Evaluator for Weights6 {
             }
         }
 
-        let (loose_white_pc, white_comp) = one_gap_road(
-            game.bits.road_pieces(Color::White),
-            game.bits.blocker_pieces(Color::Black),
-        );
-        let (loose_black_pc, black_comp) = one_gap_road(
-            game.bits.road_pieces(Color::Black),
-            game.bits.blocker_pieces(Color::White),
-        );
+        let (loose_white_pc, white_comp) =
+            flat_placement_road_h(game.bits.road_pieces(Color::White), game.bits.empty());
+        let (loose_black_pc, black_comp) =
+            flat_placement_road_h(game.bits.road_pieces(Color::Black), game.bits.empty());
         score -= white_comp as i32 * self.connectivity;
         score += black_comp as i32 * self.connectivity;
 
         let mut white_road_score = match loose_white_pc {
-            6 => 50,
-            5 => 35,
-            4 => 20,
-            3 => 10,
+            1 => 50,
+            2 => 35,
+            3 => 20,
+            4 => 10,
             _ => 0,
         };
         let mut black_road_score = match loose_black_pc {
-            6 => 50,
-            5 => 35,
-            4 => 20,
-            3 => 10,
+            1 => 50,
+            2 => 35,
+            3 => 20,
+            4 => 10,
             _ => 0,
         };
         if loose_white_pc > loose_black_pc {
-            white_road_score += 50;
-            // white_road_score *= 2;
+            // white_road_score += 50;
+            white_road_score *= 2;
         } else if loose_black_pc > loose_white_pc {
-            black_road_score += 50;
-            // black_road_score *= 2;
+            // black_road_score += 50;
+            black_road_score *= 2;
         } else {
             match game.side_to_move() {
                 Color::White => white_road_score += 50,
@@ -334,7 +330,7 @@ impl Evaluator for Weights5 {
                         }
                     }
                 }
-                let neighbors = <Board6 as TakBoard>::Bits::index_to_bit(idx).adjacent();
+                let neighbors = <Board5 as TakBoard>::Bits::index_to_bit(idx).adjacent();
                 for sq in BitIndexIterator::new(neighbors) {
                     let stack = &game.board[sq];
                     if let Some(piece) = stack.last() {
@@ -408,46 +404,38 @@ impl Evaluator for Weights5 {
             }
         }
 
-        let (loose_white_pc, white_comp) = one_gap_road(
-            game.bits.road_pieces(Color::White),
-            game.bits.blocker_pieces(Color::Black),
-        );
-        let (loose_black_pc, black_comp) = one_gap_road(
-            game.bits.road_pieces(Color::Black),
-            game.bits.blocker_pieces(Color::White),
-        );
+        let (loose_white_pc, white_comp) =
+            flat_placement_road_h(game.bits.road_pieces(Color::White), game.bits.empty());
+        let (loose_black_pc, black_comp) =
+            flat_placement_road_h(game.bits.road_pieces(Color::Black), game.bits.empty());
         score -= white_comp as i32 * self.connectivity;
         score += black_comp as i32 * self.connectivity;
 
         let mut white_road_score = match loose_white_pc {
-            6 => 50,
-            5 => 35,
-            4 => 20,
-            3 => 10,
+            1 => 50,
+            2 => 35,
+            3 => 20,
+            4 => 10,
             _ => 0,
         };
         let mut black_road_score = match loose_black_pc {
-            6 => 50,
-            5 => 35,
-            4 => 20,
-            3 => 10,
+            1 => 50,
+            2 => 35,
+            3 => 20,
+            4 => 10,
             _ => 0,
         };
         if loose_white_pc > loose_black_pc {
-            white_road_score += 50;
-            // white_road_score *= 2;
+            // white_road_score += 50;
+            white_road_score *= 2;
         } else if loose_black_pc > loose_white_pc {
-            black_road_score += 50;
-            // black_road_score *= 2;
+            // black_road_score += 50;
+            black_road_score *= 2;
         } else {
             match game.side_to_move() {
-                Color::White => white_road_score += 50,
-                Color::Black => black_road_score += 50,
+                Color::White => white_road_score *= 2,
+                Color::Black => black_road_score *= 2,
             }
-            // match game.side_to_move() {
-            //     Color::White => white_road_score *= 2,
-            //     Color::Black => black_road_score *= 2,
-            // }
         }
         let white_res = game.pieces_reserve(Color::White) + game.caps_reserve(Color::White);
         let black_res = game.pieces_reserve(Color::Black) + game.caps_reserve(Color::Black);
@@ -507,17 +495,9 @@ impl<B> BitOutcome<B> {
     }
 }
 
-// fn apply_bit_fn<B: Bitboard, F: Fn(B) -> B>(mut b: B, f: F) -> BitOutcome<B> {
-//     let mut counter = 0;
-//     let mut last = B::ZERO;
-//     while b != last {
-//         last = b;
-//         b = f(b);
-//         counter += 1;
-//     }
-//     BitOutcome::new(b, counter)
-// }
-
+/// A method that finds the most complete road among orthogonally connected components.
+/// It allows one non-blocking piece to be overwritten for free, leading to decreased
+/// concern for blockades, and extending roads that seem unlikely to ever be finished
 fn one_gap_road_old<B: Bitboard + std::fmt::Debug>(road_bits: B, blocker_bits: B) -> (i32, usize) {
     let mut iter = ComponentIterator::new(road_bits);
     let mut best = 0;
@@ -545,6 +525,59 @@ fn one_gap_road_old<B: Bitboard + std::fmt::Debug>(road_bits: B, blocker_bits: B
     (best, count)
 }
 
+/// A heuristic for road building that approximates the number of flat placements
+/// needed to make a road. In a future version, we should link together disjoint
+/// components during the search to make the counts more accurate. Compared to
+/// earlier approaches, this more accurately values row blockades, but it lacks
+/// a way to see threats for a single decisive capture
+fn flat_placement_road_h<B: Bitboard + std::fmt::Debug>(road_bits: B, empty: B) -> (i32, usize) {
+    let mut iter = ComponentIterator::new(road_bits);
+    let mut best = 1_000;
+    let mut count = 0;
+    let north = road_bits.flood(B::top()) | B::top();
+    let south = road_bits.flood(B::bottom()) | B::bottom();
+    let east = road_bits.flood(B::right()) | B::right();
+    let west = road_bits.flood(B::left()) | B::left();
+    let safe = road_bits | empty;
+    while let Some(comp) = iter.next() {
+        count += 1;
+        if comp.pop_count() >= 2 {
+            let mut steps = 0;
+            let mut n_steps = 1_000;
+            let mut s_steps = 1_000;
+            let mut e_steps = 1_000;
+            let mut w_steps = 1_000;
+            let mut explored = comp;
+            let mut prev = B::ZERO;
+            while prev != explored {
+                if (explored & north) != B::ZERO {
+                    n_steps = std::cmp::min(n_steps, steps);
+                }
+                if (explored & south) != B::ZERO {
+                    s_steps = std::cmp::min(s_steps, steps);
+                }
+                if (explored & east) != B::ZERO {
+                    e_steps = std::cmp::min(e_steps, steps);
+                }
+                if (explored & west) != B::ZERO {
+                    w_steps = std::cmp::min(w_steps, steps);
+                }
+                prev = explored;
+                explored = (explored.adjacent() | explored) & safe;
+                steps += 1;
+            }
+            let score = std::cmp::min(n_steps + s_steps, e_steps + w_steps);
+            best = std::cmp::min(best, score);
+        }
+    }
+    (best, count)
+}
+
+/// A variant of the original one gap road, this one instead allows a diagonal extension
+/// from a diagonally adjacent piece, trying to simulate its capture. This outperforms
+/// the original version, but the road play still seems uninspired, extending threats
+/// that seem unlikely to be finished, while ignoring future threats simply because
+/// they haven't yet reached fruition.
 fn one_gap_road<B: Bitboard + std::fmt::Debug>(road_bits: B, blocker_bits: B) -> (i32, usize) {
     let mut iter = ComponentIterator::new(road_bits);
     let mut best = 0;
@@ -844,6 +877,17 @@ mod test {
             4,
             connected_components(board.bits.road_pieces(Color::Black), Bitboard6::flood).steps
         );
+    }
+    #[test]
+    fn placement_metric_test() {
+        let s = "x,2,1,x2,1/x,2,2,x,1,1/x,21,21C,2,1,12C/x2,2,x,1,1/x,2,2,x2,1/x2,2,x3 2 13";
+        let board = Board6::try_from_tps(s).unwrap();
+        let (w_metric, _) =
+            flat_placement_road_h(board.bits.road_pieces(Color::White), board.bits.empty());
+        assert_eq!(w_metric, 1);
+        let (b_metric, _) =
+            flat_placement_road_h(board.bits.road_pieces(Color::Black), board.bits.empty());
+        assert_eq!(b_metric, 4);
     }
 
     #[test]

@@ -52,9 +52,11 @@ pub fn generate_all_place_moves<T: TakBoard, B: MoveBuffer>(board: &T, moves: &m
             moves.add_move(GameMove::from_placement(cap, index));
         }
     }
-    for index in board.empty_tiles() {
-        moves.add_move(GameMove::from_placement(flat, index));
-        moves.add_move(GameMove::from_placement(wall, index));
+    if board.pieces_reserve(side_to_move) > 0 {
+        for index in board.empty_tiles() {
+            moves.add_move(GameMove::from_placement(flat, index));
+            moves.add_move(GameMove::from_placement(wall, index));
+        }
     }
 }
 
@@ -72,6 +74,7 @@ pub fn generate_aggressive_place_moves<T: TakBoard>(board: &T, moves: &mut Vec<G
         }
     }
     if board.pieces_reserve(side_to_move) > 1 {
+        // Todo should this condition be 0?
         for index in board.empty_tiles() {
             moves.push(GameMove::from_placement(flat, index));
         }

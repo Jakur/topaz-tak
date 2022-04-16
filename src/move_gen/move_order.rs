@@ -149,16 +149,18 @@ impl SmartMoveBuffer {
                     cap_score,
                 ));
             }
-            if board.ply() >= 4 {
+            if board.pieces_reserve(board.side_to_move()) > 0 {
+                if board.ply() >= 4 {
+                    self.moves.push(ScoredMove::new(
+                        GameMove::from_placement(Piece::wall(side), idx),
+                        wall_score,
+                    ));
+                }
                 self.moves.push(ScoredMove::new(
-                    GameMove::from_placement(Piece::wall(side), idx),
-                    wall_score,
+                    GameMove::from_placement(Piece::flat(side), idx),
+                    flat_score,
                 ));
             }
-            self.moves.push(ScoredMove::new(
-                GameMove::from_placement(Piece::flat(side), idx),
-                flat_score,
-            ));
         }
         // let neighbors = T::Bits::index_to_bit(idx).adjacent();
         // todo!()
