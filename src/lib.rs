@@ -69,6 +69,75 @@ impl TakGame {
             _ => Err(anyhow!("Unknown game size: {}", size)),
         }
     }
+    pub fn try_new(size: usize) -> Result<Self> {
+        match size {
+            5 => Ok(TakGame::Standard5(Board5::new())),
+            6 => Ok(TakGame::Standard6(Board6::new())),
+            7 => Ok(TakGame::Standard7(Board7::new())),
+            _ => Err(anyhow!("Unknown game size: {}", size)),
+        }
+    }
+    pub fn try_new_with_komi(size: usize, half_flats: u8) -> Result<Self> {
+        match size {
+            5 => Ok(TakGame::Standard5(Board5::new().with_komi(half_flats))),
+            6 => Ok(TakGame::Standard6(Board6::new().with_komi(half_flats))),
+            7 => Ok(TakGame::Standard7(Board7::new().with_komi(half_flats))),
+            _ => Err(anyhow!("Unknown game size: {}", size)),
+        }
+    }
+}
+
+impl Position for TakGame {
+    type Move = GameMove;
+
+    type ReverseMove = RevGameMove;
+
+    fn start_position() -> Self
+    where
+        Self: Sized,
+    {
+        TakGame::Standard6(Board6::new())
+    }
+
+    fn side_to_move(&self) -> Color {
+        match self {
+            TakGame::Standard5(board) => board.side_to_move(),
+            TakGame::Standard6(board) => board.side_to_move(),
+            TakGame::Standard7(board) => board.side_to_move(),
+        }
+    }
+
+    fn generate_moves(&self, moves: &mut Vec<Self::Move>) {
+        match self {
+            TakGame::Standard5(board) => board.generate_moves(moves),
+            TakGame::Standard6(board) => board.generate_moves(moves),
+            TakGame::Standard7(board) => board.generate_moves(moves),
+        }
+    }
+
+    fn do_move(&mut self, mv: Self::Move) -> Self::ReverseMove {
+        match self {
+            TakGame::Standard5(board) => board.do_move(mv),
+            TakGame::Standard6(board) => board.do_move(mv),
+            TakGame::Standard7(board) => board.do_move(mv),
+        }
+    }
+
+    fn reverse_move(&mut self, mv: Self::ReverseMove) {
+        match self {
+            TakGame::Standard5(board) => board.reverse_move(mv),
+            TakGame::Standard6(board) => board.reverse_move(mv),
+            TakGame::Standard7(board) => board.reverse_move(mv),
+        }
+    }
+
+    fn game_result(&self) -> Option<GameResult> {
+        match self {
+            TakGame::Standard5(board) => board.game_result(),
+            TakGame::Standard6(board) => board.game_result(),
+            TakGame::Standard7(board) => board.game_result(),
+        }
+    }
 }
 
 #[derive(Debug)]
