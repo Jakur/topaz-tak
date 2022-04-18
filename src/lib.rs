@@ -11,6 +11,34 @@ pub mod transposition_table;
 
 use crate::board::{Board5, Board6, Board7};
 
+#[derive(Clone, Debug)]
+pub struct TimeBank {
+    pub goal_time: u64,
+    pub max_time: u64,
+}
+
+impl TimeBank {
+    pub fn init(total_res: u64, total_time: u64, increment: u64) -> Self {
+        let use_time = if total_res > 40 {
+            total_time / 15
+        } else if total_res > 20 {
+            total_time / 10
+        } else {
+            total_time / 6
+        };
+        Self {
+            goal_time: use_time,
+            max_time: use_time,
+        }
+    }
+    pub fn flat(use_time: u64) -> Self {
+        Self {
+            goal_time: use_time,
+            max_time: use_time,
+        }
+    }
+}
+
 pub trait Position {
     type Move: Eq + Clone + std::fmt::Debug;
     type ReverseMove;

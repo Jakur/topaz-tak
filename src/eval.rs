@@ -35,47 +35,8 @@ impl Evaluator6 {
 
 impl Evaluator for Evaluator6 {
     type Game = Board6;
-    fn evaluate(&self, game: &Self::Game, depth: usize) -> i32 {
-        let mut score = 0;
-        for (idx, stack) in game.board.iter().enumerate() {
-            if stack.len() == 1 {
-                let top = *stack.last().unwrap();
-                let pw = Self::piece_weight(top) + LOCATION_WEIGHT[idx];
-                if let Color::White = top.owner() {
-                    score += pw;
-                } else {
-                    score -= pw;
-                }
-            } else if stack.len() > 1 {
-                let top = *stack.last().unwrap();
-                let pw = Self::piece_weight(top) + LOCATION_WEIGHT[idx];
-                let (captive, friendly) = captive_friendly(&stack, top);
-                let (c_mul, f_mul) = Self::stack_top_multiplier(top);
-                let stack_score = captive * c_mul + friendly * f_mul + pw;
-                if let Color::White = top.owner() {
-                    score += stack_score;
-                } else {
-                    score -= stack_score;
-                }
-            }
-        }
-        let white_connectivity = (game.bits.white.adjacent() & game.bits.white).pop_count();
-        let black_connectivity = (game.bits.black.adjacent() & game.bits.black).pop_count();
-        score += white_connectivity as i32 * Self::CONNECTIVITY;
-        score -= black_connectivity as i32 * Self::CONNECTIVITY;
-        if let Color::White = game.side_to_move() {
-            if depth % 2 == 0 {
-                score
-            } else {
-                score - Self::TEMPO_OFFSET
-            }
-        } else {
-            if depth % 2 == 0 {
-                -1 * score
-            } else {
-                -1 * score + Self::TEMPO_OFFSET
-            }
-        }
+    fn evaluate(&self, _game: &Self::Game, _depth: usize) -> i32 {
+        unimplemented!();
     }
 }
 
@@ -200,38 +161,52 @@ impl Evaluator for Weights6 {
                 score -= 30;
             }
         }
-
-        let (loose_white_pc, white_comp) =
-            flat_placement_road_h(game.bits.road_pieces(Color::White), game.bits.empty());
-        let (loose_black_pc, black_comp) =
-            flat_placement_road_h(game.bits.road_pieces(Color::Black), game.bits.empty());
+        let white_r = game.bits.road_pieces(Color::White);
+        let black_r = game.bits.road_pieces(Color::Black);
+        let mut white_cs = white_r.critical_squares() & !game.bits.blocker_pieces(Color::Black);
+        while white_cs != <Self::Game as TakBoard>::Bits::ZERO {
+            let lowest = white_cs.pop_lowest();
+            if (lowest.adjacent() & white_r).pop_count() >= 3 {
+                score += 50;
+            }
+        }
+        let mut black_cs = black_r.critical_squares() & !game.bits.blocker_pieces(Color::White);
+        while black_cs != <Self::Game as TakBoard>::Bits::ZERO {
+            let lowest = black_cs.pop_lowest();
+            if (lowest.adjacent() & black_r).pop_count() >= 3 {
+                score -= 50;
+            }
+        }
+        let (loose_white_pc, white_comp) = flat_placement_road_h(white_r, game.bits.empty());
+        let (loose_black_pc, black_comp) = flat_placement_road_h(black_r, game.bits.empty());
         score -= white_comp as i32 * self.connectivity;
         score += black_comp as i32 * self.connectivity;
 
         let mut white_road_score = match loose_white_pc {
-            1 => 50,
-            2 => 35,
-            3 => 20,
-            4 => 10,
+            1 => 40,
+            2 => 30,
+            3 => 15,
+            4 => 5,
             _ => 0,
         };
         let mut black_road_score = match loose_black_pc {
-            1 => 50,
-            2 => 35,
-            3 => 20,
-            4 => 10,
+            1 => 40,
+            2 => 30,
+            3 => 15,
+            4 => 5,
             _ => 0,
         };
-        if loose_white_pc > loose_black_pc {
+
+        if white_road_score > black_road_score {
             // white_road_score += 50;
             white_road_score *= 2;
-        } else if loose_black_pc > loose_white_pc {
+        } else if black_road_score > white_road_score {
             // black_road_score += 50;
             black_road_score *= 2;
         } else {
             match game.side_to_move() {
-                Color::White => white_road_score += 50,
-                Color::Black => black_road_score += 50,
+                Color::White => white_road_score *= 2,
+                Color::Black => black_road_score *= 2,
             }
             // match game.side_to_move() {
             //     Color::White => white_road_score *= 2,
@@ -270,16 +245,16 @@ impl Evaluator for Weights6 {
             }
         }
         if let Color::White = game.side_to_move() {
-            if depth % 2 == 0 {
-                score
+            if depth % 2 == 1 {
+                score + self.tempo_offset
             } else {
-                score - self.tempo_offset
+                score
             }
         } else {
-            if depth % 2 == 0 {
-                -1 * score
-            } else {
+            if depth % 2 == 1 {
                 -1 * score + self.tempo_offset
+            } else {
+                -1 * score
             }
         }
     }
@@ -538,7 +513,7 @@ fn flat_placement_road_h<B: Bitboard + std::fmt::Debug>(road_bits: B, empty: B) 
     let south = road_bits.flood(B::bottom()) | B::bottom();
     let east = road_bits.flood(B::right()) | B::right();
     let west = road_bits.flood(B::left()) | B::left();
-    let safe = road_bits | empty;
+    let safe = empty;
     while let Some(comp) = iter.next() {
         count += 1;
         if comp.pop_count() >= 2 {
@@ -549,6 +524,7 @@ fn flat_placement_road_h<B: Bitboard + std::fmt::Debug>(road_bits: B, empty: B) 
             let mut w_steps = 1_000;
             let mut explored = comp;
             let mut prev = B::ZERO;
+            let mut other_neighbor = (!comp & road_bits).adjacent() & empty;
             while prev != explored {
                 if (explored & north) != B::ZERO {
                     n_steps = std::cmp::min(n_steps, steps);
@@ -565,6 +541,12 @@ fn flat_placement_road_h<B: Bitboard + std::fmt::Debug>(road_bits: B, empty: B) 
                 prev = explored;
                 explored = (explored.adjacent() | explored) & safe;
                 steps += 1;
+                if (other_neighbor & explored) != B::ZERO {
+                    // Combine components
+                    explored = (road_bits | explored).flood(explored);
+                    other_neighbor = (!explored & road_bits).adjacent() & empty;
+                    // other_neighbor = other_neighbor & !explored;
+                }
             }
             let score = std::cmp::min(n_steps + s_steps, e_steps + w_steps);
             best = std::cmp::min(best, score);
@@ -887,7 +869,15 @@ mod test {
         assert_eq!(w_metric, 1);
         let (b_metric, _) =
             flat_placement_road_h(board.bits.road_pieces(Color::Black), board.bits.empty());
-        assert_eq!(b_metric, 4);
+        assert_eq!(b_metric, 2);
+        let s = "1,2,1,1,1,x/2,12C,2,1,x2/2,1S,2,1,x2/1,2,21C,1,x2/x,2,x4/x,2,x4 2 12";
+        let board = Board6::try_from_tps(s).unwrap();
+        let (w_metric, _) =
+            flat_placement_road_h(board.bits.road_pieces(Color::White), board.bits.empty());
+        assert_eq!(w_metric, 2);
+        let (b_metric, _) =
+            flat_placement_road_h(board.bits.road_pieces(Color::Black), board.bits.empty());
+        assert_eq!(b_metric, 5);
     }
 
     #[test]

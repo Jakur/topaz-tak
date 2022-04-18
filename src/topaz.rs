@@ -21,6 +21,21 @@ pub fn main() {
             play_game_cmd(false);
         } else if arg1 == "white" {
             play_game_cmd(true);
+        } else if arg1 == "analyze" {
+            let game = build_tps(&args).unwrap();
+            let mut info = SearchInfo::new(20, 2 << 20);
+            match game {
+                TakGame::Standard5(mut board) => {
+                    let eval = Weights5::default();
+                    search(&mut board, &eval, &mut info);
+                }
+                TakGame::Standard6(mut board) => {
+                    let eval = Weights6::default();
+                    search(&mut board, &eval, &mut info);
+                }
+                _ => todo!(),
+            }
+            return;
         } else if arg1 == "test" {
             let time = Instant::now();
             // let s = "2,x4,1/x4,1,x/x,2,12C,1,1,x/x,1,2,21C,x2/x,2,2,x3/x2,2,1,x2 1 10";
@@ -53,24 +68,7 @@ pub fn main() {
             println!("Time: {} ms", time.elapsed().as_millis());
             return;
         } else if arg1 == "tinue" {
-            let mut rest = String::new();
-            for s in args[2..].iter() {
-                rest.push_str(s);
-                rest.push_str(" ");
-            }
-            rest.pop();
-            let tps = if let Some(tps) = saved_tps(rest.as_str()) {
-                tps
-            } else {
-                rest.as_str()
-            };
-            let game = match TakGame::try_from_tps(tps) {
-                Ok(b) => b,
-                Err(e) => {
-                    println!("Unable to create game with tps: \n{}\n{}", tps, e);
-                    return;
-                }
-            };
+            let game = build_tps(&args).unwrap();
             match game {
                 TakGame::Standard5(board) => {
                     let search = crate::search::proof::TinueSearch::new(board);
@@ -113,6 +111,28 @@ pub fn main() {
     } else {
         println!("Unknown command: {}", buffer);
     }
+}
+
+fn build_tps(args: &[String]) -> Result<TakGame> {
+    let mut rest = String::new();
+    for s in args[2..].iter() {
+        rest.push_str(s);
+        rest.push_str(" ");
+    }
+    rest.pop();
+    let tps = if let Some(tps) = saved_tps(rest.as_str()) {
+        tps
+    } else {
+        rest.as_str()
+    };
+    let game = match TakGame::try_from_tps(tps) {
+        Ok(b) => b,
+        Err(e) => {
+            let message = format!("Unable to create game with tps: \n{}\n{}", tps, e);
+            return Err(anyhow::anyhow!(message));
+        }
+    };
+    Ok(game)
 }
 
 fn saved_tps(name: &str) -> Option<&str> {
@@ -325,6 +345,13 @@ impl TimeLeft {
         }
         ret
     }
+    fn has_time(&self, color: Color) -> (u64, u64) {
+        let (time_bank, inc) = match color {
+            Color::White => (self.wtime, self.winc),
+            Color::Black => (self.btime, self.binc),
+        };
+        (time_bank, inc)
+    }
     fn use_time(&self, est_plies: usize, side_to_move: Color) -> u64 {
         let (time_bank, inc) = match side_to_move {
             Color::White => (self.wtime, self.winc),
@@ -347,17 +374,15 @@ fn play_game_tei<E: Evaluator + Default>(
         let message = receiver.recv()?;
         match message {
             TeiCommand::Go(s) => {
-                let low_flats = std::cmp::min(
-                    board.pieces_reserve(Color::White),
-                    board.pieces_reserve(Color::Black),
-                );
-                let est_plies = low_flats * 2;
+                let flats_left =
+                    board.pieces_reserve(Color::White) + board.pieces_reserve(Color::Black);
                 let time_left = TimeLeft::new(&s);
-                let use_time = time_left.use_time(est_plies, board.side_to_move());
+                let (clock_time, clock_inc) = time_left.has_time(board.side_to_move());
+                let use_time = TimeBank::init(flats_left as u64, clock_time, clock_inc);
                 info = SearchInfo::new(init.max_depth, 0)
                     .take_table(&mut info)
-                    .max_time(use_time)
-                    .abort_depth(16);
+                    .time_bank(use_time)
+                    .abort_depth(8);
                 if board.ply() == 8 || board.ply() == 9 {
                     eval = E::default();
                 }
@@ -502,11 +527,11 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
         let message = server_recv.recv()?;
         match message {
             TeiCommand::Go(_) => {
-                let use_time = 12; // Todo better time management
+                let use_time = 12_000; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, 0)
                     .take_table(&mut info)
-                    .max_time(use_time)
-                    .abort_depth(32);
+                    .time_bank(TimeBank::flat(use_time))
+                    .abort_depth(50);
                 let res = search(&mut board, &eval, &mut info);
                 if let Some(outcome) = res {
                     server_send

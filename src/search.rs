@@ -7,7 +7,7 @@ use crate::move_gen::{
     MoveBuffer, RevGameMove, SmartMoveBuffer,
 };
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
-use crate::TeiCommand;
+use crate::{TeiCommand, TimeBank};
 use crossbeam_channel::Receiver;
 use instant::Instant;
 use std::marker::PhantomData;
@@ -55,10 +55,9 @@ pub struct SearchInfo {
     pub stack_win_kill: Vec<KillerMoves>,
     stopped: bool,
     input: Option<Receiver<TeiCommand>>,
-    max_time: u64,
+    time_bank: TimeBank,
     start_time: Instant,
     start_ply: usize,
-    estimate_time: bool,
     pub stats: SearchStats,
     early_abort_depth: usize,
     quiet: bool,
@@ -75,10 +74,9 @@ impl SearchInfo {
             nodes: 0,
             stopped: false,
             input: None,
-            max_time: 120, // Some large but not enormous default
+            time_bank: TimeBank::flat(120_000), // Some large but not enormous default
             start_time: Instant::now(),
             start_ply: 0,
-            estimate_time: true,
             stats: SearchStats::new(16),
             early_abort_depth: 6,
             quiet: false,
@@ -101,8 +99,8 @@ impl SearchInfo {
         self.input = Some(r);
         self
     }
-    pub fn max_time(mut self, time: u64) -> Self {
-        self.max_time = time;
+    pub fn time_bank(mut self, time_bank: TimeBank) -> Self {
+        self.time_bank = time_bank;
         self
     }
     pub fn abort_depth(mut self, depth: usize) -> Self {
@@ -118,8 +116,8 @@ impl SearchInfo {
         self.input.take()
     }
     pub fn check_stop(&mut self) {
-        let secs = self.start_time.elapsed().as_secs();
-        if secs >= self.max_time {
+        let secs = self.start_time.elapsed().as_millis();
+        if secs >= self.time_bank.goal_time as u128 {
             self.stopped = true;
         }
         if let Some(ref r) = self.input {
@@ -285,28 +283,15 @@ where
     E: Evaluator<Game = T>,
 {
     let mut outcome = None;
-    let mut node_counts = vec![1];
+    // let mut node_counts = vec![1];
     info.set_start_ply(board.ply());
     let mut alpha = -1_000_000;
     let mut beta = 1_000_000;
     for depth in 1..=info.max_depth {
         // Abort if we are unlikely to finish the search at this depth
-        if info.estimate_time && depth >= info.early_abort_depth {
-            let mut est_branch = node_counts[depth - 2] as f64 / node_counts[depth - 3] as f64;
-            if est_branch < 3.0 || est_branch > 100.0 {
-                // Transposition hits causing instability, just guess
-                if depth % 2 == 0 {
-                    // Even nodes are cheaper, see even-odd effect
-                    est_branch = 5.0;
-                } else {
-                    est_branch = 10.0;
-                }
-            }
-            let est_nodes = node_counts[depth - 1] as f64 * est_branch;
-            let elapsed = info.start_time.elapsed().as_secs_f64();
-            let nps = node_counts.iter().copied().sum::<usize>() as f64 / elapsed;
-            let remaining = info.max_time as f64 - elapsed;
-            if est_nodes / nps > remaining {
+        if depth >= info.early_abort_depth {
+            let elapsed = info.start_time.elapsed().as_millis();
+            if elapsed > info.time_bank.goal_time as u128 / 2 {
                 break;
             }
         }
@@ -338,7 +323,7 @@ where
             alpha = best_score - ASPIRATION_WINDOW;
             beta = best_score + ASPIRATION_WINDOW;
         }
-        node_counts.push(info.nodes);
+        // node_counts.push(info.nodes);
         let pv_moves = info.full_pv(board);
         // If we had an incomplete depth search, use the previous depth's vals
         if info.stopped {
