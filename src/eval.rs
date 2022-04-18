@@ -88,7 +88,8 @@ macro_rules! eval_impl {
                                 }
                             }
                         }
-                        let neighbors = <Board6 as TakBoard>::Bits::index_to_bit(idx).adjacent();
+                        let neighbors =
+                            <Self::Game as TakBoard>::Bits::index_to_bit(idx).adjacent();
                         for sq in BitIndexIterator::new(neighbors) {
                             let stack = &game.board[sq];
                             if let Some(piece) = stack.last() {

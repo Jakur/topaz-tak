@@ -1010,8 +1010,8 @@ fn naive_minimax<T: TakBoard, E: Evaluator<Game = T>>(board: &mut T, eval: &E, d
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::board::Board6;
-    use crate::eval::{Weights6, LOSE_SCORE};
+    use crate::board::{Board5, Board6};
+    use crate::eval::{Weights5, Weights6, LOSE_SCORE};
     #[test]
     fn small_minimax() {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
@@ -1029,6 +1029,11 @@ mod test {
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut info = SearchInfo::new(4, 50000);
         let eval = Weights6::default();
+        search(&mut board, &eval, &mut info);
+        let tps5 = "x4,1/x3,1,x/x,1,2C,1,2/x,2,1C,2,x/2,x4 1 6";
+        let mut board = Board5::try_from_tps(tps5).unwrap();
+        let mut info = SearchInfo::new(3, 50000);
+        let eval = Weights5::default();
         search(&mut board, &eval, &mut info);
     }
     #[test]
