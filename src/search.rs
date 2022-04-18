@@ -32,7 +32,7 @@ const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHE
 
 // aspiration window parameters
 // CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
-const ASPIRATION_ENABLED: bool = false; // TERRIBLE performance, search not stable enough
+const ASPIRATION_ENABLED: bool = true; // TERRIBLE performance, search not stable enough
 const ASPIRATION_WINDOW: i32 = 55;
 
 // move generation and ordering parameters
