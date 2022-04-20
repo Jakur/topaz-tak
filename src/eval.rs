@@ -365,7 +365,7 @@ fn flat_placement_road_h<B: Bitboard + std::fmt::Debug>(road_bits: B, empty: B) 
 /// the original version, but the road play still seems uninspired, extending threats
 /// that seem unlikely to be finished, while ignoring future threats simply because
 /// they haven't yet reached fruition.
-fn one_gap_road<B: Bitboard + std::fmt::Debug>(road_bits: B, blocker_bits: B) -> (i32, usize) {
+fn one_gap_road<B: Bitboard + std::fmt::Debug>(road_bits: B) -> (i32, usize) {
     let mut iter = ComponentIterator::new(road_bits);
     let mut best = 0;
     let mut count = 0;
@@ -695,17 +695,11 @@ mod test {
 
         let s = "x,1,x4/1,2,2,2,2,2/12C,1C,x4/1,1,x4/1,x5/1,x5 2 8";
         let board = Board6::try_from_tps(s).unwrap();
-        let (white_s, white_c) = one_gap_road(
-            board.bits.road_pieces(Color::White),
-            board.bits.blocker_pieces(Color::Black),
-        );
+        let (white_s, white_c) = one_gap_road(board.bits.road_pieces(Color::White));
         assert_eq!(6, white_s);
         assert_eq!(3, white_c);
 
-        let (black_s, black_c) = one_gap_road(
-            board.bits.road_pieces(Color::Black),
-            board.bits.blocker_pieces(Color::White),
-        );
+        let (black_s, black_c) = one_gap_road(board.bits.road_pieces(Color::Black));
         assert_eq!(6, black_s);
         assert_eq!(2, black_c);
     }

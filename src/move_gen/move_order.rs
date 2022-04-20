@@ -15,7 +15,7 @@ impl SmartMoveBuffer {
             queries: 0,
         }
     }
-    pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T, last_capture: Option<RevGameMove>) {
+    pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T) {
         // let DEBUG: &'static str = "5b2>221";
         let active_side = board.side_to_move();
         let mut stack_idx = usize::MAX;
@@ -323,7 +323,7 @@ mod test {
         let board = Board6::try_from_tps(tps).unwrap();
         let mut moves = SmartMoveBuffer::new();
         generate_all_moves(&board, &mut moves);
-        moves.score_stack_moves(&board, None);
+        moves.score_stack_moves(&board);
         moves.moves.sort_by_key(|x| -x.score);
         assert!(moves.moves[0].score >= moves.moves.last().unwrap().score);
         let info = SearchInfo::new(1, 0);

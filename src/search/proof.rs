@@ -277,12 +277,12 @@ where
         use colorful::Color;
         use colorful::Colorful;
         let s = match self {
-            Solved::Proved(m) => format!("{}", m.to_ptn::<T>()),
-            Solved::Disproved(m) => format!("{}", m.to_ptn::<T>()),
+            Solved::Proved(m) => m.to_ptn::<T>(),
+            Solved::Disproved(m) => m.to_ptn::<T>(),
             Solved::Unknown(m) => return write!(f, "{}", m.to_ptn::<T>()),
             Solved::AttackerRoad(m) => format!("{}''", m.to_ptn::<T>()),
             Solved::DefenderRoad(m) => format!("{}''", m.to_ptn::<T>()),
-            Solved::AttackerNoMoves(_) => format!("∅"),
+            Solved::AttackerNoMoves(_) => "∅".to_string(),
             Solved::Root(vec) => {
                 let move_str = vec.join("/");
                 return write!(f, "ROOT({})", move_str);
@@ -542,7 +542,7 @@ where
         };
         let bounds = self.bounds_table.entry(hash).or_insert(default_bounds);
 
-        let child = Child::new(bounds.clone(), game_move, hash);
+        let child = Child::new(*bounds, game_move, hash);
         self.board.reverse_move(rev);
         if attacker && self.zobrist_hist.contains(&hash) {
             return None;

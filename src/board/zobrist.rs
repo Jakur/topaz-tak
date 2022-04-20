@@ -119,7 +119,7 @@ mod test {
         let mut moves = Vec::new();
         let init_zobrist = TABLE.manual_build_hash(&board);
         generate_all_moves(&board, &mut moves);
-        assert!(moves.iter().find(|&m| m.crush()).is_some());
+        assert!(moves.iter().any(|m| m.crush()));
         for m in moves {
             let rev = board.do_move(m);
             assert_eq!(board.bits.zobrist(), TABLE.manual_build_hash(&board));

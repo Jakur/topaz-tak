@@ -10,7 +10,7 @@ use std::io::{self, BufRead};
 use std::thread;
 use std::time::Instant;
 use telnet::Event;
-use topaz_tak::board::{Bitboard6, Board5, Board6};
+use topaz_tak::board::{Board5, Board6};
 use topaz_tak::eval::{Evaluator, Weights5, Weights6};
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
@@ -235,7 +235,7 @@ fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> 
             let map: HashMap<String, usize> = read_data
                 .lines()
                 .filter_map(|x| {
-                    let sp: Vec<_> = x.split(",").collect();
+                    let sp: Vec<_> = x.split(',').collect();
                     if sp.len() == 3 {
                         Some((sp[0].to_string(), sp[2].parse().unwrap()))
                     } else {
@@ -337,7 +337,7 @@ fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>) -> Result<()> {
             }
         }
         if let Some(s) = matches.opt_str("e") {
-            interactive.expand_line(s.split("/").collect());
+            interactive.expand_line(s.split('/').collect());
         }
         // interactive.expand_line(vec!["c1".to_string(), "b1>".to_string()]);
         interactive.print_root();
@@ -603,7 +603,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
             }
             TeiCommand::Position(s) => {
                 board = Board5::new().with_komi(KOMI);
-                for m in s.split(",") {
+                for m in s.split(',') {
                     if let Some(m) = GameMove::try_from_playtak(m, &board) {
                         board.do_move(m);
                     }
@@ -647,9 +647,9 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                 let login_s = format!("Login {} {}\n", user, pass);
                                 com.write(login_s.as_bytes()).unwrap();
                             } else if line.starts_with("Game#") {
-                                let rest = line.split_once(" ").map(|x| x.1);
+                                let rest = line.split_once(' ').map(|x| x.1);
                                 if let Some(rest) = rest {
-                                    if rest.starts_with("P") || rest.starts_with("M") {
+                                    if rest.starts_with('P') || rest.starts_with('M') {
                                         moves.push(rest.to_string());
                                     } else if rest.starts_with("Over") {
                                         engine_send.send(TeiCommand::Quit).unwrap();

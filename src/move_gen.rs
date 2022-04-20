@@ -759,7 +759,7 @@ mod test {
             "6b4>231*", "6b4>321*", "6b4>411*",
         ];
         for c in crush_moves.into_iter() {
-            assert!(real_crush_moves.iter().find(|&&m| m == c).is_some());
+            assert!(real_crush_moves.iter().any(|&m| m == c));
         }
         for m in moves.iter().copied() {
             let r = board.do_move(m);

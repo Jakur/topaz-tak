@@ -378,7 +378,7 @@ impl TakHistory {
         if depth < 2 {
             return false;
         }
-        let mask = (1 << depth) | (1 << depth - 2);
+        let mask = (1 << depth) | (1 << (depth - 2));
         (self.0 & mask) == mask
     }
     fn check(self, depth: usize) -> bool {
@@ -434,7 +434,7 @@ where
         beta,
         depth,
         null_move,
-        last_move,
+        last_move: _,
         extensions,
         mut tak_history,
         is_pv,
@@ -501,7 +501,7 @@ where
     let pv_entry_foreign = info.lookup_move(board);
 
     if let Some(entry) = pv_entry_foreign {
-        pv_entry = Some(entry.clone()); // save for move lookup
+        pv_entry = Some(*entry); // save for move lookup
     }
 
     if let Some(entry) = pv_entry {
@@ -583,7 +583,7 @@ where
     }
 
     // internal iterative deepening
-    if IID_ENABLED && depth >= IID_MIN_DEPTH && (is_pv || IID_NON_PV) && !pv_entry.is_some() {
+    if IID_ENABLED && depth >= IID_MIN_DEPTH && (is_pv || IID_NON_PV) && pv_entry.is_none() {
         let reduction = std::cmp::max(IID_REDUCTION, depth / IID_DIVISION);
         alpha_beta(
             board,
@@ -604,7 +604,7 @@ where
         let pv_entry_foreign_2 = info.lookup_move(board);
 
         if let Some(entry) = pv_entry_foreign_2 {
-            pv_entry = Some(entry.clone());
+            pv_entry = Some(*entry);
         }
     }
 
@@ -638,7 +638,7 @@ where
                 || stack_moves.contains(&entry.game_move)
             // TODO maybe a really fast legal checker is faster
             {
-                let m = entry.game_move.clone();
+                let m = entry.game_move;
                 let rev_move = board.do_move(m);
 
                 let score = -1
@@ -699,7 +699,7 @@ where
         }
     }
 
-    gen_and_score(depth, board, last_move, &mut stack_moves, &mut moves);
+    gen_and_score(depth, board, &mut stack_moves, &mut moves);
 
     if let Some(entry) = pv_entry {
         if has_searched_pv {
@@ -896,7 +896,6 @@ where
 fn gen_and_score<T>(
     depth: usize,
     board: &mut T,
-    last_move: Option<RevGameMove>,
     stack_moves: &mut Vec<GameMove>,
     moves: &mut SmartMoveBuffer,
 ) where
@@ -917,12 +916,12 @@ fn gen_and_score<T>(
         moves.gen_score_place_moves(board);
         moves.score_tak_threats(&tak_threats);
         if board.ply() >= 4 {
-            moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
+            moves.score_stack_moves(board);
         }
     } else {
         if board.ply() >= 4 {
             generate_all_stack_moves(board, moves);
-            moves.score_stack_moves(board, last_move.filter(|x| x.game_move.is_stack_move()));
+            moves.score_stack_moves(board);
         }
         moves.gen_score_place_moves(board);
     }

@@ -20,7 +20,7 @@ pub struct TimeBank {
 }
 
 impl TimeBank {
-    pub fn init(total_res: u64, total_time: u64, increment: u64) -> Self {
+    pub fn init(total_res: u64, total_time: u64, _increment: u64) -> Self {
         let use_time = if total_res > 40 {
             total_time / 15
         } else if total_res > 20 {
@@ -160,7 +160,7 @@ pub fn execute_moves_check_valid(board: &mut Board6, ptn_slice: &[&str]) -> Resu
             GameMove::try_from_ptn(m_str, board).ok_or_else(|| anyhow!("Invalid ptn string"))?;
         generate_all_moves(board, &mut moves);
         ensure!(
-            moves.iter().find(|&&x| x == m).is_some(),
+            moves.iter().any(|&x| x == m),
             "Illegal move attempted"
         );
         board.do_move(m);

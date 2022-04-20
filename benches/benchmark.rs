@@ -37,8 +37,8 @@ fn execute_small_perft(depth: usize) {
 }
 
 fn check_for_tak(boards: &mut [Board6], legal_moves: &[Vec<GameMove>]) {
-    for (board, moves) in boards.into_iter().zip(legal_moves.iter()) {
-        board.get_tak_threats(&moves, None);
+    for (board, moves) in boards.iter_mut().zip(legal_moves.iter()) {
+        board.get_tak_threats(moves, None);
     }
 }
 
@@ -59,10 +59,10 @@ fn evaluate_positions<E: Evaluator<Game = Board6>>(positions: &[Board6], eval: &
     for pos in positions.iter() {
         sum += eval.evaluate(pos, 1);
     }
-    return sum;
+    sum
 }
 
-fn small_minimax(depth: u16) {
+fn small_minimax(_depth: u16) {
     let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
     let mut board = Board6::try_from_tps(tps).unwrap();
     let eval = Evaluator6 {};
