@@ -1,3 +1,5 @@
+#![allow(clippy::style)]
+
 use anyhow::{anyhow, ensure, Result};
 pub use board::{Bitboard, BitboardStorage, Piece, Stack, TakBoard};
 pub use board_game_traits::{Color, GameResult};

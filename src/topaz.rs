@@ -1,3 +1,5 @@
+#![allow(clippy::style)]
+
 use crate::eval::Evaluator6;
 use crate::Position;
 use anyhow::Result;
@@ -35,6 +37,64 @@ pub fn main() {
                 }
                 _ => todo!(),
             }
+            return;
+        } else if arg1 == "selfplay" {
+            let mut moves = Vec::new();
+            let mut game = build_tps(&args).unwrap();
+            let mut info = SearchInfo::new(20, 2 << 20).time_bank(TimeBank::flat(12_000));
+            while game.game_result().is_none() {
+                match game {
+                    TakGame::Standard5(ref mut board) => {
+                        let eval = Weights5::default();
+                        let outcome = search(board, &eval, &mut info).unwrap();
+                        println!("{}", outcome.best_move().unwrap());
+                        let mv = outcome.next().unwrap();
+                        board.do_move(mv);
+                        info = SearchInfo::new(20, 0)
+                            .time_bank(TimeBank::flat(12_000))
+                            .take_table(&mut info)
+                            .quiet(true);
+                        moves.push(mv);
+                    }
+                    TakGame::Standard6(ref mut board) => {
+                        let eval = Weights6::default();
+                        let outcome = search(board, &eval, &mut info).unwrap();
+                        println!("{}", outcome.best_move().unwrap());
+                        let mv = outcome.next().unwrap();
+                        board.do_move(mv);
+                        info = SearchInfo::new(20, 0)
+                            .time_bank(TimeBank::flat(12_000))
+                            .take_table(&mut info)
+                            .quiet(true);
+                        moves.push(mv);
+                    }
+                    _ => todo!(),
+                }
+            }
+            let s = match game {
+                TakGame::Standard5(ref board) => {
+                    format!("{:?}", board)
+                }
+                TakGame::Standard6(ref board) => {
+                    format!("{:?}", board)
+                }
+                _ => todo!(),
+            };
+            println!("Final Position: {}", s);
+            match game {
+                TakGame::Standard5(_) => {
+                    for mv in moves {
+                        print!("{} ", mv.to_ptn::<Board5>()); // Todo fix
+                    }
+                }
+                TakGame::Standard6(_) => {
+                    for mv in moves {
+                        print!("{} ", mv.to_ptn::<Board6>()); // Todo fix
+                    }
+                }
+                _ => todo!(),
+            }
+            println!("{:?}", game.game_result());
             return;
         } else if arg1 == "test" {
             let time = Instant::now();
@@ -587,7 +647,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                 let login_s = format!("Login {} {}\n", user, pass);
                                 com.write(login_s.as_bytes()).unwrap();
                             } else if line.starts_with("Game#") {
-                                let rest = line.splitn(2, " ").nth(1);
+                                let rest = line.split_once(" ").map(|x| x.1);
                                 if let Some(rest) = rest {
                                     if rest.starts_with("P") || rest.starts_with("M") {
                                         moves.push(rest.to_string());

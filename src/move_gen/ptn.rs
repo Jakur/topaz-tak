@@ -163,7 +163,7 @@ impl GameMove {
                 '<' => 3,
                 _ => return None,
             };
-            let crush = s.ends_with("*");
+            let crush = s.ends_with('*');
             let mut mv = Self(0)
                 .set_number(pieces)
                 .set_direction(dir)

@@ -236,6 +236,9 @@ where
             phantom: PhantomData,
         }
     }
+    pub fn next(&self) -> Option<GameMove> {
+        self.pv.get(0).copied()
+    }
     pub fn best_move(&self) -> Option<String> {
         self.pv.get(0).map(|m| m.to_ptn::<T>())
     }
@@ -354,7 +357,7 @@ where
             for ptn in pv_moves.iter().map(|m| m.to_ptn::<T>()) {
                 print!("{} ", ptn);
             }
-            println!("");
+            println!();
         }
         // Stop wasting time
         if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
@@ -526,7 +529,7 @@ where
     if NULL_REDUCTION_ENABLED
         && (!data.is_pv || NULL_REDUCE_PV)
         && null_move
-        && depth >= 1 + NULL_REDUCTION
+        && depth > NULL_REDUCTION
     {
         // && road_move.is_none() {
 
@@ -943,11 +946,6 @@ fn gen_and_score<T>(
 //     }
 //     0
 // }
-
-fn road_at_a_glance() {
-    // I
-    todo!();
-}
 
 /// A naive minimax function without pruning used for debugging and benchmarking
 pub fn root_minimax<T, E>(board: &mut T, eval: &E, depth: u16) -> (Option<GameMove>, i32)

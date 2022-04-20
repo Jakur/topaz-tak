@@ -225,6 +225,7 @@ impl Bitboard5 {
     pub const fn new(data: u64) -> Self {
         Self(data & Self::INNER)
     }
+    #[allow(clippy::zero_prefixed_literal)]
     #[rustfmt::skip]
     const fn build_bit_to_index_table() -> [usize; 64] {
         const EMPTY: usize = 100;
@@ -240,6 +241,7 @@ impl Bitboard5 {
         ];
         arr
     }
+    #[allow(clippy::zero_prefixed_literal)]
     #[rustfmt::skip]
     const fn build_index_to_bit_table() -> [u64; 25] {
         let arr: [u64; 25] = [
@@ -284,6 +286,7 @@ impl Bitboard6 {
     pub const fn new(data: u64) -> Self {
         Self(data & Self::INNER)
     }
+    #[allow(clippy::zero_prefixed_literal)]
     #[rustfmt::skip]
     const fn build_bit_to_index_table() -> [usize; 64] {
         const EMPTY: usize = 100;
@@ -299,6 +302,7 @@ impl Bitboard6 {
         ];
         arr
     }
+    #[allow(clippy::zero_prefixed_literal)]
     #[rustfmt::skip]
     const fn build_index_to_bit_table() -> [u64; 36] {
         let arr: [u64; 36] = [
@@ -346,6 +350,7 @@ impl Bitboard7 {
     pub const fn new(data: u64) -> Self {
         Self(data & Self::INNER)
     }
+    #[allow(clippy::zero_prefixed_literal)]
     #[rustfmt::skip]
     const fn build_bit_to_index_table() -> [usize; 64] {
         const EMPTY: usize = 100;
@@ -361,6 +366,7 @@ impl Bitboard7 {
         ];
         arr
     }
+    #[allow(clippy::zero_prefixed_literal)]
     #[rustfmt::skip]
     const fn build_index_to_bit_table() -> [u64; 49] {
         let arr: [u64; 49] = [

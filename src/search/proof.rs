@@ -148,7 +148,7 @@ where
         }
     }
     pub fn change_view(&mut self, line: &str) -> Result<()> {
-        for ptn in line.split("/") {
+        for ptn in line.split('/') {
             let m = GameMove::try_from_ptn(ptn, &self.board)
                 .ok_or_else(|| anyhow!("Unable to parse ptn!"))?;
             let mut legal_moves = Vec::new();

@@ -604,6 +604,7 @@ impl Default for Weights6 {
 // offcorner, kosumi, ctouch, ctouch, kosumi, corner,
 // corner, offcorner, edge, edge, offcorner, corner,
 
+#[allow(clippy::zero_prefixed_literal)]
 #[rustfmt::skip]
 const LOCATION_WEIGHT: [i32; 36] = [
     00, 05, 05, 05, 05, 00,
@@ -614,6 +615,7 @@ const LOCATION_WEIGHT: [i32; 36] = [
     00, 05, 05, 05, 05, 00,
 ];
 
+#[allow(clippy::zero_prefixed_literal)]
 #[rustfmt::skip]
 const LOCATION_WEIGHT5: [i32; 25] = [
     00, 05, 05, 05, 00,

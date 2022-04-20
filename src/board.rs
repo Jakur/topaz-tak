@@ -93,6 +93,20 @@ macro_rules! board_impl {
                 }
             }
             pub fn try_from_tps(tps: &str) -> Result<Self> {
+                let mut komi = 0;
+                let tps = match tps.split_once("!") {
+                    Some((tps, rest)) => {
+                        let mut split = rest.split(&['!', ' ']);
+                        if split.by_ref().find(|x| *x == "komi").is_some() {
+                            komi = split
+                                .next()
+                                .map(|x| x.parse())
+                                .ok_or_else(|| anyhow!("Could not parse komi properly"))??;
+                        }
+                        tps
+                    }
+                    _ => tps,
+                };
                 let data: Vec<_> = tps.split_whitespace().collect();
                 ensure!(data.len() == 3, "Malformed tps string!");
                 let rows: Vec<_> = data[0].split("/").collect();
@@ -141,7 +155,7 @@ macro_rules! board_impl {
                 board.move_num = data[2].parse()?;
                 let zobrist_hash = zobrist::TABLE.manual_build_hash(&board);
                 board.bits.set_zobrist(zobrist_hash);
-                Ok(board)
+                Ok(board.with_komi(komi))
             }
         }
 
