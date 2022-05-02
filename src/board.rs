@@ -11,7 +11,9 @@ mod stack;
 mod zobrist;
 pub use piece::*;
 pub use stack::*;
-pub trait TakBoard: Position<Move = GameMove, ReverseMove = RevGameMove> + std::fmt::Debug {
+pub trait TakBoard:
+    Position<Move = GameMove, ReverseMove = RevGameMove> + std::fmt::Debug + Clone
+{
     type Bits: Bitboard;
     // These consts break object safety
     const SIZE: usize;
@@ -58,6 +60,7 @@ pub trait TakBoard: Position<Move = GameMove, ReverseMove = RevGameMove> + std::
         Self: Sized;
     fn komi(&self) -> u8;
     fn flat_diff(&self, player: Color) -> i32;
+    fn rotate(&self) -> Self;
 }
 
 macro_rules! board_impl {
@@ -194,9 +197,15 @@ macro_rules! board_impl {
                 }
             }
             fn null_move(&mut self) {
+                if let Color::Black = self.side_to_move() {
+                    self.move_num += 1;
+                }
                 self.swap_active_player();
             }
             fn rev_null_move(&mut self) {
+                if let Color::White = self.side_to_move() {
+                    self.move_num -= 1
+                }
                 self.swap_active_player();
             }
             fn get_tak_threats(
@@ -375,6 +384,26 @@ macro_rules! board_impl {
                     Color::White => white - black,
                     Color::Black => black - white,
                 }
+            }
+
+            fn rotate(&self) -> Self {
+                let mut out = Self::new();
+                for row in 0..Self::SIZE {
+                    for col in 0..Self::SIZE {
+                        let src = self.tile(row, col);
+                        let dest_col = row;
+                        let dest_row = Self::SIZE - 1 - col;
+                        *out.tile_mut(dest_row, dest_col) = src.clone();
+                    }
+                }
+                // Fix stack index
+                for (idx, stack) in out.board.iter_mut().enumerate() {
+                    stack.set_index(idx);
+                }
+                // Set zobrist
+                out.bits = BitboardStorage::build::<Self>(&out.board);
+                out.bits.set_zobrist(zobrist::TABLE.manual_build_hash(&out));
+                out
             }
         }
         impl Position for $t {
@@ -731,5 +760,25 @@ mod test {
         let res = crate::execute_moves_check_valid(&mut board, &["b4"]);
         assert!(res.is_ok());
         assert_eq!(board.flat_game(), Some(GameResult::BlackWin));
+    }
+
+    #[test]
+    pub fn rotation() {
+        let s = "2,1,1,1,1,2S/1,12,1,x2,111121C/x,2,2,212,2C,11121/2,2,1,1,12,2/x3,1,1,x/x2,2,21,x,112S 1 36";
+        let board = Board6::try_from_tps(s).unwrap();
+        let mut hash = vec![board.zobrist()];
+        let mut rotated = board.clone();
+        for _ in 0..4 {
+            rotated = rotated.rotate();
+            dbg!(rotated.bits.flat);
+            hash.push(rotated.zobrist());
+        }
+        dbg!(&hash);
+        assert_eq!(hash[0], *hash.last().unwrap());
+        hash.pop(); // Get rid of duplicate of last rotation
+        for h in hash.iter().copied() {
+            // All unique
+            assert_eq!(hash.iter().filter(|&&x| x == h).count(), 1)
+        }
     }
 }
