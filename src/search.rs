@@ -13,6 +13,7 @@ use instant::Instant;
 use std::marker::PhantomData;
 // use std::time::Instant;
 
+pub mod book;
 #[cfg(feature = "cli")]
 pub mod proof;
 
@@ -61,6 +62,7 @@ pub struct SearchInfo {
     pub stats: SearchStats,
     early_abort_depth: usize,
     quiet: bool,
+    book: Option<book::Book>,
 }
 
 impl SearchInfo {
@@ -80,6 +82,7 @@ impl SearchInfo {
             stats: SearchStats::new(16),
             early_abort_depth: 6,
             quiet: false,
+            book: None,
         }
     }
     pub fn print_cuts(&self) {
@@ -87,6 +90,14 @@ impl SearchInfo {
             "Fail High: {} Fail High First: {} Transposition Hits: {} ",
             self.stats.fail_high, self.stats.fail_high_first, self.stats.transposition_cutoffs
         );
+    }
+    pub fn take_book(mut self, other: &mut Self) -> Self {
+        std::mem::swap(&mut self.book, &mut other.book);
+        self
+    }
+    pub fn book(mut self, book: book::Book) -> Self {
+        self.book = Some(book);
+        self
     }
     pub fn take_table(mut self, other: &mut Self) -> Self {
         std::mem::swap(&mut self.pv_table, &mut other.pv_table);
@@ -159,6 +170,16 @@ impl SearchInfo {
         forward
     }
     fn ply_depth<E: TakBoard>(&self, position: &E) -> usize {
+        if position.ply() < self.start_ply {
+            dbg!(self.start_ply);
+            dbg!(position.ply());
+            dbg!(&position);
+            let board = crate::Board5::try_from_tps(
+                "2,x,x,x,x/x,x,x,x,x/x,x,x,x,x/x,x,x,x,x/x,x,x,x,x 1 1",
+            )
+            .unwrap();
+            dbg!(board.ply());
+        }
         position.ply() - self.start_ply
     }
     pub fn clear_tt(&mut self) {
@@ -723,14 +744,22 @@ where
 
         // search first move fully!
         if count == 0 {
-            score = -1
-                * alpha_beta(
+            let mut bonus = 0;
+            if data.is_root {
+                if let Some(ref book) = info.book {
+                    if let Some(offset) = book.get(board) {
+                        bonus = offset;
+                    }
+                }
+            }
+            score = bonus
+                - alpha_beta(
                     board,
                     evaluator,
                     info,
                     SearchData::new(
-                        -beta,
-                        -alpha,
+                        bonus - beta,
+                        bonus - alpha,
                         next_depth,
                         true,
                         Some(rev_move),
@@ -757,19 +786,30 @@ where
                 reduced_depth -= 2;
                 needs_re_search_on_alpha = true;
             }
+            let mut next_beta = -alpha;
+            let mut bonus = 0;
+            if data.is_root {
+                if let Some(ref book) = info.book {
+                    if let Some(offset) = book.get(board) {
+                        bonus = offset;
+                        next_beta += offset;
+                        next_alpha += offset;
+                    }
+                }
+            }
             if PV_SEARCH_ENABLED && depth > 1 && !data.is_root {
                 next_alpha = -(alpha + 1);
                 needs_re_search_on_alpha_beta = true;
             }
 
-            score = -1
-                * alpha_beta(
+            score = bonus
+                - alpha_beta(
                     board,
                     evaluator,
                     info,
                     SearchData::new(
                         next_alpha,
-                        -alpha,
+                        next_beta,
                         reduced_depth,
                         true,
                         Some(rev_move),
@@ -782,14 +822,14 @@ where
 
             // re-search full depth moves and those that don't fail low
             if needs_re_search_on_alpha && score > alpha {
-                score = -1
-                    * alpha_beta(
+                score = bonus
+                    - alpha_beta(
                         board,
                         evaluator,
                         info,
                         SearchData::new(
                             next_alpha,
-                            -alpha,
+                            next_beta,
                             next_depth,
                             true,
                             Some(rev_move),
@@ -807,14 +847,14 @@ where
                 && score < beta
                 && (PV_RE_SEARCH_NON_PV || data.is_pv)
             {
-                score = -1
-                    * alpha_beta(
+                score = bonus
+                    - alpha_beta(
                         board,
                         evaluator,
                         info,
                         SearchData::new(
                             -beta,
-                            -alpha,
+                            next_beta,
                             next_depth,
                             true,
                             Some(rev_move),

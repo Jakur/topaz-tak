@@ -5,6 +5,7 @@ use crate::Position;
 use anyhow::Result;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use getopts::Options;
+use std::collections::HashMap;
 use std::env;
 use std::io::{self, BufRead};
 use std::thread;
@@ -38,6 +39,44 @@ pub fn main() {
                 _ => todo!(),
             }
             return;
+        } else if arg1 == "book" {
+            let mut book =
+                crate::search::book::Book::new(search::book::BookMode::Explore, HashMap::new());
+            for i in 0..10 {
+                let eval = Weights5::default();
+                let mut moves = Vec::new();
+                let mut board = Board5::new().with_komi(4);
+                let mut info = SearchInfo::new(20, 2 << 20)
+                    .time_bank(TimeBank::flat(12_000))
+                    .book(book.clone());
+                while board.game_result().is_none() {
+                    let outcome = search(&mut board, &eval, &mut info).unwrap();
+                    println!("{}", outcome.best_move().unwrap());
+                    let mv = outcome.next().unwrap();
+                    board.do_move(mv);
+                    info = SearchInfo::new(20, 0)
+                        .time_bank(TimeBank::flat(12_000))
+                        .take_table(&mut info)
+                        .take_book(&mut info)
+                        .quiet(true);
+                    moves.push(mv);
+                }
+                println!("Game {}", i);
+                let combo: Vec<_> = moves
+                    .iter()
+                    .copied()
+                    .map(|m| m.to_ptn::<Board5>())
+                    .collect();
+                let s = combo.join(" ");
+                println!("{}", s);
+                book.update(
+                    Board5::new().with_komi(4),
+                    board.game_result().unwrap(),
+                    moves,
+                );
+            }
+            book.save(&mut std::fs::File::create("book.json").unwrap())
+                .expect("Failed to write book");
         } else if arg1 == "selfplay" {
             let mut moves = Vec::new();
             let mut game = build_tps(&args).unwrap();
