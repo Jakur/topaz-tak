@@ -647,9 +647,9 @@ impl GameInitializer {
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
     const MAX_DEPTH: usize = 32;
     const KOMI: u8 = 4;
-    let mut board = Board5::new().with_komi(KOMI);
+    let mut board = Board6::new().with_komi(KOMI);
     let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
-    let eval = Weights5::default();
+    let eval = Weights6::default();
     // eval.add_noise();
     // let eval = Evaluator6 {};
     loop {
@@ -671,7 +671,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                 }
             }
             TeiCommand::Position(s) => {
-                board = Board5::new().with_komi(KOMI);
+                board = Board6::new().with_komi(KOMI);
                 for m in s.split(',') {
                     if let Some(m) = GameMove::try_from_playtak(m, &board) {
                         board.do_move(m);
@@ -688,21 +688,22 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 }
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
-    static OPP: &'static str = "WilemBot";
-    let (user, pass) = playtak_auth().expect("Could not read properly formatted .env file");
+    static OPP: &'static str = "DUMMY";
+    let login_s = if let Some((user, pass)) = playtak_auth() {
+        format!("Login {} {}\n", user, pass)
+    } else {
+        "Login Guest".to_string()
+    };
     std::thread::spawn(move || {
         let mut com = telnet::Telnet::connect(("playtak.com", 10_000), 2048).unwrap();
         let mut counter = 0;
-        let mut played = false;
+        let mut playing = false;
         let mut waiting_for_engine = false;
         let mut my_color = None;
         let mut game_id = None;
         let mut goal = None;
-        // let mut played = true;
-        // let mut waiting_for_engine = false;
-        // let mut my_color = Some("black".to_string());
-        // let mut game_id = Some("481821".to_string());
-        // let mut goal = None;
+        let mut live_seek = false;
+
         let mut moves = Vec::new();
         loop {
             match com.read_nonblocking() {
@@ -713,7 +714,6 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                         for line in s.lines() {
                             if line.starts_with("Welcome!") {
                                 println!("Logging in");
-                                let login_s = format!("Login {} {}\n", user, pass);
                                 com.write(login_s.as_bytes()).unwrap();
                             } else if line.starts_with("Game#") {
                                 let rest = line.split_once(' ').map(|x| x.1);
@@ -736,7 +736,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                             } else if line.starts_with("Game Start") {
                                 game_id = line.split_whitespace().nth(2).map(|x| x.to_string());
                                 my_color = line.split_whitespace().nth(7).map(|x| x.to_lowercase());
-                                played = true;
+                                playing = true;
                                 dbg!(&game_id);
                                 dbg!(&my_color);
                             }
@@ -750,10 +750,15 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                             println!("Pinging server!");
                             com.write("PING\n".as_bytes()).unwrap();
                         }
-                        if !played {
+                        if !playing {
                             if let Some(ref id) = goal {
                                 let s = format!("Accept {}\n", id);
                                 com.write(s.as_bytes()).unwrap();
+                                goal = None;
+                            } else if !live_seek && counter >= 5 {
+                                let s = "Seek 6 900 20 A 4 30 1 0 0 \n";
+                                com.write(s.as_bytes()).unwrap();
+                                live_seek = true;
                             }
                         } else {
                             let color = my_color.as_ref().unwrap().as_str();
@@ -822,4 +827,45 @@ fn playtak_auth() -> Option<(String, String)> {
         }
     }
     Some((username?, password?))
+}
+
+fn playtak_book() -> Option<book::Book> {
+    use miniserde::json;
+    use std::io::Read;
+    dotenv::dotenv().ok()?;
+    let mut pt_book = None;
+    for (key, value) in env::vars() {
+        if key == "PLAYTAK_BOOK" {
+            pt_book = Some(value);
+        }
+    }
+    let pt_book = pt_book?;
+    let mut book_data = String::new();
+    std::fs::File::open(&pt_book)
+        .ok()?
+        .read_to_string(&mut book_data)
+        .ok()?;
+    json::from_str(&book_data).ok()
+}
+
+fn save_playtak_book(book: &book::Book) -> Result<()> {
+    use anyhow::anyhow;
+    use miniserde::json;
+    use std::io::Write;
+    dotenv::dotenv()?;
+    let mut pt_book = None;
+    for (key, value) in env::vars() {
+        if key == "PLAYTAK_BOOK" {
+            pt_book = Some(value);
+        }
+    }
+    let pt_book = pt_book.ok_or_else(|| anyhow!("Could not find book path to write to"))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&pt_book)?;
+    let write_string = json::to_string(book);
+    write!(&mut file, "{}", write_string)?;
+    file.flush()?;
+    Ok(())
 }
