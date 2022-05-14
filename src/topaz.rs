@@ -8,11 +8,13 @@ use getopts::Options;
 use std::collections::HashMap;
 use std::env;
 use std::io::{self, BufRead};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
 use topaz_tak::eval::{Evaluator, Weights5, Weights6};
+use topaz_tak::search::book;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
 
@@ -40,42 +42,42 @@ pub fn main() {
             }
             return;
         } else if arg1 == "book" {
-            let mut book =
-                crate::search::book::Book::new(search::book::BookMode::Explore, HashMap::new());
-            for i in 0..10 {
-                let eval = Weights5::default();
-                let mut moves = Vec::new();
-                let mut board = Board5::new().with_komi(4);
-                let mut info = SearchInfo::new(20, 2 << 20)
-                    .time_bank(TimeBank::flat(12_000))
-                    .book(book.clone());
-                while board.game_result().is_none() {
-                    let outcome = search(&mut board, &eval, &mut info).unwrap();
-                    println!("{}", outcome.best_move().unwrap());
-                    let mv = outcome.next().unwrap();
-                    board.do_move(mv);
-                    info = SearchInfo::new(20, 0)
-                        .time_bank(TimeBank::flat(12_000))
-                        .take_table(&mut info)
-                        .take_book(&mut info)
-                        .quiet(true);
-                    moves.push(mv);
-                }
-                println!("Game {}", i);
-                let combo: Vec<_> = moves
-                    .iter()
-                    .copied()
-                    .map(|m| m.to_ptn::<Board5>())
-                    .collect();
-                let s = combo.join(" ");
-                println!("{}", s);
-                book.update(
-                    Board5::new().with_komi(4),
-                    board.game_result().unwrap(),
-                    moves,
-                );
+            let book = Arc::new(Mutex::new(book::Book::new(
+                search::book::BookMode::Learn,
+                HashMap::new(),
+            )));
+            let count = std::thread::available_parallelism().unwrap().get();
+            assert!(count >= 1_usize);
+            let openings = vec![&["a1", "f6"], &["a1", "a6"]];
+            let mut handles = vec![];
+            for (t_id, start) in openings.into_iter().enumerate() {
+                let book = Arc::clone(&book);
+                println!("Thread: {}", t_id);
+                let handle = std::thread::spawn(move || {
+                    for i in 0..15 {
+                        let data = { book.lock().unwrap().clone() };
+                        let (moves, game_res) = play_book_game(start, data);
+                        println!("T{} Game {}", i, t_id);
+                        let combo: Vec<_> = moves
+                            .iter()
+                            .copied()
+                            .map(|m| m.to_ptn::<Board6>())
+                            .collect();
+                        let s = combo.join(" ");
+                        println!("{}", s);
+                        book.lock()
+                            .unwrap()
+                            .update(Board6::new().with_komi(4), game_res, moves);
+                    }
+                });
+                handles.push(handle);
             }
-            book.save(&mut std::fs::File::create("book.json").unwrap())
+            if !handles.into_iter().all(|h| h.join().is_ok()) {
+                println!("Something went wrong, thread panicked or lock poisoned?");
+            }
+            book.lock()
+                .unwrap()
+                .save(&mut std::fs::File::create("book6s.json").unwrap())
                 .expect("Failed to write book");
         } else if arg1 == "selfplay" {
             let mut moves = Vec::new();
@@ -210,6 +212,34 @@ pub fn main() {
     } else {
         println!("Unknown command: {}", buffer);
     }
+}
+
+fn play_book_game(st: &[&str], book: book::Book) -> (Vec<GameMove>, GameResult) {
+    let eval = Weights6::default();
+    let mut moves = Vec::new();
+    let mut board = Board6::new().with_komi(4);
+    for mv in st {
+        let mv = GameMove::try_from_ptn(mv, &board).unwrap();
+        moves.push(mv);
+        board.do_move(mv);
+    }
+    let mut info = SearchInfo::new(20, 2 << 20)
+        .time_bank(TimeBank::flat(12_000))
+        .book(book)
+        .quiet(true);
+    while board.game_result().is_none() {
+        let outcome = search(&mut board, &eval, &mut info).unwrap();
+        // println!("{}", outcome.best_move().unwrap());
+        let mv = outcome.next().unwrap();
+        board.do_move(mv);
+        info = SearchInfo::new(20, 0)
+            .time_bank(TimeBank::flat(12_000))
+            .take_table(&mut info)
+            .take_book(&mut info)
+            .quiet(true);
+        moves.push(mv);
+    }
+    return (moves, board.game_result().unwrap());
 }
 
 fn build_tps(args: &[String]) -> Result<TakGame> {
