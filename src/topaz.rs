@@ -756,8 +756,16 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                     if rest.starts_with('P') || rest.starts_with('M') {
                                         moves.push(rest.to_string());
                                     } else if rest.starts_with("Over") {
-                                        engine_send.send(TeiCommand::Quit).unwrap();
-                                        break;
+                                        // Todo maybe a different command?
+                                        engine_send.send(TeiCommand::NewGame(0)).unwrap();
+                                        counter = 0;
+                                        playing = false;
+                                        waiting_for_engine = false;
+                                        my_color = None;
+                                        game_id = None;
+                                        goal = None;
+                                        live_seek = false;
+                                        moves.clear();
                                     }
                                 } else {
                                     dbg!(line);
@@ -769,6 +777,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                     println!("Goal: {:?}", goal);
                                 }
                             } else if line.starts_with("Game Start") {
+                                engine_send.send(TeiCommand::NewGame(0)).unwrap();
                                 game_id = line.split_whitespace().nth(2).map(|x| x.to_string());
                                 my_color = line.split_whitespace().nth(7).map(|x| x.to_lowercase());
                                 playing = true;
