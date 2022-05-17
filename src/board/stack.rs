@@ -16,6 +16,9 @@ impl Stack {
             index: IDX,
         }
     }
+    pub(crate) fn set_index(&mut self, index: usize) {
+        self.index = index;
+    }
     pub fn init(&mut self, index: usize) {
         self.data.reserve(8);
         self.index = index;

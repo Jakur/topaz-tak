@@ -1,6 +1,7 @@
 use super::Piece;
 use crate::board::TakBoard;
 use board_game_traits::Color;
+use miniserde::{de::Visitor, make_place, Deserialize, Serialize};
 use std::fmt;
 
 mod move_order;
@@ -270,6 +271,29 @@ impl GameMove {
             _ => unimplemented!(),
         };
         bits & mask
+    }
+}
+
+make_place!(Place);
+
+impl Serialize for GameMove {
+    fn begin(&self) -> miniserde::ser::Fragment {
+        miniserde::ser::Fragment::U64(self.0 as u64)
+    }
+}
+
+impl Visitor for Place<GameMove> {
+    fn nonnegative(&mut self, val: u64) -> miniserde::Result<()> {
+        self.out = Some(GameMove(val as u32));
+        Ok(())
+    }
+}
+
+impl Deserialize for GameMove {
+    fn begin(out: &mut Option<Self>) -> &mut dyn Visitor {
+        // All Deserialize impls will look exactly like this. There is no
+        // other correct implementation of Deserialize.
+        Place::new(out)
     }
 }
 

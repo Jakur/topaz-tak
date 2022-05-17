@@ -5,13 +5,16 @@ use crate::Position;
 use anyhow::Result;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use getopts::Options;
+use std::collections::HashMap;
 use std::env;
 use std::io::{self, BufRead};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
 use topaz_tak::eval::{Evaluator, Weights5, Weights6};
+use topaz_tak::search::book;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
 
@@ -38,6 +41,44 @@ pub fn main() {
                 _ => todo!(),
             }
             return;
+        } else if arg1 == "book" {
+            let book = Arc::new(Mutex::new(book::Book::new(
+                search::book::BookMode::Learn,
+                HashMap::new(),
+            )));
+            let count = std::thread::available_parallelism().unwrap().get();
+            assert!(count >= 1_usize);
+            let openings = vec![&["a1", "f6"], &["a1", "a6"]];
+            let mut handles = vec![];
+            for (t_id, start) in openings.into_iter().enumerate() {
+                let book = Arc::clone(&book);
+                println!("Thread: {}", t_id);
+                let handle = std::thread::spawn(move || {
+                    for i in 0..15 {
+                        let data = { book.lock().unwrap().clone() };
+                        let (moves, game_res) = play_book_game(start, data);
+                        println!("T{} Game {}", i, t_id);
+                        let combo: Vec<_> = moves
+                            .iter()
+                            .copied()
+                            .map(|m| m.to_ptn::<Board6>())
+                            .collect();
+                        let s = combo.join(" ");
+                        println!("{}", s);
+                        book.lock()
+                            .unwrap()
+                            .update(Board6::new().with_komi(4), game_res, moves);
+                    }
+                });
+                handles.push(handle);
+            }
+            if !handles.into_iter().all(|h| h.join().is_ok()) {
+                println!("Something went wrong, thread panicked or lock poisoned?");
+            }
+            book.lock()
+                .unwrap()
+                .save(&mut std::fs::File::create("book6s.json").unwrap())
+                .expect("Failed to write book");
         } else if arg1 == "selfplay" {
             let mut moves = Vec::new();
             let mut game = build_tps(&args).unwrap();
@@ -171,6 +212,34 @@ pub fn main() {
     } else {
         println!("Unknown command: {}", buffer);
     }
+}
+
+fn play_book_game(st: &[&str], book: book::Book) -> (Vec<GameMove>, GameResult) {
+    let eval = Weights6::default();
+    let mut moves = Vec::new();
+    let mut board = Board6::new().with_komi(4);
+    for mv in st {
+        let mv = GameMove::try_from_ptn(mv, &board).unwrap();
+        moves.push(mv);
+        board.do_move(mv);
+    }
+    let mut info = SearchInfo::new(20, 2 << 20)
+        .time_bank(TimeBank::flat(12_000))
+        .book(book)
+        .quiet(true);
+    while board.game_result().is_none() {
+        let outcome = search(&mut board, &eval, &mut info).unwrap();
+        // println!("{}", outcome.best_move().unwrap());
+        let mv = outcome.next().unwrap();
+        board.do_move(mv);
+        info = SearchInfo::new(20, 0)
+            .time_bank(TimeBank::flat(12_000))
+            .take_table(&mut info)
+            .take_book(&mut info)
+            .quiet(true);
+        moves.push(mv);
+    }
+    return (moves, board.game_result().unwrap());
 }
 
 fn build_tps(args: &[String]) -> Result<TakGame> {
@@ -578,22 +647,31 @@ impl GameInitializer {
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
     const MAX_DEPTH: usize = 32;
     const KOMI: u8 = 4;
-    let mut board = Board5::new().with_komi(KOMI);
+    let mut move_cache = Vec::new();
+    let mut last_score = 0;
+    let mut my_side = None;
+    let mut board = Board6::new().with_komi(KOMI);
     let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
-    let eval = Weights5::default();
+    if let Some(book) = playtak_book() {
+        info = info.book(book);
+    }
+    let eval = Weights6::default();
     // eval.add_noise();
     // let eval = Evaluator6 {};
     loop {
         let message = server_recv.recv()?;
         match message {
             TeiCommand::Go(_) => {
+                my_side = Some(board.side_to_move());
                 let use_time = 12_000; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, 0)
                     .take_table(&mut info)
+                    .take_book(&mut info)
                     .time_bank(TimeBank::flat(use_time))
                     .abort_depth(50);
                 let res = search(&mut board, &eval, &mut info);
                 if let Some(outcome) = res {
+                    last_score = outcome.score();
                     server_send
                         .send(outcome.best_move().expect("could not find best move!"))
                         .unwrap();
@@ -602,15 +680,41 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                 }
             }
             TeiCommand::Position(s) => {
-                board = Board5::new().with_komi(KOMI);
+                move_cache.clear();
+                board = Board6::new().with_komi(KOMI);
                 for m in s.split(',') {
                     if let Some(m) = GameMove::try_from_playtak(m, &board) {
+                        move_cache.push(m);
                         board.do_move(m);
                     }
                 }
             }
             TeiCommand::Quit => {
                 break;
+            }
+            TeiCommand::NewGame(_size) => {
+                // Record poor opening outcome
+                if last_score < -400 {
+                    if let Some(side) = my_side {
+                        let res = match side {
+                            Color::White => GameResult::BlackWin,
+                            Color::Black => GameResult::WhiteWin,
+                        };
+                        if let Some(op_book) = info.book_mut() {
+                            op_book.update(Board6::new().with_komi(KOMI), res, move_cache);
+                            save_playtak_book(op_book)?;
+                        }
+                    }
+                } else if last_score == 0 && board.move_num() >= 30 {
+                    let res = GameResult::Draw;
+                    if let Some(op_book) = info.book_mut() {
+                        op_book.update(Board6::new().with_komi(KOMI), res, move_cache);
+                        save_playtak_book(op_book)?;
+                    }
+                }
+                info.clear_tt();
+                board = Board6::new().with_komi(KOMI);
+                move_cache = Vec::new();
             }
             _ => println!("Unknown command: {:?}", message),
         }
@@ -619,21 +723,22 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 }
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
-    static OPP: &'static str = "WilemBot";
-    let (user, pass) = playtak_auth().expect("Could not read properly formatted .env file");
+    static OPP: &'static str = "Dummy"; // Todo make this env variable
+    let login_s = if let Some((user, pass)) = playtak_auth() {
+        format!("Login {} {}\n", user, pass)
+    } else {
+        "Login Guest".to_string()
+    };
     std::thread::spawn(move || {
         let mut com = telnet::Telnet::connect(("playtak.com", 10_000), 2048).unwrap();
         let mut counter = 0;
-        let mut played = false;
+        let mut playing = false;
         let mut waiting_for_engine = false;
         let mut my_color = None;
         let mut game_id = None;
         let mut goal = None;
-        // let mut played = true;
-        // let mut waiting_for_engine = false;
-        // let mut my_color = Some("black".to_string());
-        // let mut game_id = Some("481821".to_string());
-        // let mut goal = None;
+        let mut live_seek = false;
+
         let mut moves = Vec::new();
         loop {
             match com.read_nonblocking() {
@@ -644,7 +749,6 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                         for line in s.lines() {
                             if line.starts_with("Welcome!") {
                                 println!("Logging in");
-                                let login_s = format!("Login {} {}\n", user, pass);
                                 com.write(login_s.as_bytes()).unwrap();
                             } else if line.starts_with("Game#") {
                                 let rest = line.split_once(' ').map(|x| x.1);
@@ -652,8 +756,16 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                     if rest.starts_with('P') || rest.starts_with('M') {
                                         moves.push(rest.to_string());
                                     } else if rest.starts_with("Over") {
-                                        engine_send.send(TeiCommand::Quit).unwrap();
-                                        break;
+                                        // Todo maybe a different command?
+                                        engine_send.send(TeiCommand::NewGame(0)).unwrap();
+                                        counter = 0;
+                                        playing = false;
+                                        waiting_for_engine = false;
+                                        my_color = None;
+                                        game_id = None;
+                                        goal = None;
+                                        live_seek = false;
+                                        moves.clear();
                                     }
                                 } else {
                                     dbg!(line);
@@ -665,9 +777,10 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                     println!("Goal: {:?}", goal);
                                 }
                             } else if line.starts_with("Game Start") {
+                                engine_send.send(TeiCommand::NewGame(0)).unwrap();
                                 game_id = line.split_whitespace().nth(2).map(|x| x.to_string());
                                 my_color = line.split_whitespace().nth(7).map(|x| x.to_lowercase());
-                                played = true;
+                                playing = true;
                                 dbg!(&game_id);
                                 dbg!(&my_color);
                             }
@@ -681,10 +794,15 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                             println!("Pinging server!");
                             com.write("PING\n".as_bytes()).unwrap();
                         }
-                        if !played {
+                        if !playing {
                             if let Some(ref id) = goal {
                                 let s = format!("Accept {}\n", id);
                                 com.write(s.as_bytes()).unwrap();
+                                goal = None;
+                            } else if !live_seek && counter >= 5 {
+                                let s = "Seek 6 900 30 A 4 30 1 0 0 \n";
+                                com.write(s.as_bytes()).unwrap();
+                                live_seek = true;
                             }
                         } else {
                             let color = my_color.as_ref().unwrap().as_str();
@@ -753,4 +871,47 @@ fn playtak_auth() -> Option<(String, String)> {
         }
     }
     Some((username?, password?))
+}
+
+fn playtak_book() -> Option<book::Book> {
+    use miniserde::json;
+    use std::io::Read;
+    dotenv::dotenv().ok()?;
+    let mut pt_book = None;
+    for (key, value) in env::vars() {
+        if key == "PLAYTAK_BOOK" {
+            pt_book = Some(value);
+        }
+    }
+    let pt_book = pt_book?;
+    if let Ok(mut file) = std::fs::File::open(&pt_book) {
+        let mut book_data = String::new();
+        file.read_to_string(&mut book_data).ok()?;
+        json::from_str(&book_data).ok()
+    } else {
+        // If a file name is set but the file does not exist, make a new book
+        Some(book::Book::new(book::BookMode::Learn, HashMap::new()))
+    }
+}
+
+fn save_playtak_book(book: &book::Book) -> Result<()> {
+    use anyhow::anyhow;
+    use miniserde::json;
+    use std::io::Write;
+    dotenv::dotenv()?;
+    let mut pt_book = None;
+    for (key, value) in env::vars() {
+        if key == "PLAYTAK_BOOK" {
+            pt_book = Some(value);
+        }
+    }
+    let pt_book = pt_book.ok_or_else(|| anyhow!("Could not find book path to write to"))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&pt_book)?;
+    let write_string = json::to_string(book);
+    write!(&mut file, "{}", write_string)?;
+    file.flush()?;
+    Ok(())
 }

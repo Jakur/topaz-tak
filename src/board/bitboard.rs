@@ -81,6 +81,7 @@ where
     }
     pub fn build<B: TakBoard>(board: &[Stack]) -> Self {
         assert_eq!(board.len(), B::SIZE * B::SIZE);
+        // Todo compare to manual build hash
         let mut storage = Self::default();
         storage.set_zobrist(TABLE.color_hash(Color::White));
         for (idx, stack) in board.iter().enumerate() {
@@ -634,6 +635,8 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::board::Board6;
+    use crate::board::zobrist;
     #[test]
     pub fn pop_lowest() {
         let mut x = Bitboard6::new(0x20103c007e00);
@@ -693,5 +696,11 @@ mod test {
         let critical = bb.critical_squares();
         dbg!(critical.lowest_index());
         assert_eq!(critical.pop_count(), 2);
+    }
+
+    #[test]
+    pub fn storage_zobrist() {
+        let board = Board6::new();
+        assert_eq!(board.zobrist(), zobrist::TABLE.manual_build_hash(&board))
     }
 }
