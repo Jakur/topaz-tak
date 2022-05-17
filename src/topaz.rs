@@ -647,8 +647,14 @@ impl GameInitializer {
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
     const MAX_DEPTH: usize = 32;
     const KOMI: u8 = 4;
+    let mut move_cache = Vec::new();
+    let mut last_score = 0;
+    let mut my_side = None;
     let mut board = Board6::new().with_komi(KOMI);
     let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
+    if let Some(book) = playtak_book() {
+        info = info.book(book);
+    }
     let eval = Weights6::default();
     // eval.add_noise();
     // let eval = Evaluator6 {};
@@ -656,13 +662,16 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
         let message = server_recv.recv()?;
         match message {
             TeiCommand::Go(_) => {
+                my_side = Some(board.side_to_move());
                 let use_time = 12_000; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, 0)
                     .take_table(&mut info)
+                    .take_book(&mut info)
                     .time_bank(TimeBank::flat(use_time))
                     .abort_depth(50);
                 let res = search(&mut board, &eval, &mut info);
                 if let Some(outcome) = res {
+                    last_score = outcome.score();
                     server_send
                         .send(outcome.best_move().expect("could not find best move!"))
                         .unwrap();
@@ -671,15 +680,41 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                 }
             }
             TeiCommand::Position(s) => {
+                move_cache.clear();
                 board = Board6::new().with_komi(KOMI);
                 for m in s.split(',') {
                     if let Some(m) = GameMove::try_from_playtak(m, &board) {
+                        move_cache.push(m);
                         board.do_move(m);
                     }
                 }
             }
             TeiCommand::Quit => {
                 break;
+            }
+            TeiCommand::NewGame(_size) => {
+                // Record poor opening outcome
+                if last_score < -400 {
+                    if let Some(side) = my_side {
+                        let res = match side {
+                            Color::White => GameResult::BlackWin,
+                            Color::Black => GameResult::WhiteWin,
+                        };
+                        if let Some(op_book) = info.book_mut() {
+                            op_book.update(Board6::new().with_komi(KOMI), res, move_cache);
+                            save_playtak_book(op_book)?;
+                        }
+                    }
+                } else if last_score == 0 && board.move_num() >= 30 {
+                    let res = GameResult::Draw;
+                    if let Some(op_book) = info.book_mut() {
+                        op_book.update(Board6::new().with_komi(KOMI), res, move_cache);
+                        save_playtak_book(op_book)?;
+                    }
+                }
+                info.clear_tt();
+                board = Board6::new().with_komi(KOMI);
+                move_cache = Vec::new();
             }
             _ => println!("Unknown command: {:?}", message),
         }
@@ -688,7 +723,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 }
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
-    static OPP: &'static str = "DUMMY";
+    static OPP: &'static str = "Dummy"; // Todo make this env variable
     let login_s = if let Some((user, pass)) = playtak_auth() {
         format!("Login {} {}\n", user, pass)
     } else {
@@ -756,7 +791,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                 com.write(s.as_bytes()).unwrap();
                                 goal = None;
                             } else if !live_seek && counter >= 5 {
-                                let s = "Seek 6 900 20 A 4 30 1 0 0 \n";
+                                let s = "Seek 6 900 30 A 4 30 1 0 0 \n";
                                 com.write(s.as_bytes()).unwrap();
                                 live_seek = true;
                             }
@@ -840,12 +875,14 @@ fn playtak_book() -> Option<book::Book> {
         }
     }
     let pt_book = pt_book?;
-    let mut book_data = String::new();
-    std::fs::File::open(&pt_book)
-        .ok()?
-        .read_to_string(&mut book_data)
-        .ok()?;
-    json::from_str(&book_data).ok()
+    if let Ok(mut file) = std::fs::File::open(&pt_book) {
+        let mut book_data = String::new();
+        file.read_to_string(&mut book_data).ok()?;
+        json::from_str(&book_data).ok()
+    } else {
+        // If a file name is set but the file does not exist, make a new book
+        Some(book::Book::new(book::BookMode::Learn, HashMap::new()))
+    }
 }
 
 fn save_playtak_book(book: &book::Book) -> Result<()> {

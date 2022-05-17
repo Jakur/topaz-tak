@@ -91,6 +91,9 @@ impl SearchInfo {
             self.stats.fail_high, self.stats.fail_high_first, self.stats.transposition_cutoffs
         );
     }
+    pub fn book_mut(&mut self) -> Option<&mut book::Book> {
+        self.book.as_mut()
+    }
     pub fn take_book(mut self, other: &mut Self) -> Self {
         std::mem::swap(&mut self.book, &mut other.book);
         self
@@ -274,6 +277,9 @@ where
         }
         string.pop();
         string
+    }
+    pub fn score(&self) -> i32 {
+        self.score
     }
 }
 
