@@ -116,9 +116,6 @@ impl RevGameMove {
     pub fn new(game_move: GameMove, dest_sq: usize) -> Self {
         Self { game_move, dest_sq }
     }
-    pub fn rev_iter(self, board_size: usize) -> RevStackMoveIterator {
-        RevStackMoveIterator::new(self, board_size)
-    }
 }
 
 /// A struct tightly packing all information necessary to make a Tak move.
@@ -204,14 +201,6 @@ impl GameMove {
     /// Returns the number of pieces being picked up by a stack move
     pub fn number(self) -> u32 {
         (self.0 & 0xF00) >> 8
-    }
-    /// Returns an iterator representing the forward movement of a stack
-    ///
-    /// This is primarily used when actually implementing stack movement on a Tak board.
-    /// The board size is necessary because north and south movement need to know the
-    /// amount to increment / decrement the index value by as the stack moves
-    pub fn forward_iter(self, board_size: usize) -> StackMoveIterator {
-        StackMoveIterator::new(self, board_size)
     }
     /// Returns an iterator that returns the quantity and board index for each stack step
     pub fn quantity_iter(self, board_size: usize) -> QuantityMoveIterator {
@@ -306,66 +295,6 @@ impl fmt::Debug for GameMove {
         }
     }
 }
-
-pub struct StackMoveIterator {
-    slide_bits: u32,
-    direction: u8,
-    index: usize,
-    board_size: usize,
-    count: u32,
-}
-
-impl StackMoveIterator {
-    fn new(game_move: GameMove, board_size: usize) -> Self {
-        let slide_bits = game_move.slide_bits();
-        let direction = game_move.direction() as u8;
-        let mut index = game_move.src_index();
-        // We want to start on the first dest square, not the origin square
-        match direction {
-            0 => index -= board_size,
-            1 => index += 1,
-            2 => index += board_size,
-            3 => index -= 1,
-            _ => unimplemented!(),
-        }
-        Self {
-            slide_bits,
-            direction,
-            index,
-            board_size,
-            count: game_move.number() + 1,
-        }
-    }
-}
-
-impl Iterator for StackMoveIterator {
-    type Item = usize;
-    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
-        self.count -= 1;
-        if self.count == 0 {
-            return None;
-        }
-        let bit = self.slide_bits & 1;
-        self.slide_bits = self.slide_bits >> 1;
-        let index = self.index;
-        if bit != 0 {
-            // Move
-            // Avoid underflow
-            if self.slide_bits == 0 {
-                return Some(self.index);
-            }
-            match self.direction {
-                0 => self.index -= self.board_size,
-                1 => self.index += 1,
-                2 => self.index += self.board_size,
-                3 => self.index -= 1,
-                _ => unimplemented!(),
-            }
-        }
-        Some(index)
-    }
-}
-
 pub struct QuantityMoveIterator {
     slide_bits: u32,
     direction: u8,
@@ -414,60 +343,6 @@ impl Iterator for QuantityMoveIterator {
 pub struct QuantityStep {
     pub index: usize,
     pub quantity: u32,
-}
-
-pub struct RevStackMoveIterator {
-    slide_bits: u32,
-    direction: u8,
-    index: usize,
-    board_size: usize,
-    count: u32,
-    dirty: bool,
-}
-
-impl RevStackMoveIterator {
-    fn new(rev_move: RevGameMove, board_size: usize) -> Self {
-        let game_move = rev_move.game_move;
-        let slide = game_move.slide_bits();
-        debug_assert!(slide != 0);
-        let zeros = slide.leading_zeros();
-        let slide_bits = slide << zeros;
-        let direction = game_move.direction() as u8;
-        let index = rev_move.dest_sq;
-        Self {
-            slide_bits,
-            direction,
-            index,
-            board_size,
-            count: game_move.number() + 1,
-            dirty: false,
-        }
-    }
-}
-
-impl Iterator for RevStackMoveIterator {
-    type Item = usize;
-    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
-        self.count -= 1;
-        if self.count == 0 {
-            return None;
-        }
-        // Drop the high bits instead of the low bits
-        let bits = self.slide_bits & 0x8000_0000;
-        self.slide_bits = self.slide_bits << 1;
-        if bits != 0 && self.dirty {
-            // Reversed from the normal direction step, since we're going backwards
-            match self.direction {
-                0 => self.index += self.board_size,
-                1 => self.index -= 1,
-                2 => self.index -= self.board_size,
-                3 => self.index += 1,
-                _ => unimplemented!(),
-            }
-        }
-        self.dirty = true;
-        Some(self.index)
-    }
 }
 
 #[derive(Debug)]

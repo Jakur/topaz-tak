@@ -278,6 +278,7 @@ impl<B> BitOutcome<B> {
 /// A method that finds the most complete road among orthogonally connected components.
 /// It allows one non-blocking piece to be overwritten for free, leading to decreased
 /// concern for blockades, and extending roads that seem unlikely to ever be finished
+#[cfg(test)]
 fn one_gap_road_old<B: Bitboard + std::fmt::Debug>(road_bits: B, blocker_bits: B) -> (i32, usize) {
     let mut iter = ComponentIterator::new(road_bits);
     let mut best = 0;
@@ -365,6 +366,7 @@ fn flat_placement_road_h<B: Bitboard + std::fmt::Debug>(road_bits: B, empty: B) 
 /// the original version, but the road play still seems uninspired, extending threats
 /// that seem unlikely to be finished, while ignoring future threats simply because
 /// they haven't yet reached fruition.
+#[cfg(test)]
 fn one_gap_road<B: Bitboard + std::fmt::Debug>(road_bits: B) -> (i32, usize) {
     let mut iter = ComponentIterator::new(road_bits);
     let mut best = 0;

@@ -296,7 +296,6 @@ fn saved_tps(name: &str) -> Option<&str> {
 }
 
 fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> {
-    use std::collections::HashMap;
     use std::io::Write;
     let mut vec = Vec::new();
     let old = {
@@ -480,14 +479,6 @@ impl TimeLeft {
             Color::Black => (self.btime, self.binc),
         };
         (time_bank, inc)
-    }
-    fn use_time(&self, est_plies: usize, side_to_move: Color) -> u64 {
-        let (time_bank, inc) = match side_to_move {
-            Color::White => (self.wtime, self.winc),
-            Color::Black => (self.btime, self.binc),
-        };
-        let use_bank = time_bank / (est_plies + 2) as u64 / 1000;
-        use_bank + inc / 1000
     }
 }
 
