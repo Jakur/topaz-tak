@@ -133,8 +133,10 @@ macro_rules! board_impl {
                                 col < Self::SIZE as u32,
                                 "Too many columns for this board size"
                             );
-                            board.board[r_idx * Self::SIZE + col as usize]
-                                .extend(stack.into_iter(), &mut board.bits);
+                            for piece in stack.into_iter() {
+                                board.board[r_idx * Self::SIZE + col as usize]
+                                    .push(piece, &mut board.bits);
+                            }
                             col += 1;
                         }
                     }
@@ -446,30 +448,49 @@ macro_rules! board_impl {
                         self.flats_left[piece.owner() as usize] += 1;
                     }
                 } else {
-                    if rev_m.game_move.crush() {
-                        // Stand the wall back up
-                        let dest_tile = &mut self.board[rev_m.dest_sq];
-                        dest_tile.uncrush_wall::<<Self as TakBoard>::Bits>();
-                    }
-                    let iter = rev_m.rev_iter(Self::SIZE);
+                    // if rev_m.game_move.crush() {
+                    //     // Stand the wall back up
+                    //     let dest_tile = &mut self.board[rev_m.dest_sq];
+                    //     dest_tile.uncrush_wall::<<Self as TakBoard>::Bits>();
+                    // }
+                    let iter = rev_m.game_move.quantity_iter(Self::SIZE);
                     // We need to get a mutable reference to multiple areas of the array. Hold on.
-                    let (origin, rest, offset): (&mut Stack, &mut [Stack], usize) = {
-                        if src_index > rev_m.dest_sq {
-                            // Easy case, because all indices remain the same
-                            let (split_left, split_right) = self.board.split_at_mut(src_index);
-                            (&mut split_right[0], split_left, 0)
-                        } else {
-                            // Should not go out of bounds since src index < dest_sq
-                            let (split_left, split_right) = self.board.split_at_mut(src_index + 1);
-                            (&mut split_left[src_index], split_right, src_index + 1)
-                        }
-                    };
-                    for idx in iter {
-                        let piece = rest[idx - offset].pop(&mut self.bits).unwrap();
-                        origin.push(piece, &mut self.bits); // This will need to be reversed later
+                    // let (origin, rest, offset): (&mut Stack, &mut [Stack], usize) = {
+                    //     if src_index > rev_m.dest_sq {
+                    //         // Easy case, because all indices remain the same
+                    //         let (split_left, split_right) = self.board.split_at_mut(src_index);
+                    //         (&mut split_right[0], split_left, 0)
+                    //     } else {
+                    //         // Should not go out of bounds since src index < dest_sq
+                    //         let (split_left, split_right) = self.board.split_at_mut(src_index + 1);
+                    //         (&mut split_left[src_index], split_right, src_index + 1)
+                    //     }
+                    // };
+                    // let top_piece = self.board[rev_m.dest_sq].top().unwrap();
+                    let mut build = stack::Pickup::default();
+                    for q_step in iter {
+                        build.append(
+                            self.board[q_step.index]
+                                .split_off(q_step.quantity as usize, &mut self.bits),
+                        );
+                        // take_bits = take_bits << 1;
+                        // let piece = self.board[idx].pop(&mut self.bits).unwrap();
+                        // let piece = rest[idx - offset].pop(&mut self.bits).unwrap();
+                        // take_bits |= (piece.owner() == Color::Black) as u8;
+                        // origin.push(piece, &mut self.bits); // This will need to be reversed later
                     }
-                    let pieces_moved = rev_m.game_move.number() as usize;
-                    origin.reverse_top(pieces_moved, &mut self.bits);
+                    // let pieces_moved = rev_m.game_move.number() as u8;
+                    // fn new(pieces: u8, top: Piece, length: u8)
+                    // let mut pickup = stack::Pickup::new(take_bits, top_piece, pieces_moved);
+                    self.board[src_index].add_stack(
+                        rev_m.game_move.number() as usize,
+                        &mut build,
+                        &mut self.bits,
+                    );
+                    if rev_m.game_move.crush() {
+                        self.board[rev_m.dest_sq].uncrush_top(&mut self.bits);
+                    }
+                    // origin.reverse_top(pieces_moved, &mut self.bits);
                 }
             }
             fn do_move(&mut self, m: GameMove) -> <Self as Position>::ReverseMove {
@@ -493,24 +514,30 @@ macro_rules! board_impl {
                     RevGameMove::new(m, src_index)
                 } else {
                     let num_pieces = m.number() as usize;
-                    let stack_move = m.forward_iter(Self::SIZE);
+                    // let stack_move = m.forward_iter(Self::SIZE);
+                    let stack_move = m.quantity_iter(Self::SIZE);
                     let src_stack = &mut self.board[src_index];
                     // Todo remove allocation with split_at_mut
                     debug_assert!(src_stack.len() >= num_pieces);
-                    let take_stack: Vec<_> = src_stack.split_off(num_pieces, &mut self.bits);
+                    let mut take_stack = src_stack.split_off(num_pieces, &mut self.bits);
                     let mut last_idx = 0;
-                    for (piece, sq) in take_stack.into_iter().zip(stack_move) {
-                        debug_assert!(sq != src_index);
-                        self.board[sq].push(piece, &mut self.bits);
-                        last_idx = sq;
+                    for q_step in stack_move.into_iter() {
+                        debug_assert!(q_step.index != src_index);
+                        self.board[q_step.index].add_stack(
+                            q_step.quantity as usize,
+                            &mut take_stack,
+                            &mut self.bits,
+                        );
+                        last_idx = q_step.index;
                     }
-                    let last_square = &mut self.board[last_idx];
-                    let len = last_square.len();
-                    if len >= 2 {
-                        if last_square.try_crush_wall::<<Self as TakBoard>::Bits>() {
-                            return RevGameMove::new(m.set_crush(), last_idx);
-                        }
-                    }
+                    // let last_square = &mut self.board[last_idx];
+                    // let len = last_square.len();
+                    // if len >= 2 {
+                    //     // Is this necessary?
+                    //     // if last_square.try_crush_wall::<<Self as TakBoard>::Bits>() {
+                    //     //     return RevGameMove::new(m.set_crush(), last_idx);
+                    //     // }
+                    // }
                     RevGameMove::new(m, last_idx)
                 }
             }
@@ -631,7 +658,7 @@ impl Board6 {
         self.board
             .iter()
             .enumerate()
-            .filter_map(|(i, vec)| match vec.last() {
+            .filter_map(|(i, vec)| match vec.top() {
                 Some(piece) if piece.owner() == player => Some(i),
                 _ => None,
             })
@@ -653,10 +680,9 @@ mod test {
         let mut b = Board6::new();
         b.tile_mut(1, 2).push(Piece::BlackFlat, &mut board.bits);
         b.tile_mut(2, 3).push(Piece::BlackCap, &mut board.bits);
-        let stack = vec![Piece::BlackFlat, Piece::WhiteFlat, Piece::WhiteWall];
-        // b.tile_mut(3, 2) = &mut stack;
-        let stack_dest = b.tile_mut(3, 2);
-        stack_dest.extend(stack.into_iter(), &mut board.bits);
+        b.tile_mut(3, 2).push(Piece::BlackFlat, &mut board.bits);
+        b.tile_mut(3, 2).push(Piece::WhiteFlat, &mut board.bits);
+        b.tile_mut(3, 2).push(Piece::WhiteWall, &mut board.bits);
         b.tile_mut(3, 5).push(Piece::BlackFlat, &mut board.bits);
 
         b.tile_mut(5, 1).push(Piece::WhiteFlat, &mut board.bits);
@@ -706,6 +732,10 @@ mod test {
             board.reverse_move(rev_move);
             assert_eq!(*board, Board6::try_from_tps(tps).unwrap())
         };
+        // let ptns = &["5d3-41*"];
+        // for ptn in ptns {
+        //     check_move(s, ptn, &mut board);
+        // }
         let ptns = &[
             "a2", "c2+", "d2>", "f2<", "a3-", "5d3<41", "5d3-41*", "6d3+", "Sf6",
         ];

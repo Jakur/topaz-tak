@@ -51,10 +51,10 @@ impl ZobristTable {
         let mut hash = 0;
         for (sq, stack) in board.board().iter().enumerate() {
             for (stack_pos, piece) in stack.iter().enumerate() {
-                hash ^= self.stack_hash(*piece, sq, stack_pos);
+                hash ^= self.stack_hash(piece, sq, stack_pos);
             }
-            if let Some(piece) = stack.last() {
-                hash ^= self.top_hash(*piece, sq);
+            if let Some(piece) = stack.top() {
+                hash ^= self.top_hash(piece, sq);
             }
         }
         hash ^= self.color_hash(board.active_player());
@@ -126,6 +126,23 @@ mod test {
             board.reverse_move(rev);
             assert_eq!(board.bits.zobrist(), init_zobrist);
         }
+    }
+    #[test]
+    pub fn consistent_hash() {
+        // Used for checking that zobrist hashes are as expected for move gen and do_move purposes
+        // This function must be changed if the zobrist keys themselves are updated
+        let tps = "1,1,1,1,1,2/x,1,1,2,2,2/1,1,112S,2S,2S,1/1,2,2,2,21221,21/21,2,2,21,x,12/12,12C,x,221,2222221C,x 1 39";
+        let mut board = Board6::try_from_tps(tps).unwrap();
+        let mut buffer = Vec::new();
+        generate_all_moves(&board, &mut buffer);
+        assert_eq!(buffer.len(), 174);
+        let mut hash = 0;
+        for mv in buffer {
+            let rev = board.do_move(mv);
+            hash ^= board.hash();
+            board.reverse_move(rev);
+        }
+        assert_eq!(hash, 9736573932680568458);
     }
     // #[test]
     // pub fn dummy() {

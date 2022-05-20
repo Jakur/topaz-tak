@@ -522,9 +522,9 @@ fn find_dir_limit<F, T>(
     row = res.0;
     col = res.1;
     while let Some(stack) = board.try_tile(row, col) {
-        match stack.last() {
+        match stack.top() {
             Some(piece) if piece.is_blocker() => {
-                if board.tile(st_row, st_col).last().unwrap().is_cap() && piece.is_wall() {
+                if board.tile(st_row, st_col).top().unwrap().is_cap() && piece.is_wall() {
                     limits.can_crush[dir] = true;
                 }
                 break;

@@ -46,7 +46,7 @@ impl SmartMoveBuffer {
             for step in x.mv.quantity_iter(T::SIZE) {
                 debug_assert!(step.quantity > 0);
                 offset += step.quantity as usize;
-                let covered = board.index(step.index).last();
+                let covered = board.index(step.index).top();
                 let covering = stack_data[offset];
                 // println!("{}", &x.mv.to_ptn::<T>());
                 // if &x.mv.to_ptn::<T>() == DEBUG {
@@ -79,7 +79,7 @@ impl SmartMoveBuffer {
                     score -= 2;
                 }
             }
-            if let Some(piece) = src_stack.last() {
+            if let Some(piece) = src_stack.top() {
                 if piece.is_cap() {
                     score += 1;
                     if x.mv.crush() {

@@ -149,7 +149,7 @@ pub fn main() {
             // println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
             // info.print_cuts();
             // let node_counts = search_efficiency(&["empty6"], 8);
-            let examine = vec![("temp", 16)];
+            let examine = vec![("midgame2", 10)];
             // let mut board = Board6::try_from_tps(saved_tps("start4").unwrap()).unwrap();
             // let mut eval = Weights6::default();
             // eval.add_noise();

@@ -85,7 +85,7 @@ where
         let mut storage = Self::default();
         storage.set_zobrist(TABLE.color_hash(Color::White));
         for (idx, stack) in board.iter().enumerate() {
-            if let Some(piece) = stack.last() {
+            if let Some(piece) = stack.top() {
                 let bit_pattern = T::index_to_bit(idx);
                 match piece {
                     Piece::WhiteFlat => {
