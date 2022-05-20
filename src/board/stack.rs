@@ -36,10 +36,10 @@ impl Stack {
     pub fn from_top(&self, index: usize) -> Option<Piece> {
         if index >= self.len() {
             None
-        } else if index == self.len() - 1 {
+        } else if index == 0 {
             Some(self.top_piece)
         } else {
-            Some(self.get_inner_piece(self.len() - 1 - index))
+            Some(self.get_inner_piece(index))
         }
     }
     pub fn push<T: Bitboard>(&mut self, item: Piece, bits: &mut BitboardStorage<T>) {
@@ -81,9 +81,6 @@ impl Stack {
             (white, black)
         }
     }
-    // pub fn last(&self) -> Option<&Piece> {
-    //     self.data.last()
-    // }
     pub fn pop<T: Bitboard>(&mut self, bits: &mut BitboardStorage<T>) -> Option<Piece> {
         self.hash_out_top(bits);
         let ret = self.top();
@@ -132,51 +129,11 @@ impl Stack {
         self.length += num as u8;
         self.hash_in_many(num, bits);
     }
-    // /// Mimicking the Extend trait from std, but we need an extra parameter
-    // pub fn extend<T, U>(&mut self, iter: T, bits: &mut BitboardStorage<U>)
-    // where
-    //     T: IntoIterator<Item = Piece>,
-    //     U: Bitboard,
-    // {
-    //     for item in iter {
-    //         self.push(item, bits);
-    //     }
-    // }
-    // pub fn try_crush_wall<T: Bitboard>(&mut self) -> bool {
-    //     if self.len() >= 2 {
-    //         let wall_idx = self.len() - 2;
-    //         if let Some(crushed) = self.data[wall_idx].crush() {
-    //             self.data[wall_idx] = crushed;
-    //             return true;
-    //         }
-    //     }
-    //     false
-    // }
     pub fn uncrush_top<T: Bitboard>(&mut self, bits: &mut BitboardStorage<T>) {
         self.hash_out_top(bits);
         self.top_piece = self.top_piece.uncrush().unwrap();
         self.hash_in_top(bits);
     }
-    // pub fn uncrush_wall<T: Bitboard>(&mut self) {
-    //     if self.len() >= 2 {
-    //         let wall_idx = self.len() - 2;
-    //         if let Some(uncrushed) = self.data[wall_idx].uncrush() {
-    //             self.data[wall_idx] = uncrushed;
-    //             return;
-    //         }
-    //     }
-    //     panic!("Could not find piece to uncrush!");
-    // }
-    // pub fn reverse_top<T: Bitboard>(&mut self, top_n: usize, bits: &mut BitboardStorage<T>) {
-    //     // If top_n is only 1 then we just reverse the first piece, which does nothing
-    //     if top_n > 1 {
-    //         self.hash_out_many(top_n, bits);
-    //         let range_st = self.len() - top_n;
-    //         let slice = &mut self.data[range_st..];
-    //         slice.reverse();
-    //         self.hash_in_many(top_n, bits);
-    //     }
-    // }
     pub fn split_off<T: Bitboard>(
         &mut self,
         top_n: usize,
@@ -339,30 +296,6 @@ impl<'a> Iterator for StackIterator<'a> {
     }
 }
 
-impl From<Vec<Piece>> for Stack {
-    fn from(vec: Vec<Piece>) -> Self {
-        let length = vec.len();
-        if length == 0 {
-            Stack::new()
-        } else {
-            let top_piece = *vec.last().unwrap();
-            let mut data = 0;
-            for piece in vec.into_iter().rev() {
-                if piece.owner() == crate::Color::Black {
-                    data &= 1;
-                }
-                data << 1;
-            }
-            Stack {
-                data,
-                length: length as u8,
-                top_piece,
-                index: 0,
-            }
-        }
-    }
-}
-
 pub struct Pickup {
     pieces: u8,
     top: Piece,
@@ -371,12 +304,6 @@ pub struct Pickup {
 
 impl Pickup {
     pub fn new(pieces: u8, top: Piece, length: u8) -> Self {
-        // Magic reverse bits of byte
-        // https://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64Bits
-        // let mut bits = (((pieces as u64).wrapping_mul(0x80200802u64)) & 0x0884422110u64)
-        //     .wrapping_mul(0x0101010101u64)
-        //     >> 32;
-        // bits = bits >> (8 - length);
         Self {
             pieces,
             top,
@@ -384,8 +311,6 @@ impl Pickup {
         }
     }
     fn take(&mut self, count: u8) -> u64 {
-        // dbg!(count);
-        // dbg!(self.length);
         let keep = self.length - count;
         let keep_mask: u64 = (1 << keep) - 1;
         let out = self.pieces >> keep;
@@ -407,20 +332,6 @@ impl Default for Pickup {
             pieces: 0,
             top: Piece::WhiteFlat,
             length: 0,
-        }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    #[test]
-    pub fn bits_reverse() {
-        let pats = [0b1001_1011, 0b1110_0001, 0b0011_0000];
-        let ans = [0b1101_1001, 0b1000_0111, 0b0000_1100];
-        for (pat, ans) in pats.iter().zip(ans.iter()) {
-            let pickup = Pickup::new(*pat, Piece::BlackCap, 8);
-            assert_eq!(pickup.pieces, *ans);
         }
     }
 }
