@@ -2,8 +2,8 @@ use super::{Bitboard, Piece, Stack};
 use crate::board::BitIndexIterator;
 use crate::board::TakBoard;
 use crate::board::{Board5, Board6};
+use crate::Color;
 use crate::Position;
-use board_game_traits::Color;
 
 pub trait Evaluator {
     type Game: TakBoard;

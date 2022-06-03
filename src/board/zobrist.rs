@@ -1,7 +1,5 @@
 use crate::board::Board7;
-use crate::Piece;
-use crate::TakBoard;
-use board_game_traits::Color;
+use crate::{Color, Piece, TakBoard};
 // use rand_core::{RngCore, SeedableRng};
 // use rand_xoshiro::Xoshiro256PlusPlus;
 

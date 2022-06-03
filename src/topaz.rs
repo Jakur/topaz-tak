@@ -899,6 +899,7 @@ fn save_playtak_book(book: &book::Book) -> Result<()> {
     let pt_book = pt_book.ok_or_else(|| anyhow!("Could not find book path to write to"))?;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
+        .create(true)
         .truncate(true)
         .open(&pt_book)?;
     let write_string = json::to_string(book);

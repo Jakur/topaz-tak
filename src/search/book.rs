@@ -1,6 +1,5 @@
-use crate::{Color, GameMove, TakBoard};
+use crate::{Color, GameMove, GameResult, TakBoard};
 use anyhow::Result;
-use board_game_traits::GameResult;
 use miniserde::{json, Deserialize, Serialize};
 use std::{collections::HashMap, io::Write};
 

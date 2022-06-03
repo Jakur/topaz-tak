@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, ensure, Result};
 pub use board::{Bitboard, BitboardStorage, Piece, Stack, TakBoard};
-pub use board_game_traits::{Color, GameResult};
+// pub use board_game_traits::{Color, GameResult};
 pub use move_gen::{generate_all_moves, GameMove, RevGameMove};
 
 pub mod board;
@@ -12,6 +12,65 @@ pub mod search;
 pub mod transposition_table;
 
 use crate::board::{Board5, Board6, Board7};
+
+/// Represents a player's color.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Color {
+    White = 0,
+    Black = 1,
+}
+
+impl std::ops::Not for Color {
+    type Output = Color;
+
+    #[inline]
+    fn not(self) -> Self {
+        match self {
+            Color::White => Color::Black,
+            Color::Black => Color::White,
+        }
+    }
+}
+
+impl std::fmt::Display for Color {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        fmt.write_str(match *self {
+            Color::White => ("White"),
+            Color::Black => ("Black"),
+        })
+    }
+}
+
+/// The result of a game after it has finished.
+#[derive(PartialEq, Eq, Clone, Debug, Copy)]
+pub enum GameResult {
+    WhiteWin = 0,
+    BlackWin = 1,
+    Draw = 2,
+}
+
+impl GameResult {
+    /// Returns WhiteWin for white, BlackWin for black
+    #[inline]
+    pub fn win_by(color: Color) -> Self {
+        match color {
+            Color::White => Self::WhiteWin,
+            Color::Black => Self::BlackWin,
+        }
+    }
+}
+
+impl std::ops::Not for GameResult {
+    type Output = Self;
+    #[inline]
+    fn not(self) -> Self {
+        match self {
+            GameResult::WhiteWin => GameResult::BlackWin,
+            GameResult::BlackWin => GameResult::WhiteWin,
+            GameResult::Draw => GameResult::Draw,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct TimeBank {
@@ -159,10 +218,7 @@ pub fn execute_moves_check_valid(board: &mut Board6, ptn_slice: &[&str]) -> Resu
         let m =
             GameMove::try_from_ptn(m_str, board).ok_or_else(|| anyhow!("Invalid ptn string"))?;
         generate_all_moves(board, &mut moves);
-        ensure!(
-            moves.iter().any(|&x| x == m),
-            "Illegal move attempted"
-        );
+        ensure!(moves.iter().any(|&x| x == m), "Illegal move attempted");
         board.do_move(m);
         made_moves.push(m);
     }

@@ -1,8 +1,7 @@
 use crate::move_gen::{generate_all_moves, generate_all_stack_moves};
-use crate::{GameMove, Position, RevGameMove};
+use crate::{Color, GameMove, GameResult, Position, RevGameMove};
 use anyhow::{anyhow, bail, ensure, Result};
 pub use bitboard::*;
-use board_game_traits::{Color, GameResult};
 use std::fmt;
 
 mod bitboard;

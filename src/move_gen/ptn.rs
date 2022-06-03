@@ -1,4 +1,4 @@
-use board_game_traits::Color;
+use crate::Color;
 
 use super::{GameMove, Piece};
 use crate::board::TakBoard;

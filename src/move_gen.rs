@@ -1,6 +1,6 @@
 use super::Piece;
 use crate::board::TakBoard;
-use board_game_traits::Color;
+use crate::Color;
 use miniserde::{de::Visitor, make_place, Deserialize, Serialize};
 use std::fmt;
 

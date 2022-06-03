@@ -1,6 +1,6 @@
 use super::{Piece, Stack};
 use crate::board::zobrist::TABLE;
-use board_game_traits::Color;
+use crate::Color;
 use crate::TakBoard;
 
 #[derive(Default, PartialEq, Clone)]

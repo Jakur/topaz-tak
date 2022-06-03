@@ -16,9 +16,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     }
     // let pos = get_positions();
     // let eval = Evaluator6 {};
-    c.bench_function("tak_threat", |b| {
-        b.iter(|| check_for_tak(black_box(&mut pos), black_box(&mut legal)))
-    });
+    // c.bench_function("tak_threat", |b| {
+    //     b.iter(|| check_for_tak(black_box(&mut pos), black_box(&mut legal)))
+    // });
+    c.bench_function("captives", |b| b.iter(|| captives_count(black_box(&pos))));
 }
 
 fn execute_small_perft(depth: usize) {
@@ -34,6 +35,17 @@ fn execute_small_perft(depth: usize) {
         .collect();
     // assert_eq!(&p_res[..], &[1, 190, 20698]);
     assert_eq!(&p_res[..], &[1, 190, 20698]);
+}
+
+fn captives_count(boards: &[Board6]) -> i32 {
+    let mut sum = 0;
+    for board in boards {
+        sum += board
+            .active_stacks(Color::White)
+            .map(|idx| board.board[idx].captive_friendly().0)
+            .sum::<i32>();
+    }
+    sum
 }
 
 fn check_for_tak(boards: &mut [Board6], legal_moves: &[Vec<GameMove>]) {

@@ -1,4 +1,4 @@
-use board_game_traits::Color;
+use crate::Color;
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum Piece {
