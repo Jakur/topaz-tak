@@ -1,6 +1,5 @@
 #![allow(clippy::style)]
 
-use crate::eval::Evaluator6;
 use crate::Position;
 use anyhow::Result;
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -415,7 +414,7 @@ fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>) -> Result<()> {
 
 fn play_game_cmd(mut computer_turn: bool) {
     let mut board = Board6::new();
-    let eval = Evaluator6 {};
+    let eval = Weights6::default();
     while let None = board.game_result() {
         println!("{:?}", &board);
         if computer_turn {
@@ -714,7 +713,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 }
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
-    static OPP: &'static str = "Dummy"; // Todo make this env variable
+    static OPP: &'static str = "Guest1243"; // Todo make this env variable
     let login_s = if let Some((user, pass)) = playtak_auth() {
         format!("Login {} {}\n", user, pass)
     } else {

@@ -6,6 +6,7 @@ use std::fmt;
 
 mod move_order;
 pub use move_order::{HistoryMoves, KillerMoves, SmartMoveBuffer};
+mod magic;
 pub mod ptn;
 
 pub trait MoveBuffer {

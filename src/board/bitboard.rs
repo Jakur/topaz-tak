@@ -184,6 +184,7 @@ pub trait Bitboard:
     fn lowest_index(self) -> usize;
     /// Converts a provided [TakBoard] square index into a single set bit in a bitboard
     fn index_to_bit(index: usize) -> Self;
+    fn raw_bits(self) -> u64;
     fn north(self) -> Self;
     fn east(self) -> Self;
     fn south(self) -> Self;
@@ -557,6 +558,9 @@ macro_rules! bitboard_impl {
             }
             fn pop_count(self) -> u32 {
                 (self.0).count_ones()
+            }
+            fn raw_bits(self) -> u64 {
+                self.0
             }
             fn north(self) -> Self {
                 Self::new(self.0 >> 8)

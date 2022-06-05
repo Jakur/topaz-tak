@@ -32,6 +32,9 @@ impl Stack {
             Piece::BlackFlat
         }
     }
+    pub fn bottom(&self) -> Option<Piece> {
+        self.from_top(self.length.wrapping_sub(1) as usize)
+    }
     /// Indexes the stack from the top, assuming the highest piece in the stack has index 0
     pub fn from_top(&self, index: usize) -> Option<Piece> {
         if index >= self.len() {

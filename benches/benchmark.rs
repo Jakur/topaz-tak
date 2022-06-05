@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use topaz_tak::board::find_placement_road;
 use topaz_tak::board::{Bitboard6, Board6};
-use topaz_tak::eval::{Evaluator, Evaluator6, LOSE_SCORE};
+use topaz_tak::eval::{Evaluator, Weights6, LOSE_SCORE};
 use topaz_tak::search::root_minimax;
 use topaz_tak::{execute_moves_check_valid, generate_all_moves, perft, Color, GameMove, TakBoard};
 
@@ -9,17 +9,21 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     // c.bench_function("small perft", |b| {
     //     b.iter(|| execute_small_perft(black_box(2)))
     // });
-    let mut pos = get_positions();
-    let mut legal = vec![Vec::new(); pos.len()];
-    for (board, moves) in pos.iter().zip(legal.iter_mut()) {
-        generate_all_moves(board, moves)
-    }
+    let pos = get_positions();
+    let eval = Weights6::default();
+    c.bench_function("eval", |b| {
+        b.iter(|| black_box(evaluate_positions(&pos, &eval)))
+    });
+    // let mut legal = vec![Vec::new(); pos.len()];
+    // for (board, moves) in pos.iter().zip(legal.iter_mut()) {
+    //     generate_all_moves(board, moves)
+    // }
     // let pos = get_positions();
     // let eval = Evaluator6 {};
     // c.bench_function("tak_threat", |b| {
     //     b.iter(|| check_for_tak(black_box(&mut pos), black_box(&mut legal)))
     // });
-    c.bench_function("captives", |b| b.iter(|| captives_count(black_box(&pos))));
+    // c.bench_function("captives", |b| b.iter(|| captives_count(black_box(&pos))));
 }
 
 fn execute_small_perft(depth: usize) {
@@ -77,7 +81,7 @@ fn evaluate_positions<E: Evaluator<Game = Board6>>(positions: &[Board6], eval: &
 fn small_minimax(_depth: u16) {
     let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
     let mut board = Board6::try_from_tps(tps).unwrap();
-    let eval = Evaluator6 {};
+    let eval = Weights6::default();
     let (mv, score) = root_minimax(&mut board, &eval, 2);
     assert!(score != LOSE_SCORE);
     let only_move = GameMove::try_from_ptn("c5-", &board);

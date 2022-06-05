@@ -28,6 +28,12 @@ impl Piece {
             Piece::BlackFlat | Piece::BlackWall | Piece::BlackCap => Color::Black,
         }
     }
+    pub fn is_flat(self) -> bool {
+        match self {
+            Piece::WhiteFlat | Piece::BlackFlat => true,
+            _ => false,
+        }
+    }
     pub fn is_wall(self) -> bool {
         match self {
             Piece::WhiteWall | Piece::BlackWall => true,
