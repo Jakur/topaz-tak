@@ -1,6 +1,7 @@
 use super::Piece;
 use crate::board::TakBoard;
 use crate::Color;
+use crate::{Bitboard, BitboardStorage};
 use miniserde::{de::Visitor, make_place, Deserialize, Serialize};
 use std::fmt;
 
@@ -369,67 +370,68 @@ impl MoveLimits {
 /// steps[dir] + 1 tile. If a fast bitwise method for wall detection is found,
 /// the empty board limits can be precomputed to replace this function.
 pub fn find_move_limits<T: TakBoard>(board: &T, st_index: usize) -> MoveLimits {
-    let (st_row, st_col) = board.row_col(st_index);
+    // let (st_row, st_col) = board.row_col(st_index);
     let mut limits = MoveLimits::new();
-    find_dir_limit(board, st_row, st_col, 0, &mut limits, step_north);
-    find_dir_limit(board, st_row, st_col, 1, &mut limits, step_east);
-    find_dir_limit(board, st_row, st_col, 2, &mut limits, step_south);
-    find_dir_limit(board, st_row, st_col, 3, &mut limits, step_west);
+    let bits = board.bits();
+    find_dir_limit(bits, st_index, 0, &mut limits, T::Bits::north);
+    find_dir_limit(bits, st_index, 1, &mut limits, T::Bits::east);
+    find_dir_limit(bits, st_index, 2, &mut limits, T::Bits::south);
+    find_dir_limit(bits, st_index, 3, &mut limits, T::Bits::west);
+    // dbg!(&limits);
     limits
 }
 
 /// Finds the movement limit in a single direction, updating the index to be
 /// searched according to the step_fn. See [find_move_limits].
-fn find_dir_limit<F, T>(
-    board: &T,
-    st_row: usize,
-    st_col: usize,
+fn find_dir_limit<B, F>(
+    board: &BitboardStorage<B>,
+    st_idx: usize,
     dir: usize,
     limits: &mut MoveLimits,
     step_fn: F,
 ) where
-    F: Fn(usize, usize) -> (usize, usize),
-    T: TakBoard,
+    B: Bitboard,
+    F: Fn(B) -> B,
 {
-    let mut row = st_row;
-    let mut col = st_col;
     let mut counter = 0;
-    let res = step_fn(row, col);
-    row = res.0;
-    col = res.1;
-    while let Some(stack) = board.try_tile(row, col) {
-        match stack.top() {
-            Some(piece) if piece.is_blocker() => {
-                if board.tile(st_row, st_col).top().unwrap().is_cap() && piece.is_wall() {
-                    limits.can_crush[dir] = true;
-                }
-                break;
+    let st_bit = B::index_to_bit(st_idx);
+    // dbg!(st_bit.raw_bits());
+    let cap_stack = (st_bit & board.cap) != B::ZERO;
+    let mut bit = step_fn(st_bit);
+    // dbg!(bit.raw_bits());
+    while bit != B::ZERO {
+        if (bit & board.cap) != B::ZERO {
+            // dbg!(board.cap.raw_bits());
+            break;
+        } else if (bit & board.wall) != B::ZERO {
+            // dbg!(board.wall.raw_bits());
+            if cap_stack {
+                limits.can_crush[dir] = true;
             }
-            _ => {}
+            break;
         }
-        let res = step_fn(row, col);
-        row = res.0;
-        col = res.1;
+        bit = step_fn(bit);
+        // dbg!(bit.raw_bits());
         counter += 1;
     }
     limits.steps[dir] = counter;
 }
 
-fn step_north(row: usize, col: usize) -> (usize, usize) {
-    (row.wrapping_sub(1), col)
-}
+// fn step_north(row: usize, col: usize) -> (usize, usize) {
+//     (row.wrapping_sub(1), col)
+// }
 
-fn step_south(row: usize, col: usize) -> (usize, usize) {
-    (row + 1, col)
-}
+// fn step_south(row: usize, col: usize) -> (usize, usize) {
+//     (row + 1, col)
+// }
 
-fn step_east(row: usize, col: usize) -> (usize, usize) {
-    (row, col + 1)
-}
+// fn step_east(row: usize, col: usize) -> (usize, usize) {
+//     (row, col + 1)
+// }
 
-fn step_west(row: usize, col: usize) -> (usize, usize) {
-    (row, col.wrapping_sub(1))
-}
+// fn step_west(row: usize, col: usize) -> (usize, usize) {
+//     (row, col.wrapping_sub(1))
+// }
 
 /// Find all stack moves for a single stack in one direction. Calls the recursive
 /// function [recursive_stack_moves] 1..=pieces_available times.
