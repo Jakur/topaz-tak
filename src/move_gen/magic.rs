@@ -1,5 +1,7 @@
-use crate::{board::Bitboard6, Bitboard};
+use crate::{board::Bitboard6, Bitboard, BitboardStorage};
 use bitintr::Pdep;
+
+use super::{find_dir_limit, MoveLimits};
 
 // const FILE_TABLE: [[u8; 4]; 6] = [[0u8; 4]; 6];
 
@@ -54,6 +56,62 @@ const MAGIC_COUNT6: [usize; 36] = [
     8, 7, 7, 7, 7, 8,
 ];
 
+#[derive(Clone, Default)]
+struct LookupTempKey {
+    steps: [u8; 4],
+    set: bool,
+}
+
+impl LookupTempKey {
+    fn try_set(&mut self, limits: &MoveLimits) -> Option<()> {
+        if self.set {
+            return None;
+        }
+        self.steps = limits.steps.clone();
+        self.set = true;
+        Some(())
+    }
+    fn reset(&mut self) {
+        self.set = false;
+    }
+}
+
+#[cfg(feature = "random")]
+pub fn generate_move_magic6<R: rand_core::RngCore>(rng: &mut R) {
+    for idx in 0..36 {
+        let mut magic = 0;
+        let bits: Vec<_> = get_iter6(idx).collect();
+        let limits: Vec<_> = bits
+            .iter()
+            .copied()
+            .map(|x| move_limits::<Bitboard6>(&BitboardStorage::from_walls(x), idx))
+            .collect();
+        let shift_up = MAGIC_COUNT6[idx];
+        let shift_down = 64 - MAGIC_COUNT6[idx];
+        let mut lookup = vec![LookupTempKey::default(); 1 << shift_up];
+        'gen_magic: loop {
+            for val in lookup.iter_mut() {
+                val.reset();
+            }
+            magic = gen_magic(rng);
+            for (bit, limit) in bits.iter().copied().zip(limits.iter()) {
+                let key = (bit * magic) >> shift_down;
+                if lookup[key as usize].try_set(&limit).is_none() {
+                    // Hash collision, try again
+                    break 'gen_magic;
+                }
+            }
+        }
+        dbg!(magic);
+        // break; // Dummy break for testing
+    }
+}
+
+#[cfg(feature = "random")]
+fn gen_magic<R: rand_core::RngCore>(rng: &mut R) -> u64 {
+    rng.next_u64() & rng.next_u64() & rng.next_u64()
+}
+
 /// Return an iterator over all possible relevant blocker configurations for a given square
 fn get_iter6(idx: usize) -> impl Iterator<Item = u64> {
     // Mask out the squares where blockers are irrelevant
@@ -66,6 +124,15 @@ fn get_iter6(idx: usize) -> impl Iterator<Item = u64> {
     let bits_needed = MAGIC_COUNT6[idx];
     let max = 1 << bits_needed;
     (0..max).map(move |x| x.pdep(orth_mask))
+}
+
+fn move_limits<T: Bitboard>(bits: &BitboardStorage<T>, st_index: usize) -> MoveLimits {
+    let mut limits = MoveLimits::new();
+    find_dir_limit(bits, st_index, 0, &mut limits, T::north);
+    find_dir_limit(bits, st_index, 1, &mut limits, T::east);
+    find_dir_limit(bits, st_index, 2, &mut limits, T::south);
+    find_dir_limit(bits, st_index, 3, &mut limits, T::west);
+    limits
 }
 
 #[cfg(test)]

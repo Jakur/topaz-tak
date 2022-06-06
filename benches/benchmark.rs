@@ -9,20 +9,20 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     // c.bench_function("small perft", |b| {
     //     b.iter(|| execute_small_perft(black_box(2)))
     // });
-    let pos = get_positions();
+    let mut pos = get_positions();
     let eval = Weights6::default();
-    c.bench_function("eval", |b| {
-        b.iter(|| black_box(evaluate_positions(&pos, &eval)))
-    });
-    // let mut legal = vec![Vec::new(); pos.len()];
-    // for (board, moves) in pos.iter().zip(legal.iter_mut()) {
-    //     generate_all_moves(board, moves)
-    // }
+    // c.bench_function("eval", |b| {
+    //     b.iter(|| black_box(evaluate_positions(&pos, &eval)))
+    // });
+    let mut legal = vec![Vec::new(); pos.len()];
+    for (board, moves) in pos.iter().zip(legal.iter_mut()) {
+        generate_all_moves(board, moves)
+    }
     // let pos = get_positions();
     // let eval = Evaluator6 {};
-    // c.bench_function("tak_threat", |b| {
-    //     b.iter(|| check_for_tak(black_box(&mut pos), black_box(&mut legal)))
-    // });
+    c.bench_function("tak_threat", |b| {
+        b.iter(|| check_for_tak(black_box(&mut pos), black_box(&mut legal)))
+    });
     // c.bench_function("captives", |b| b.iter(|| captives_count(black_box(&pos))));
 }
 

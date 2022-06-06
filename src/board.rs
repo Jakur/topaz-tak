@@ -251,9 +251,26 @@ macro_rules! board_impl {
                         }
                     }
                 }
-                for m in storage.iter().copied() {
-                    if self.road_stack_throw(road_pieces, m) {
-                        return Some(m);
+                let cs = road_pieces.critical_squares();
+                if cs.pop_count() == 0 {
+                    // We don't need to look at stack moves that only have one friendly
+                    // Todo don't even generate these moves
+                    // Todo in wall stacks don't include top piece?
+                    for m in storage.iter().copied() {
+                        let (_, friendly) = self.board[m.src_index()].captive_friendly();
+                        if friendly == 0 {
+                            continue;
+                        }
+                        if self.road_stack_throw(road_pieces, m) {
+                            return Some(m);
+                        }
+                    }
+                } else {
+                    // Todo single friendly tiles need to be orthogonal to a cs
+                    for m in storage.iter().copied() {
+                        if self.road_stack_throw(road_pieces, m) {
+                            return Some(m);
+                        }
                     }
                 }
                 None

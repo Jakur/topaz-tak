@@ -7,7 +7,7 @@ use std::fmt;
 
 mod move_order;
 pub use move_order::{HistoryMoves, KillerMoves, SmartMoveBuffer};
-mod magic;
+pub mod magic;
 pub mod ptn;
 
 pub trait MoveBuffer {
@@ -370,14 +370,12 @@ impl MoveLimits {
 /// steps[dir] + 1 tile. If a fast bitwise method for wall detection is found,
 /// the empty board limits can be precomputed to replace this function.
 pub fn find_move_limits<T: TakBoard>(board: &T, st_index: usize) -> MoveLimits {
-    // let (st_row, st_col) = board.row_col(st_index);
     let mut limits = MoveLimits::new();
     let bits = board.bits();
     find_dir_limit(bits, st_index, 0, &mut limits, T::Bits::north);
     find_dir_limit(bits, st_index, 1, &mut limits, T::Bits::east);
     find_dir_limit(bits, st_index, 2, &mut limits, T::Bits::south);
     find_dir_limit(bits, st_index, 3, &mut limits, T::Bits::west);
-    // dbg!(&limits);
     limits
 }
 
@@ -395,43 +393,22 @@ fn find_dir_limit<B, F>(
 {
     let mut counter = 0;
     let st_bit = B::index_to_bit(st_idx);
-    // dbg!(st_bit.raw_bits());
     let cap_stack = (st_bit & board.cap) != B::ZERO;
     let mut bit = step_fn(st_bit);
-    // dbg!(bit.raw_bits());
     while bit != B::ZERO {
         if (bit & board.cap) != B::ZERO {
-            // dbg!(board.cap.raw_bits());
             break;
         } else if (bit & board.wall) != B::ZERO {
-            // dbg!(board.wall.raw_bits());
             if cap_stack {
                 limits.can_crush[dir] = true;
             }
             break;
         }
         bit = step_fn(bit);
-        // dbg!(bit.raw_bits());
         counter += 1;
     }
     limits.steps[dir] = counter;
 }
-
-// fn step_north(row: usize, col: usize) -> (usize, usize) {
-//     (row.wrapping_sub(1), col)
-// }
-
-// fn step_south(row: usize, col: usize) -> (usize, usize) {
-//     (row + 1, col)
-// }
-
-// fn step_east(row: usize, col: usize) -> (usize, usize) {
-//     (row, col + 1)
-// }
-
-// fn step_west(row: usize, col: usize) -> (usize, usize) {
-//     (row, col.wrapping_sub(1))
-// }
 
 /// Find all stack moves for a single stack in one direction. Calls the recursive
 /// function [recursive_stack_moves] 1..=pieces_available times.

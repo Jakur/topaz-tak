@@ -40,6 +40,8 @@ pub fn main() {
                 _ => todo!(),
             }
             return;
+        } else if arg1 == "magic" {
+            gen_magics();
         } else if arg1 == "book" {
             let book = Arc::new(Mutex::new(book::Book::new(
                 search::book::BookMode::Learn,
@@ -905,4 +907,12 @@ fn save_playtak_book(book: &book::Book) -> Result<()> {
     write!(&mut file, "{}", write_string)?;
     file.flush()?;
     Ok(())
+}
+
+fn gen_magics() {
+    use rand_core::SeedableRng;
+    let mut seed: [u8; 32] = [0; 32];
+    getrandom::getrandom(&mut seed).unwrap();
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::from_seed(seed);
+    topaz_tak::generate_move_magic6(&mut rng);
 }

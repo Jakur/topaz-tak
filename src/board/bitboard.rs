@@ -117,6 +117,11 @@ where
         }
         storage
     }
+    pub(crate) fn from_walls(walls: u64) -> Self {
+        let mut bits = Self::default();
+        bits.wall = T::default() | walls;
+        bits
+    }
 }
 
 // 09 10 11 12 13 14
@@ -133,6 +138,7 @@ pub trait Bitboard:
     + std::ops::SubAssign
     + std::ops::Not<Output = Self>
     + std::ops::BitXor<Output = Self>
+    + std::ops::BitOr<u64, Output=Self>
 {
     const ZERO: Self;
     /// Returns all bits adjacent to a bitboard by sliding the entire bitboard in
@@ -405,6 +411,22 @@ macro_rules! bitboard_impl {
 
             fn bitor(self, Self(rhs): Self) -> Self::Output {
                 Self::new(self.0 | rhs)
+            }
+        }
+
+        impl std::ops::BitOr<u64> for $t {
+            type Output = Self;
+
+            fn bitor(self, rhs: u64) -> Self::Output {
+                Self::new(self.0 | rhs)
+            }
+        }
+
+        impl std::ops::BitOr<$t> for u64 {
+            type Output = $t;
+
+            fn bitor(self, rhs: $t) -> Self::Output {
+                <$t>::new(self| rhs.0)
             }
         }
 
@@ -698,8 +720,12 @@ mod test {
             1
         );
         let critical = bb.critical_squares();
-        dbg!(critical.lowest_index());
         assert_eq!(critical.pop_count(), 2);
+        let tps = "x5,1/2,2,x2,1,1/1,x,2C,2,1,1/2,21C,2,x,1212,1/2,2,1,2,1,1121/2,x,2,1,x2 1 20";
+        let board = Board6::try_from_tps(tps).unwrap();
+        let res_bits = board.bits().road_pieces(Color::White).critical_squares();
+        assert_eq!(res_bits.pop_count(), 3);
+        assert_eq!((res_bits & BOTTOM).pop_count(), 2);
     }
 
     #[test]

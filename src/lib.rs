@@ -3,7 +3,7 @@
 use anyhow::{anyhow, ensure, Result};
 pub use board::{Bitboard, BitboardStorage, Piece, Stack, TakBoard};
 // pub use board_game_traits::{Color, GameResult};
-pub use move_gen::{generate_all_moves, GameMove, RevGameMove};
+pub use move_gen::{generate_all_moves, magic::generate_move_magic6, GameMove, RevGameMove};
 
 pub mod board;
 pub mod eval;
