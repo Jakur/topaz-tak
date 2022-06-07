@@ -185,10 +185,7 @@ macro_rules! board_impl {
                     }
                     (self.bits().empty() & <$bits>::index_to_bit(game_move.src_index())).nonzero()
                 } else {
-                    // TODO make check of legal stack moves fast as well!
-                    let mut vec = Vec::new();
-                    self.generate_moves(&mut vec);
-                    vec.into_iter().find(|&m| m == game_move).is_some()
+                    crate::move_gen::legal_stack_move(self, game_move)
                 }
             }
             fn ply(&self) -> usize {
@@ -216,11 +213,20 @@ macro_rules! board_impl {
             ) -> Vec<GameMove> {
                 let mut tak_threats = Vec::new();
                 let mut stack_moves = Vec::new();
+                // let mut cache = [GameMove::null_move()];
                 for m in legal_moves.iter().copied() {
                     let rev = self.do_move(m);
                     self.null_move();
-                    if self.can_make_road(&mut stack_moves, hint).is_some() {
+                    // let use_hint = if cache[0] != GameMove::null_move() {
+                    //     Some(cache.as_slice())
+                    // } else {
+                    //     None
+                    // };
+                    if let Some(_winning) = self.can_make_road(&mut stack_moves, None) {
                         tak_threats.push(m);
+                        // if winning.is_stack_move() {
+                        //     cache[0] = winning;
+                        // }
                     }
                     self.rev_null_move();
                     self.reverse_move(rev);
@@ -241,16 +247,16 @@ macro_rules! board_impl {
                     return place_road;
                 }
                 // Check stack movements
-                generate_all_stack_moves(self, storage);
                 if let Some(suggestions) = hint {
                     for m in suggestions.iter().copied() {
-                        if storage.contains(&m) {
+                        if m.is_stack_move() && self.legal_move(m) {
                             if self.road_stack_throw(road_pieces, m) {
                                 return Some(m);
                             }
                         }
                     }
                 }
+                generate_all_stack_moves(self, storage);
                 let cs = road_pieces.critical_squares();
                 if cs.pop_count() == 0 {
                     // We don't need to look at stack moves that only have one friendly
@@ -279,7 +285,6 @@ macro_rules! board_impl {
                 self.move_num
             }
             fn flat_game(&self) -> Option<GameResult> {
-                debug_assert!(self.flats_left[0] < 1_000 && self.flats_left[1] < 1_000);
                 if (self.flats_left[0] == 0 && self.caps_left[0] == 0)
                     || (self.flats_left[1] == 0 && self.caps_left[1] == 0)
                     || self.bits.board_fill()
@@ -464,40 +469,14 @@ macro_rules! board_impl {
                         self.flats_left[piece.owner() as usize] += 1;
                     }
                 } else {
-                    // if rev_m.game_move.crush() {
-                    //     // Stand the wall back up
-                    //     let dest_tile = &mut self.board[rev_m.dest_sq];
-                    //     dest_tile.uncrush_wall::<<Self as TakBoard>::Bits>();
-                    // }
                     let iter = rev_m.game_move.quantity_iter(Self::SIZE);
-                    // We need to get a mutable reference to multiple areas of the array. Hold on.
-                    // let (origin, rest, offset): (&mut Stack, &mut [Stack], usize) = {
-                    //     if src_index > rev_m.dest_sq {
-                    //         // Easy case, because all indices remain the same
-                    //         let (split_left, split_right) = self.board.split_at_mut(src_index);
-                    //         (&mut split_right[0], split_left, 0)
-                    //     } else {
-                    //         // Should not go out of bounds since src index < dest_sq
-                    //         let (split_left, split_right) = self.board.split_at_mut(src_index + 1);
-                    //         (&mut split_left[src_index], split_right, src_index + 1)
-                    //     }
-                    // };
-                    // let top_piece = self.board[rev_m.dest_sq].top().unwrap();
                     let mut build = stack::Pickup::default();
                     for q_step in iter {
                         build.append(
                             self.board[q_step.index]
                                 .split_off(q_step.quantity as usize, &mut self.bits),
                         );
-                        // take_bits = take_bits << 1;
-                        // let piece = self.board[idx].pop(&mut self.bits).unwrap();
-                        // let piece = rest[idx - offset].pop(&mut self.bits).unwrap();
-                        // take_bits |= (piece.owner() == Color::Black) as u8;
-                        // origin.push(piece, &mut self.bits); // This will need to be reversed later
                     }
-                    // let pieces_moved = rev_m.game_move.number() as u8;
-                    // fn new(pieces: u8, top: Piece, length: u8)
-                    // let mut pickup = stack::Pickup::new(take_bits, top_piece, pieces_moved);
                     self.board[src_index].add_stack(
                         rev_m.game_move.number() as usize,
                         &mut build,
@@ -506,7 +485,6 @@ macro_rules! board_impl {
                     if rev_m.game_move.crush() {
                         self.board[rev_m.dest_sq].uncrush_top(&mut self.bits);
                     }
-                    // origin.reverse_top(pieces_moved, &mut self.bits);
                 }
             }
             fn do_move(&mut self, m: GameMove) -> <Self as Position>::ReverseMove {
@@ -533,7 +511,6 @@ macro_rules! board_impl {
                     // let stack_move = m.forward_iter(Self::SIZE);
                     let stack_move = m.quantity_iter(Self::SIZE);
                     let src_stack = &mut self.board[src_index];
-                    // Todo remove allocation with split_at_mut
                     debug_assert!(src_stack.len() >= num_pieces);
                     let mut take_stack = src_stack.split_off(num_pieces, &mut self.bits);
                     let mut last_idx = 0;
@@ -546,14 +523,6 @@ macro_rules! board_impl {
                         );
                         last_idx = q_step.index;
                     }
-                    // let last_square = &mut self.board[last_idx];
-                    // let len = last_square.len();
-                    // if len >= 2 {
-                    //     // Is this necessary?
-                    //     // if last_square.try_crush_wall::<<Self as TakBoard>::Bits>() {
-                    //     //     return RevGameMove::new(m.set_crush(), last_idx);
-                    //     // }
-                    // }
                     RevGameMove::new(m, last_idx)
                 }
             }

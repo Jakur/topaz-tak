@@ -168,6 +168,10 @@ impl GameMove {
         let bits = self.0 & 0x1FF000;
         bits >> 12
     }
+    /// Counts the number of forward steps taken by a sliding move
+    pub fn count_steps(self) -> u8 {
+        self.slide_bits().count_ones() as u8
+    }
     /// Returns the piece being placed.
     ///
     /// # Panics
@@ -377,6 +381,46 @@ pub fn find_move_limits<T: TakBoard>(board: &T, st_index: usize) -> MoveLimits {
     find_dir_limit(bits, st_index, 2, &mut limits, T::Bits::south);
     find_dir_limit(bits, st_index, 3, &mut limits, T::Bits::west);
     limits
+}
+
+pub fn legal_stack_move<T: TakBoard>(board: &T, game_move: GameMove) -> bool {
+    // Assume the game_move is a legal move on some board.
+    // Meaning, e.g. it obeys wall crushing stack movement rules
+    let src_index = game_move.src_index();
+    let origin = &board.board()[src_index];
+    let is_cap = match origin.top() {
+        Some(piece) => {
+            if piece.owner() != board.side_to_move() {
+                return false;
+            }
+            piece.is_cap()
+        }
+        None => return false,
+    };
+    if game_move.number() as usize > origin.len() {
+        return false;
+    }
+    let mut limits = MoveLimits::new();
+    let dir = game_move.direction() as usize;
+    let f = match dir {
+        0 => T::Bits::north,
+        1 => T::Bits::east,
+        2 => T::Bits::south,
+        _ => T::Bits::west,
+    };
+    find_dir_limit(board.bits(), src_index, dir, &mut limits, f);
+    let steps_moved = game_move.count_steps();
+    if game_move.crush() {
+        if !is_cap || !limits.can_crush[dir] {
+            return false;
+        }
+        if steps_moved != (limits.steps[dir] + 1) {
+            return false;
+        }
+    } else if steps_moved > limits.steps[dir] {
+        return false;
+    }
+    true
 }
 
 /// Finds the movement limit in a single direction, updating the index to be
@@ -641,7 +685,11 @@ mod test {
             assert!(real_crush_moves.iter().any(|&m| m == c));
         }
         for m in moves.iter().copied() {
+            assert!(board.legal_move(m));
             let r = board.do_move(m);
+            if m.crush() {
+                assert!(!board.legal_move(m));
+            }
             board.reverse_move(r);
         }
         assert_eq!(moves.len(), 228);
@@ -649,6 +697,7 @@ mod test {
         let mut board2 = Board6::try_from_tps(s2).unwrap();
         let moves = all_moves_allocate(&board2);
         for m in moves.iter().copied() {
+            assert!(board2.legal_move(m));
             let r = board2.do_move(m);
             board2.reverse_move(r);
         }
@@ -660,6 +709,7 @@ mod test {
     pub fn quantity_move_test() {
         let ptn = "7a5>1231";
         let m = GameMove::try_from_ptn_m(ptn, 7, Color::White).unwrap();
+        assert_eq!(m.count_steps(), 4);
         let mut iter = m.quantity_iter(7);
         let st = m.src_index();
         let mut counter = 1;

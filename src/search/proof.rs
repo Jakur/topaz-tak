@@ -564,6 +564,10 @@ where
         }
         // Moves contains all stack moves due to the can_make_road call
         crate::move_gen::generate_aggressive_place_moves(pos, &mut moves);
+        // Give up
+        if depth + 2 >= 98 {
+            return AttackerOutcome::NoTakThreats;
+        }
         let tak_threats = pos.get_tak_threats(&moves, Some(self.top_moves[depth + 2].get_best()));
         if tak_threats.is_empty() {
             AttackerOutcome::NoTakThreats
