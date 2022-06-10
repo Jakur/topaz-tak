@@ -662,8 +662,7 @@ where
     if moves.len() == 0 {
         // if we don't have an immediate win, check TT move first
         if let Some(entry) = pv_entry {
-            if (entry.game_move.is_place_move() && board.legal_move(entry.game_move))
-                || stack_moves.contains(&entry.game_move)
+            if board.legal_move(entry.game_move)
             // TODO maybe a really fast legal checker is faster
             {
                 let m = entry.game_move;
@@ -726,7 +725,8 @@ where
             }
         }
     }
-
+    stack_moves.clear();
+    generate_all_stack_moves(board, &mut stack_moves);
     gen_and_score(depth, board, &mut stack_moves, &mut moves);
 
     if let Some(entry) = pv_entry {

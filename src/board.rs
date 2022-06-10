@@ -1,4 +1,4 @@
-use crate::move_gen::{generate_all_moves, generate_all_stack_moves};
+use crate::move_gen::{generate_all_moves, generate_masked_stack_moves};
 use crate::{Color, GameMove, GameResult, Position, RevGameMove};
 use anyhow::{anyhow, bail, ensure, Result};
 pub use bitboard::*;
@@ -256,27 +256,42 @@ macro_rules! board_impl {
                         }
                     }
                 }
-                generate_all_stack_moves(self, storage);
-                let cs = road_pieces.critical_squares();
-                if cs.pop_count() == 0 {
-                    // We don't need to look at stack moves that only have one friendly
-                    // Todo don't even generate these moves
-                    // Todo in wall stacks don't include top piece?
-                    for m in storage.iter().copied() {
-                        let (_, friendly) = self.board[m.src_index()].captive_friendly();
-                        if friendly == 0 {
-                            continue;
-                        }
-                        if self.road_stack_throw(road_pieces, m) {
-                            return Some(m);
+                let mut stacks = self.active_stacks(self.side_to_move());
+                let cs = road_pieces.critical_squares() & !self.bits.cap;
+                let cs_wall = cs.reachable_any();
+                let cs_flat = (cs & !self.bits.wall).reachable_any();
+                let mut bad_bits = Self::Bits::ZERO;
+                if true {
+                    for st_idx in stacks.clone() {
+                        let (_, friendly) = self.board[st_idx].captive_friendly();
+                        let bit = Self::Bits::index_to_bit(st_idx);
+                        // Filter squares we don't need
+                        match self.board[st_idx].top().unwrap() {
+                            Piece::WhiteFlat | Piece::BlackFlat => {
+                                if friendly == 0 && (bit & cs_flat) == Self::Bits::ZERO {
+                                    bad_bits |= bit;
+                                }
+                            }
+                            Piece::WhiteWall | Piece::BlackWall => {
+                                if friendly == 0
+                                    || (friendly == 1 && (bit & cs_flat) == Self::Bits::ZERO)
+                                {
+                                    bad_bits |= Self::Bits::index_to_bit(st_idx);
+                                }
+                            }
+                            Piece::WhiteCap | Piece::BlackCap => {
+                                if friendly == 0 && (bit & cs_wall) == Self::Bits::ZERO {
+                                    bad_bits |= Self::Bits::index_to_bit(st_idx);
+                                }
+                            }
                         }
                     }
-                } else {
-                    // Todo single friendly tiles need to be orthogonal to a cs
-                    for m in storage.iter().copied() {
-                        if self.road_stack_throw(road_pieces, m) {
-                            return Some(m);
-                        }
+                    stacks.mask(!bad_bits);
+                }
+                generate_masked_stack_moves(self, storage, stacks);
+                for m in storage.iter().copied() {
+                    if self.road_stack_throw(road_pieces, m) {
+                        return Some(m);
                     }
                 }
                 None

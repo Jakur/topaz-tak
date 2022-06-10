@@ -481,6 +481,8 @@ where
         // Todo optimization: only check if there is only one flat threat
         let placement =
             crate::board::find_placement_road(enemy, enemy_road_pieces, board.bits().empty());
+        moves.clear();
+        generate_all_stack_moves(board, &mut moves);
         assert!(moves.len() > 0); // All stack moves should already be generated
         generate_all_place_moves(board, &mut moves);
         // generate_all_moves(&board, &mut moves); // In practice generating them twice helps??
@@ -562,12 +564,13 @@ where
             self.top_moves[depth].add_move(m);
             return AttackerOutcome::HasRoad(m);
         }
-        // Moves contains all stack moves due to the can_make_road call
-        crate::move_gen::generate_aggressive_place_moves(pos, &mut moves);
         // Give up
         if depth + 2 >= 98 {
             return AttackerOutcome::NoTakThreats;
         }
+        moves.clear();
+        crate::move_gen::generate_all_stack_moves(pos, &mut moves);
+        crate::move_gen::generate_aggressive_place_moves(pos, &mut moves);
         let tak_threats = pos.get_tak_threats(&moves, Some(self.top_moves[depth + 2].get_best()));
         if tak_threats.is_empty() {
             AttackerOutcome::NoTakThreats

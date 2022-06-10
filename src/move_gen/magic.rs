@@ -5,7 +5,7 @@ use super::{find_dir_limit, MoveLimits};
 // const FILE_TABLE: [[u8; 4]; 6] = [[0u8; 4]; 6];
 
 // Bits which are orthogonal to the indexing square for a 6x6 Bitboard
-const ORTH_MASK6: [u64; 36] = [
+pub const ORTH_MASK6: [u64; 36] = [
     0x2020202027e00,
     0x4040404047e00,
     0x8080808087e00,
@@ -285,17 +285,18 @@ mod test {
         let vec = generate_orth::<Bitboard6>();
         assert_eq!(vec[0], Bitboard6::new(0x2020202027e00));
         assert_eq!(vec[15], Bitboard6::new(0x1010107e101000));
+        dbg!(&vec);
         assert!(ORTH_MASK6
             .iter()
             .zip(vec.into_iter())
             .all(|(x, y)| *x == y.raw_bits()));
         assert_eq!(256, get_iter6(0).count());
         assert_eq!(64, get_iter6(7).count());
-        let mut iter = get_iter6(7);
-        // dbg!(gen_mask6());
-        while let Some(x) = iter.next() {
-            println!("{}", x);
-        }
+        // let mut iter = get_iter6(7);
+        // // dbg!(gen_mask6());
+        // while let Some(x) = iter.next() {
+        //     println!("{}", x);
+        // }
         // assert!(false);
     }
     fn generate_orth<B: Bitboard>() -> Vec<B> {

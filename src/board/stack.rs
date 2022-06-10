@@ -102,6 +102,8 @@ impl Stack {
                 self.top_piece = Piece::BlackFlat;
             }
             bits.zobrist_middle(piece, self.index as usize, self.len());
+        } else {
+            self.top_piece = Piece::BlackFlat;
         }
         self.hash_in_top(bits);
         ret

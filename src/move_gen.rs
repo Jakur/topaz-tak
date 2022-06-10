@@ -1,5 +1,5 @@
 use super::Piece;
-use crate::board::TakBoard;
+use crate::board::{BitIndexIterator, TakBoard};
 use crate::Color;
 use crate::{Bitboard, BitboardStorage};
 use std::fmt;
@@ -86,7 +86,16 @@ pub fn generate_aggressive_place_moves<T: TakBoard>(board: &T, moves: &mut Vec<G
 /// Generates all legal sliding movements for the active player's stacks.
 pub fn generate_all_stack_moves<T: TakBoard, B: MoveBuffer>(board: &T, moves: &mut B) {
     let start_locs = board.active_stacks(board.side_to_move());
-    for index in start_locs {
+    generate_masked_stack_moves(board, moves, start_locs);
+}
+
+/// Generates all legal sliding movements for only the provided stacks
+pub fn generate_masked_stack_moves<T: TakBoard, B: MoveBuffer>(
+    board: &T,
+    moves: &mut B,
+    stacks: BitIndexIterator<T::Bits>,
+) {
+    for index in stacks {
         let stack_height = board.index(index).len();
         let start_move = GameMove(index as u32);
         let limits = find_move_limits(board, index);
