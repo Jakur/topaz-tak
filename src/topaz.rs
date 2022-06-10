@@ -42,6 +42,7 @@ pub fn main() {
             return;
         } else if arg1 == "magic" {
             gen_magics();
+            return;
         } else if arg1 == "book" {
             let book = Arc::new(Mutex::new(book::Book::new(
                 search::book::BookMode::Learn,
@@ -914,5 +915,5 @@ fn gen_magics() {
     let mut seed: [u8; 32] = [0; 32];
     getrandom::getrandom(&mut seed).unwrap();
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::from_seed(seed);
-    topaz_tak::generate_move_magic6(&mut rng);
+    topaz_tak::move_gen::magic::generate_move_magic6(&mut rng);
 }

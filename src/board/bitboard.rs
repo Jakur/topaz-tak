@@ -191,6 +191,7 @@ pub trait Bitboard:
     /// Converts a provided [TakBoard] square index into a single set bit in a bitboard
     fn index_to_bit(index: usize) -> Self;
     fn raw_bits(self) -> u64;
+    fn from_raw(val: u64) -> Self; 
     fn north(self) -> Self;
     fn east(self) -> Self;
     fn south(self) -> Self;
@@ -583,6 +584,9 @@ macro_rules! bitboard_impl {
             }
             fn raw_bits(self) -> u64 {
                 self.0
+            }
+            fn from_raw(val: u64) -> Self {
+                Self::new(val)
             }
             fn north(self) -> Self {
                 Self::new(self.0 >> 8)

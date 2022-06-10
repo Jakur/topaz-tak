@@ -13,6 +13,7 @@ use instant::Instant;
 use std::marker::PhantomData;
 // use std::time::Instant;
 
+#[cfg(feature = "cli")]
 pub mod book;
 #[cfg(feature = "cli")]
 pub mod proof;
@@ -1050,6 +1051,17 @@ fn naive_minimax<T: TakBoard, E: Evaluator<Game = T>>(board: &mut T, eval: &E, d
         child_evaluations.max().unwrap()
     }
 }
+
+#[cfg(not(feature = "cli"))]
+mod book {
+    pub struct Book();
+    impl Book {
+        pub fn get<T>(&self, _: &T) -> Option<i32> {
+            return None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

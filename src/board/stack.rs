@@ -45,6 +45,12 @@ impl Stack {
             Some(self.get_inner_piece(index))
         }
     }
+    pub fn has_wall(&self) -> bool {
+        self.top_piece.is_wall()
+    }
+    pub fn has_cap(&self) -> bool {
+        self.top_piece.is_cap()
+    }
     pub fn push<T: Bitboard>(&mut self, item: Piece, bits: &mut BitboardStorage<T>) {
         self.hash_out_top(bits);
         bits.zobrist_middle(item, self.index as usize, self.len());

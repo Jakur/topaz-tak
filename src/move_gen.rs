@@ -2,7 +2,6 @@ use super::Piece;
 use crate::board::TakBoard;
 use crate::Color;
 use crate::{Bitboard, BitboardStorage};
-use miniserde::{de::Visitor, make_place, Deserialize, Serialize};
 use std::fmt;
 
 mod move_order;
@@ -269,29 +268,6 @@ impl GameMove {
     }
 }
 
-make_place!(Place);
-
-impl Serialize for GameMove {
-    fn begin(&self) -> miniserde::ser::Fragment {
-        miniserde::ser::Fragment::U64(self.0 as u64)
-    }
-}
-
-impl Visitor for Place<GameMove> {
-    fn nonnegative(&mut self, val: u64) -> miniserde::Result<()> {
-        self.out = Some(GameMove(val as u32));
-        Ok(())
-    }
-}
-
-impl Deserialize for GameMove {
-    fn begin(out: &mut Option<Self>) -> &mut dyn Visitor {
-        // All Deserialize impls will look exactly like this. There is no
-        // other correct implementation of Deserialize.
-        Place::new(out)
-    }
-}
-
 impl fmt::Debug for GameMove {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_stack_move() {
@@ -351,18 +327,15 @@ pub struct QuantityStep {
     pub quantity: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MoveLimits {
     steps: [u8; 4],
     can_crush: [bool; 4],
 }
 
 impl MoveLimits {
-    pub fn new() -> Self {
-        Self {
-            steps: [0; 4],
-            can_crush: [false; 4],
-        }
+    pub fn new(steps: [u8; 4], can_crush: [bool; 4]) -> Self {
+        Self { steps, can_crush }
     }
 }
 
@@ -374,7 +347,7 @@ impl MoveLimits {
 /// steps[dir] + 1 tile. If a fast bitwise method for wall detection is found,
 /// the empty board limits can be precomputed to replace this function.
 pub fn find_move_limits<T: TakBoard>(board: &T, st_index: usize) -> MoveLimits {
-    let mut limits = MoveLimits::new();
+    let mut limits = MoveLimits::default();
     let bits = board.bits();
     find_dir_limit(bits, st_index, 0, &mut limits, T::Bits::north);
     find_dir_limit(bits, st_index, 1, &mut limits, T::Bits::east);
@@ -400,7 +373,7 @@ pub fn legal_stack_move<T: TakBoard>(board: &T, game_move: GameMove) -> bool {
     if game_move.number() as usize > origin.len() {
         return false;
     }
-    let mut limits = MoveLimits::new();
+    let mut limits = MoveLimits::default();
     let dir = game_move.direction() as usize;
     let f = match dir {
         0 => T::Bits::north,

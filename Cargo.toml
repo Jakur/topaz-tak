@@ -8,8 +8,8 @@ edition = "2018"
 
 [features]
 default = ["random", "cli"]
-cli = ["termtree", "colorful", "getopts", "telnet", "dotenv"]
-random = ["rand_core", "rand_xoshiro", "getrandom"]
+cli = ["termtree", "colorful", "getopts", "telnet", "dotenv", "miniserde"]
+random = ["rand_core", "rand_xoshiro", "getrandom", "bitintr"]
 
 [dependencies]
 anyhow = "1.0"
@@ -24,8 +24,8 @@ colorful = {version = "0.2", optional = true}
 getopts = {version = "0.2.21", optional = true}
 telnet = {version = "0.2", optional = true}
 dotenv = {version = "0.15.0", optional = true}
-miniserde = "0.1.24"
-bitintr = "0.3.0"
+miniserde = {version = "0.1.24", optional = true}
+bitintr = {version = "0.3.0", optional = true}
 
 [profile.release]
 debug = true
