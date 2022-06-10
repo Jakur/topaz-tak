@@ -561,7 +561,9 @@ where
         let pos = &mut self.board;
         let mut moves = Vec::new();
         if let Some(m) = pos.can_make_road(&mut moves, Some(self.top_moves[depth].get_best())) {
-            self.top_moves[depth].add_move(m);
+            if m.is_stack_move() {
+                self.top_moves[depth].add_move(m);
+            }
             return AttackerOutcome::HasRoad(m);
         }
         // Give up
@@ -575,9 +577,6 @@ where
         if tak_threats.is_empty() {
             AttackerOutcome::NoTakThreats
         } else {
-            for t in tak_threats.iter() {
-                self.top_moves[depth + 2].add_move(*t);
-            }
             AttackerOutcome::TakThreats(tak_threats)
         }
     }

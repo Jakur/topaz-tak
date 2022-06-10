@@ -213,20 +213,11 @@ macro_rules! board_impl {
             ) -> Vec<GameMove> {
                 let mut tak_threats = Vec::new();
                 let mut stack_moves = Vec::new();
-                // let mut cache = [GameMove::null_move()];
                 for m in legal_moves.iter().copied() {
                     let rev = self.do_move(m);
                     self.null_move();
-                    // let use_hint = if cache[0] != GameMove::null_move() {
-                    //     Some(cache.as_slice())
-                    // } else {
-                    //     None
-                    // };
-                    if let Some(_winning) = self.can_make_road(&mut stack_moves, None) {
+                    if let Some(_winning) = self.can_make_road(&mut stack_moves, hint) {
                         tak_threats.push(m);
-                        // if winning.is_stack_move() {
-                        //     cache[0] = winning;
-                        // }
                     }
                     self.rev_null_move();
                     self.reverse_move(rev);
@@ -274,7 +265,7 @@ macro_rules! board_impl {
                             }
                             Piece::WhiteWall | Piece::BlackWall => {
                                 if friendly == 0
-                                    || (friendly == 1 && (bit & cs_flat) == Self::Bits::ZERO)
+                                    || (friendly == 1 && (bit & (cs | cs_flat)) == Self::Bits::ZERO)
                                 {
                                     bad_bits |= Self::Bits::index_to_bit(st_idx);
                                 }
@@ -669,6 +660,26 @@ impl Board6 {
 #[cfg(test)]
 mod test {
     use super::*;
+    #[test]
+    pub fn wall_reveal_tak_moves() {
+        let tps = "1,112C,11,11,x,1/x,121C,x2,21,1/1,2,x,12,1S,x/x,2,2,1221S,x,2/x3,121,x2/2,2,2,1,2,x 1 26";
+        let mut board = Board6::try_from_tps(tps).unwrap();
+        let mut moves = Vec::new();
+        generate_all_moves(&board, &mut moves);
+        let rev = board.do_move(GameMove::try_from_ptn("2d6-11", &board).unwrap());
+        board.null_move();
+        let mut storage = Vec::new();
+        assert!(board.can_make_road(&mut storage, None).is_some());
+        board.rev_null_move();
+        board.reverse_move(rev);
+        let tak: Vec<_> = board
+            .get_tak_threats(&moves, None)
+            .into_iter()
+            .map(|x| x.to_ptn::<Board6>())
+            .collect();
+        assert!(tak.contains(&"2d6-11".to_string()));
+        dbg!(&tak);
+    }
     #[test]
     pub fn test_read_tps() {
         let example_tps = "x6/x2,2,x3/x3,2C,x2/x2,211S,x2,2/x6/x,1,1,2,2,1 2 7";
