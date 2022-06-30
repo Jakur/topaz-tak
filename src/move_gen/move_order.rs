@@ -5,6 +5,7 @@ pub struct SmartMoveBuffer {
     moves: Vec<ScoredMove>,
     stack_hist: Vec<i16>,
     queries: usize,
+    flat_attempts: i16,
 }
 
 impl SmartMoveBuffer {
@@ -13,10 +14,10 @@ impl SmartMoveBuffer {
             moves: Vec::new(),
             stack_hist: vec![0; 36],
             queries: 0,
+            flat_attempts: 0,
         }
     }
     pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T) {
-        // let DEBUG: &'static str = "5b2>221";
         let active_side = board.side_to_move();
         let mut stack_idx = usize::MAX;
         // Moves should be grouped by src index due to generator impl
@@ -48,11 +49,6 @@ impl SmartMoveBuffer {
                 offset += step.quantity as usize;
                 let covered = board.index(step.index).top();
                 let covering = stack_data[offset];
-                // println!("{}", &x.mv.to_ptn::<T>());
-                // if &x.mv.to_ptn::<T>() == DEBUG {
-                //     println!("Covered: {:?}", covered);
-                //     println!("Covering {:?}", covering);
-                // }
                 if let Some(piece) = covered {
                     if piece.owner() == active_side {
                         score -= 1;
@@ -61,11 +57,6 @@ impl SmartMoveBuffer {
                     }
                 }
                 if covering.owner() == active_side {
-                    // if let Some(capture) = last_capture {
-                    //     if step.index == capture.dest_sq {
-                    //         score += 3;
-                    //     }
-                    // }
                     score += 2;
                 } else {
                     score -= 2;
@@ -93,14 +84,12 @@ impl SmartMoveBuffer {
             // }
         }
     }
-    pub fn gen_score_place_moves<T: TakBoard>(&mut self, board: &T) {
-        use crate::board::BitIndexIterator;
-        use crate::board::Bitboard;
+    pub fn gen_score_place_moves<T: TakBoard>(&mut self, board: &T, place_hist: &PlaceHistory<36>) {
         let side = board.side_to_move();
         for idx in board.empty_tiles() {
-            let mut flat_score = 3;
-            let mut wall_score = 1;
-            let mut cap_score = 3;
+            let mut flat_score = 3 + place_hist.flat_score(idx);
+            let mut wall_score = 1 + place_hist.wall_score(idx, side);
+            let mut cap_score = 3 + place_hist.cap_score(idx);
             let neighbors = T::Bits::index_to_bit(idx).adjacent();
             let enemies = neighbors & board.bits().all_pieces(!side);
             for n_idx in BitIndexIterator::new(enemies) {
@@ -197,10 +186,8 @@ impl SmartMoveBuffer {
                 .iter()
                 .enumerate()
                 .max_by_key(|(_i, &m)| {
-                    m.score
-                        + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
-                        + info.stack_win_kill[ply % info.max_depth].score(m.mv) as i16
-                        - self.stack_hist_score(m.mv)
+                    m.score //+ info.killer_moves[ply % info.max_depth].score(m.mv) as i16
+                        - self.penalty_hist_score(m.mv)
                 })
                 .unwrap();
             let m = *m;
@@ -209,6 +196,8 @@ impl SmartMoveBuffer {
                 if *hist_score < 10 {
                     *hist_score += 1;
                 }
+            } else if m.mv.place_piece().is_flat() {
+                self.flat_attempts += 1;
             }
             self.moves.swap_remove(idx);
             m.mv
@@ -218,9 +207,11 @@ impl SmartMoveBuffer {
             x.mv
         }
     }
-    fn stack_hist_score(&self, mv: GameMove) -> i16 {
+    fn penalty_hist_score(&self, mv: GameMove) -> i16 {
         if mv.is_stack_move() {
             self.stack_hist[mv.src_index()]
+        } else if mv.place_piece().is_flat() {
+            self.flat_attempts * 2
         } else {
             0
         }
@@ -287,6 +278,92 @@ impl KillerMoves {
             0
         }
     }
+}
+
+pub struct PlaceHistory<const SIZE: usize> {
+    all_flat: [u32; SIZE],
+    flat_total: u32,
+    white_wall: [u32; SIZE],
+    black_wall: [u32; SIZE],
+    all_cap: [u32; SIZE],
+    cap_total: u32,
+    white_wall_total: u32,
+    black_wall_total: u32,
+}
+
+impl<const SIZE: usize> PlaceHistory<SIZE> {
+    pub fn new() -> Self {
+        Self {
+            all_flat: [0; SIZE],
+            white_wall: [0; SIZE],
+            black_wall: [0; SIZE],
+            all_cap: [0; SIZE],
+            flat_total: 0,
+            cap_total: 0,
+            white_wall_total: 0,
+            black_wall_total: 0,
+        }
+    }
+    pub fn update(&mut self, depth: usize, mv: GameMove) {
+        let value = (depth * depth) as u32;
+        let idx = mv.src_index();
+        match mv.place_piece() {
+            Piece::BlackFlat | Piece::WhiteFlat => {
+                self.all_flat[idx] += value;
+                self.flat_total += value;
+            }
+            Piece::WhiteCap | Piece::BlackCap => {
+                self.all_cap[idx] += value;
+                self.cap_total += value;
+            }
+            Piece::WhiteWall => {
+                self.white_wall[idx] += value;
+                self.white_wall_total += value;
+            }
+            Piece::BlackWall => {
+                self.black_wall[idx] += value;
+                self.black_wall_total += value;
+            }
+        }
+    }
+    pub fn flat_score(&self, idx: usize) -> i16 {
+        let raw_score = self.all_flat[idx];
+        base_2_log(raw_score).saturating_sub(base_2_log(self.flat_total) / 2)
+    }
+    pub fn cap_score(&self, idx: usize) -> i16 {
+        let raw_score = self.all_cap[idx];
+        base_2_log(raw_score).saturating_sub(base_2_log(self.cap_total) / 2)
+    }
+    pub fn wall_score(&self, idx: usize, color: Color) -> i16 {
+        let (raw_score, total) = match color {
+            Color::White => (self.white_wall[idx], self.white_wall_total),
+            Color::Black => (self.black_wall[idx], self.black_wall_total),
+        };
+        base_2_log(raw_score).saturating_sub(base_2_log(total) / 2)
+    }
+    pub fn score_place_move(&mut self, mv: GameMove) -> i16 {
+        let idx = mv.src_index();
+        let raw_score = {
+            match mv.place_piece() {
+                Piece::BlackFlat | Piece::WhiteFlat => self.all_flat[idx],
+                Piece::WhiteCap | Piece::BlackCap => self.all_cap[idx],
+                Piece::WhiteWall => self.white_wall[idx],
+                Piece::BlackWall => self.black_wall[idx],
+            }
+        };
+        // Hacky base 2 log
+        base_2_log(raw_score)
+    }
+    pub fn debug(&self) {
+        dbg!(&self.all_flat);
+        dbg!(&self.white_wall);
+        dbg!(&self.black_wall);
+        dbg!(&self.all_cap);
+    }
+}
+
+fn base_2_log(val: u32) -> i16 {
+    (32 - val.leading_zeros()) as i16
 }
 
 #[derive(Clone)]

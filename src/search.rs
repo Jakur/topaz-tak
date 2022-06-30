@@ -3,8 +3,8 @@ use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
-    generate_aggressive_place_moves, generate_all_stack_moves, GameMove, HistoryMoves, KillerMoves,
-    MoveBuffer, RevGameMove, SmartMoveBuffer,
+    generate_aggressive_place_moves, generate_all_stack_moves, GameMove, KillerMoves, MoveBuffer,
+    PlaceHistory, RevGameMove, SmartMoveBuffer,
 };
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::{TeiCommand, TimeBank};
@@ -53,7 +53,7 @@ pub struct SearchInfo {
     pub nodes: usize,
     pv_table: HashTable,
     pub killer_moves: Vec<KillerMoves>,
-    pub hist_moves: HistoryMoves,
+    pub hist_moves: PlaceHistory<36>, // Todo make this better generic
     pub stack_win_kill: Vec<KillerMoves>,
     stopped: bool,
     input: Option<Receiver<TeiCommand>>,
@@ -73,7 +73,7 @@ impl SearchInfo {
             pv_table: HashTable::new(pv_size),
             killer_moves: vec![KillerMoves::new(); max_depth + 1],
             stack_win_kill: vec![KillerMoves::new(); max_depth + 1],
-            hist_moves: HistoryMoves::new(6), // Todo init in search
+            hist_moves: PlaceHistory::new(), // Todo init in search
             nodes: 0,
             stopped: false,
             input: None,
@@ -174,16 +174,7 @@ impl SearchInfo {
         forward
     }
     fn ply_depth<E: TakBoard>(&self, position: &E) -> usize {
-        if position.ply() < self.start_ply {
-            dbg!(self.start_ply);
-            dbg!(position.ply());
-            dbg!(&position);
-            let board = crate::Board5::try_from_tps(
-                "2,x,x,x,x/x,x,x,x,x/x,x,x,x,x/x,x,x,x,x/x,x,x,x,x 1 1",
-            )
-            .unwrap();
-            dbg!(board.ply());
-        }
+        assert!(position.ply() >= self.start_ply);
         position.ply() - self.start_ply
     }
     pub fn clear_tt(&mut self) {
@@ -695,14 +686,11 @@ where
                         info.stats.fail_high_first += 1;
                         info.stats.fail_high += 1;
                         info.stats.add_cut(0);
-                        if m.is_place_move() {
-                            info.killer_moves[board.ply() % info.max_depth].add(m);
+                        if m.is_stack_move() {
+                            let ply_depth = info.ply_depth(board);
+                            info.killer_moves[ply_depth].add(m);
                         } else {
-                            // const WINNING: i32 = crate::eval::WIN_SCORE - 100;
-                            // // Cannot be null?
-                            // if score >= WINNING {
-                            //     info.hist_moves.update(depth, m);
-                            // }
+                            info.hist_moves.update(depth, m);
                         }
                         info.store_move(
                             board,
@@ -727,7 +715,7 @@ where
     }
     stack_moves.clear();
     generate_all_stack_moves(board, &mut stack_moves);
-    gen_and_score(depth, board, &mut stack_moves, &mut moves);
+    gen_and_score(depth, board, &mut stack_moves, &mut moves, &info);
 
     if let Some(entry) = pv_entry {
         if has_searched_pv {
@@ -736,11 +724,10 @@ where
             moves.score_pv_move(entry.game_move);
         }
     }
-
+    let ply_depth = info.ply_depth(board);
     for c in 0..moves.len() {
         let count = if has_searched_pv { c + 1 } else { c };
-
-        let m = moves.get_best(board.ply(), info);
+        let m = moves.get_best(ply_depth, info);
 
         let rev_move = board.do_move(m);
         let next_extensions = extensions;
@@ -885,14 +872,11 @@ where
                 }
                 info.stats.fail_high += 1;
                 info.stats.add_cut(count);
-                if m.is_place_move() {
-                    info.killer_moves[board.ply() % info.max_depth].add(m);
+                if m.is_stack_move() {
+                    let ply_depth = info.ply_depth(board);
+                    info.killer_moves[ply_depth].add(m);
                 } else {
-                    const WINNING: i32 = crate::eval::WIN_SCORE - 100;
-                    // // Cannot be null?
-                    if score >= WINNING && count >= 8 {
-                        info.stack_win_kill[board.ply() % info.max_depth].add(m);
-                    }
+                    info.hist_moves.update(depth, m);
                 }
                 info.store_move(
                     board,
@@ -945,6 +929,7 @@ fn gen_and_score<T>(
     board: &mut T,
     stack_moves: &mut Vec<GameMove>,
     moves: &mut SmartMoveBuffer,
+    info: &SearchInfo,
 ) where
     T: TakBoard,
 {
@@ -960,7 +945,7 @@ fn gen_and_score<T>(
         let mut check_moves = Vec::new();
         generate_aggressive_place_moves(board, &mut check_moves);
         let tak_threats = board.get_tak_threats(&mut check_moves, None);
-        moves.gen_score_place_moves(board);
+        moves.gen_score_place_moves(board, &info.hist_moves);
         moves.score_tak_threats(&tak_threats);
         if board.ply() >= 4 {
             moves.score_stack_moves(board);
@@ -970,7 +955,7 @@ fn gen_and_score<T>(
             generate_all_stack_moves(board, moves);
             moves.score_stack_moves(board);
         }
-        moves.gen_score_place_moves(board);
+        moves.gen_score_place_moves(board, &info.hist_moves);
     }
     // moves.gen_score_place_moves(board);
     // if !must_capture {
@@ -994,6 +979,7 @@ fn gen_and_score<T>(
 // }
 
 /// A naive minimax function without pruning used for debugging and benchmarking
+#[cfg(test)]
 pub fn root_minimax<T, E>(board: &mut T, eval: &E, depth: u16) -> (Option<GameMove>, i32)
 where
     T: TakBoard,
@@ -1017,7 +1003,7 @@ where
     }
     (best_move, best_eval)
 }
-
+#[cfg(test)]
 fn naive_minimax<T: TakBoard, E: Evaluator<Game = T>>(board: &mut T, eval: &E, depth: u16) -> i32 {
     match board.game_result() {
         Some(GameResult::WhiteWin) => {

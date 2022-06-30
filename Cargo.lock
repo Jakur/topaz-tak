@@ -595,6 +595,7 @@ dependencies = [
  "getopts",
  "getrandom",
  "instant",
+ "lazy_static",
  "miniserde",
  "rand_core",
  "rand_xoshiro",
