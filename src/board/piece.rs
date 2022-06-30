@@ -1,4 +1,4 @@
-use board_game_traits::Color;
+use crate::Color;
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum Piece {
@@ -26,6 +26,12 @@ impl Piece {
         match self {
             Piece::WhiteFlat | Piece::WhiteWall | Piece::WhiteCap => Color::White,
             Piece::BlackFlat | Piece::BlackWall | Piece::BlackCap => Color::Black,
+        }
+    }
+    pub fn is_flat(self) -> bool {
+        match self {
+            Piece::WhiteFlat | Piece::BlackFlat => true,
+            _ => false,
         }
     }
     pub fn is_wall(self) -> bool {

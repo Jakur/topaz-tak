@@ -1,6 +1,6 @@
 use super::{Piece, Stack};
 use crate::board::zobrist::TABLE;
-use board_game_traits::Color;
+use crate::Color;
 use crate::TakBoard;
 
 #[derive(Default, PartialEq, Clone)]
@@ -85,7 +85,7 @@ where
         let mut storage = Self::default();
         storage.set_zobrist(TABLE.color_hash(Color::White));
         for (idx, stack) in board.iter().enumerate() {
-            if let Some(piece) = stack.last() {
+            if let Some(piece) = stack.top() {
                 let bit_pattern = T::index_to_bit(idx);
                 match piece {
                     Piece::WhiteFlat => {
@@ -117,6 +117,11 @@ where
         }
         storage
     }
+    pub(crate) fn from_walls(walls: u64) -> Self {
+        let mut bits = Self::default();
+        bits.wall = T::default() | walls;
+        bits
+    }
 }
 
 // 09 10 11 12 13 14
@@ -133,6 +138,7 @@ pub trait Bitboard:
     + std::ops::SubAssign
     + std::ops::Not<Output = Self>
     + std::ops::BitXor<Output = Self>
+    + std::ops::BitOr<u64, Output=Self>
 {
     const ZERO: Self;
     /// Returns all bits adjacent to a bitboard by sliding the entire bitboard in
@@ -184,6 +190,10 @@ pub trait Bitboard:
     fn lowest_index(self) -> usize;
     /// Converts a provided [TakBoard] square index into a single set bit in a bitboard
     fn index_to_bit(index: usize) -> Self;
+    /// Returns a mask containing all squares which are orthogonal to any of the bits in self
+    fn reachable_any(self) -> Self;
+    fn raw_bits(self) -> u64;
+    fn from_raw(val: u64) -> Self; 
     fn north(self) -> Self;
     fn east(self) -> Self;
     fn south(self) -> Self;
@@ -203,6 +213,7 @@ pub struct Bitboard5(u64);
 impl Bitboard5 {
     const BIT_TO_INDEX: [usize; 64] = Self::build_bit_to_index_table();
     const INDEX_TO_BIT: [u64; 25] = Self::build_index_to_bit_table();
+    const ORTH_TABLE: [Self; 25] = Self::build_orth_table();
     const TOP: Bitboard5 = Bitboard5::new(0x3e0000);
     const BOTTOM: Bitboard5 = Bitboard5::new(0x3e000000000000);
     const LEFT: Bitboard5 = Bitboard5::new(0x2020202020000);
@@ -254,6 +265,16 @@ impl Bitboard5 {
         ];
         arr
     }
+    const fn build_orth_table() -> [Self; 25] {
+        let mut arr = [Self::ZERO; 25];
+        let mut i = 0;
+        while i != arr.len() {
+            let bit = 1 << Self::INDEX_TO_BIT[i];
+            arr[i] = Self::new(Self::ray_north(bit) | Self::ray_east(bit) | Self::ray_south(bit) | Self::ray_west(bit));
+            i += 1;
+        }
+        arr
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -262,6 +283,7 @@ pub struct Bitboard6(u64);
 impl Bitboard6 {
     const BIT_TO_INDEX: [usize; 64] = Self::build_bit_to_index_table();
     const INDEX_TO_BIT: [u64; 36] = Self::build_index_to_bit_table();
+    const ORTH_TABLE: [Self; 36] = Self::build_orth_table();
     const TOP: Bitboard6 = Bitboard6::new(0x7e00);
     const BOTTOM: Bitboard6 = Bitboard6::new(0x7e000000000000);
     const LEFT: Bitboard6 = Bitboard6::new(0x2020202020200);
@@ -316,6 +338,16 @@ impl Bitboard6 {
         ];
         arr
     }
+    const fn build_orth_table() -> [Self; 36] {
+        let mut arr = [Self::ZERO; 36];
+        let mut i = 0;
+        while i != arr.len() {
+            let bit = 1 << Self::INDEX_TO_BIT[i];
+            arr[i] = Self::new(Self::ray_north(bit) | Self::ray_east(bit) | Self::ray_south(bit) | Self::ray_west(bit));
+            i += 1;
+        }
+        arr
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -324,6 +356,7 @@ pub struct Bitboard7(u64);
 impl Bitboard7 {
     const BIT_TO_INDEX: [usize; 64] = Self::build_bit_to_index_table();
     const INDEX_TO_BIT: [u64; 49] = Self::build_index_to_bit_table();
+    const ORTH_TABLE: [Self; 49] = Self::build_orth_table();
     const TOP: Bitboard7 = Bitboard7::new(0x7f00);
     const BOTTOM: Bitboard7 = Bitboard7::new(0x7f00000000000000);
     const LEFT: Bitboard7 = Bitboard7::new(0x101010101010100);
@@ -381,6 +414,16 @@ impl Bitboard7 {
         ];
         arr
     }
+    const fn build_orth_table() -> [Self; 49] {
+        let mut arr = [Self::ZERO; 49];
+        let mut i = 0;
+        while i != arr.len() {
+            let bit = 1 << Self::INDEX_TO_BIT[i];
+            arr[i] = Self::new(Self::ray_north(bit) | Self::ray_east(bit) | Self::ray_south(bit) | Self::ray_west(bit));
+            i += 1;
+        }
+        arr
+    }
 }
 
 macro_rules! bitboard_impl {
@@ -404,6 +447,22 @@ macro_rules! bitboard_impl {
 
             fn bitor(self, Self(rhs): Self) -> Self::Output {
                 Self::new(self.0 | rhs)
+            }
+        }
+
+        impl std::ops::BitOr<u64> for $t {
+            type Output = Self;
+
+            fn bitor(self, rhs: u64) -> Self::Output {
+                Self::new(self.0 | rhs)
+            }
+        }
+
+        impl std::ops::BitOr<$t> for u64 {
+            type Output = $t;
+
+            fn bitor(self, rhs: $t) -> Self::Output {
+                <$t>::new(self| rhs.0)
             }
         }
 
@@ -447,6 +506,44 @@ macro_rules! bitboard_impl {
             }
         }
 
+        impl $t {
+            const fn ray_north(bits: u64) -> u64 {
+                let mut prev = Self::new(0);
+                let mut bits = Self::new(bits);
+                while bits.0 != prev.0 {
+                    prev = bits;
+                    bits = Self::new(bits.0 | (bits.0 >> 8));
+                }
+                bits.0
+            }
+            const fn ray_east(bits: u64) -> u64 {
+                let mut prev = Self::new(0);
+                let mut bits = Self::new(bits);
+                while bits.0 != prev.0 {
+                    prev = bits;
+                    bits = Self::new(bits.0 | (bits.0 << 1));
+                }
+                bits.0
+            }
+            const fn ray_south(bits: u64) -> u64 {
+                let mut prev = Self::new(0);
+                let mut bits = Self::new(bits);
+                while bits.0 != prev.0 {
+                    prev = bits;
+                    bits = Self::new(bits.0 | (bits.0 << 8));
+                }
+                bits.0
+            }
+            const fn ray_west(bits: u64) -> u64 {
+                let mut prev = Self::new(0);
+                let mut bits = Self::new(bits);
+                while bits.0 != prev.0 {
+                    prev = bits;
+                    bits = Self::new(bits.0 | (bits.0 >> 1));
+                }
+                bits.0
+            }
+        }
         impl Bitboard for $t {
             const ZERO: Self = Self::new(0);
             fn adjacent(self) -> Self {
@@ -558,6 +655,22 @@ macro_rules! bitboard_impl {
             fn pop_count(self) -> u32 {
                 (self.0).count_ones()
             }
+            fn reachable_any(self) -> Self {
+                let mut out = Self::ZERO;
+                let mut copy = self;
+                while copy.nonzero() {
+                    let bit = copy.pop_lowest();
+                    let index = bit.lowest_index();
+                    out |= Self::ORTH_TABLE[index];
+                }
+                out
+            }
+            fn raw_bits(self) -> u64 {
+                self.0
+            }
+            fn from_raw(val: u64) -> Self {
+                Self::new(val)
+            }
             fn north(self) -> Self {
                 Self::new(self.0 >> 8)
             }
@@ -609,12 +722,16 @@ bitboard_impl![Bitboard5, 5];
 bitboard_impl![Bitboard6, 6];
 bitboard_impl![Bitboard7, 7];
 
+#[derive(Clone)]
 pub struct BitIndexIterator<T> {
     bits: T,
 }
 
-impl<T> BitIndexIterator<T> {
+impl<T> BitIndexIterator<T> where T: Bitboard {
     pub fn new(bits: T) -> Self { Self { bits } }
+    pub fn mask(&mut self, mask: T) {
+        self.bits = self.bits & mask;
+    }
 }
 
 impl<T> Iterator for BitIndexIterator<T>
@@ -694,13 +811,21 @@ mod test {
             1
         );
         let critical = bb.critical_squares();
-        dbg!(critical.lowest_index());
         assert_eq!(critical.pop_count(), 2);
+        let tps = "x5,1/2,2,x2,1,1/1,x,2C,2,1,1/2,21C,2,x,1212,1/2,2,1,2,1,1121/2,x,2,1,x2 1 20";
+        let board = Board6::try_from_tps(tps).unwrap();
+        let res_bits = board.bits().road_pieces(Color::White).critical_squares();
+        assert_eq!(res_bits.pop_count(), 3);
+        assert_eq!((res_bits & BOTTOM).pop_count(), 2);
     }
-
     #[test]
     pub fn storage_zobrist() {
         let board = Board6::new();
         assert_eq!(board.zobrist(), zobrist::TABLE.manual_build_hash(&board))
+    }
+    #[test]
+    pub fn test_orth() {
+        assert_eq!(Bitboard6::ORTH_TABLE[0], Bitboard6(565157600329216));
+        assert_eq!(Bitboard6::ORTH_TABLE[13], Bitboard6(1130317247415296));
     }
 }

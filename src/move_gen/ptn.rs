@@ -1,4 +1,4 @@
-use board_game_traits::Color;
+use crate::Color;
 
 use super::{GameMove, Piece};
 use crate::board::TakBoard;
@@ -106,7 +106,7 @@ impl GameMove {
                 };
                 tile_counter += 1;
             }
-            if let Some(p) = board.index(dest).last() {
+            if let Some(p) = board.index(dest).top() {
                 if p.is_wall() {
                     game_move = game_move.set_crush();
                 }

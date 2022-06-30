@@ -2,8 +2,8 @@ use super::{Bitboard, Piece, Stack};
 use crate::board::BitIndexIterator;
 use crate::board::TakBoard;
 use crate::board::{Board5, Board6};
+use crate::Color;
 use crate::Position;
-use board_game_traits::Color;
 
 pub trait Evaluator {
     type Game: TakBoard;
@@ -51,7 +51,7 @@ macro_rules! eval_impl {
 
                 for (idx, stack) in game.board.iter().enumerate() {
                     if stack.len() == 1 {
-                        let top = *stack.last().unwrap();
+                        let top = stack.top().unwrap();
                         let mut pw = self.piece_weight(top) + self.location[idx];
                         if top.is_cap() {
                             pw += self.location[idx];
@@ -62,9 +62,9 @@ macro_rules! eval_impl {
                             score -= pw;
                         }
                     } else if stack.len() > 1 {
-                        let top = *stack.last().unwrap();
+                        let top = stack.top().unwrap();
                         let mut pw = self.piece_weight(top) + self.location[idx];
-                        let (mut captive, mut friendly) = captive_friendly(&stack, top);
+                        let (mut captive, mut friendly) = stack.captive_friendly();
                         let (c_mul, f_mul) = self.stack_top_multiplier(top);
                         let mut mobility = 0;
                         let mut safety = 0;
@@ -76,14 +76,14 @@ macro_rules! eval_impl {
                             Piece::WhiteCap => {
                                 safety += 64;
                                 mobility += 1;
-                                if let Some(Piece::WhiteFlat) = stack.from_top(1) {
+                                if let Some(Piece::WhiteFlat) = stack.under_top() {
                                     pw += 30;
                                 }
                             }
                             Piece::BlackCap => {
                                 safety += 64;
                                 mobility += 1;
-                                if let Some(Piece::BlackFlat) = stack.from_top(1) {
+                                if let Some(Piece::BlackFlat) = stack.under_top() {
                                     pw += 30;
                                 }
                             }
@@ -92,7 +92,7 @@ macro_rules! eval_impl {
                             <Self::Game as TakBoard>::Bits::index_to_bit(idx).adjacent();
                         for sq in BitIndexIterator::new(neighbors) {
                             let stack = &game.board[sq];
-                            if let Some(piece) = stack.last() {
+                            if let Some(piece) = stack.top() {
                                 if piece.owner() == top.owner() {
                                     match piece {
                                         Piece::WhiteFlat | Piece::BlackFlat => {
@@ -278,6 +278,7 @@ impl<B> BitOutcome<B> {
 /// A method that finds the most complete road among orthogonally connected components.
 /// It allows one non-blocking piece to be overwritten for free, leading to decreased
 /// concern for blockades, and extending roads that seem unlikely to ever be finished
+#[cfg(test)]
 fn one_gap_road_old<B: Bitboard + std::fmt::Debug>(road_bits: B, blocker_bits: B) -> (i32, usize) {
     let mut iter = ComponentIterator::new(road_bits);
     let mut best = 0;
@@ -365,6 +366,7 @@ fn flat_placement_road_h<B: Bitboard + std::fmt::Debug>(road_bits: B, empty: B) 
 /// the original version, but the road play still seems uninspired, extending threats
 /// that seem unlikely to be finished, while ignoring future threats simply because
 /// they haven't yet reached fruition.
+#[cfg(test)]
 fn one_gap_road<B: Bitboard + std::fmt::Debug>(road_bits: B) -> (i32, usize) {
     let mut iter = ComponentIterator::new(road_bits);
     let mut best = 0;
@@ -434,20 +436,6 @@ fn connected_components<B: Bitboard, F: Fn(B, B) -> B>(mut bits: B, flood_fn: F)
         count += 1;
     }
     BitOutcome::new(largest, count)
-}
-
-fn captive_friendly(stack: &Stack, top: Piece) -> (i32, i32) {
-    let mut captive = 0;
-    let mut friendly = 0;
-    let controller = top.owner();
-    for piece in stack.iter().rev().skip(1) {
-        if piece.owner() == controller {
-            friendly += 1;
-        } else {
-            captive += 1;
-        }
-    }
-    (captive, friendly)
 }
 
 pub struct Weights5 {

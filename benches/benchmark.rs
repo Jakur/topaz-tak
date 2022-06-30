@@ -1,8 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use topaz_tak::board::find_placement_road;
 use topaz_tak::board::{Bitboard6, Board6};
-use topaz_tak::eval::{Evaluator, Evaluator6, LOSE_SCORE};
-use topaz_tak::search::root_minimax;
+use topaz_tak::eval::{Evaluator, Weights6, LOSE_SCORE};
 use topaz_tak::{execute_moves_check_valid, generate_all_moves, perft, Color, GameMove, TakBoard};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -10,6 +9,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     //     b.iter(|| execute_small_perft(black_box(2)))
     // });
     let mut pos = get_positions();
+    let eval = Weights6::default();
+    // c.bench_function("eval", |b| {
+    //     b.iter(|| black_box(evaluate_positions(&pos, &eval)))
+    // });
     let mut legal = vec![Vec::new(); pos.len()];
     for (board, moves) in pos.iter().zip(legal.iter_mut()) {
         generate_all_moves(board, moves)
@@ -19,6 +22,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("tak_threat", |b| {
         b.iter(|| check_for_tak(black_box(&mut pos), black_box(&mut legal)))
     });
+    // c.bench_function("captives", |b| b.iter(|| captives_count(black_box(&pos))));
 }
 
 fn execute_small_perft(depth: usize) {
@@ -34,6 +38,17 @@ fn execute_small_perft(depth: usize) {
         .collect();
     // assert_eq!(&p_res[..], &[1, 190, 20698]);
     assert_eq!(&p_res[..], &[1, 190, 20698]);
+}
+
+fn captives_count(boards: &[Board6]) -> i32 {
+    let mut sum = 0;
+    for board in boards {
+        sum += board
+            .active_stacks(Color::White)
+            .map(|idx| board.board[idx].captive_friendly().0)
+            .sum::<i32>();
+    }
+    sum
 }
 
 fn check_for_tak(boards: &mut [Board6], legal_moves: &[Vec<GameMove>]) {
@@ -60,16 +75,6 @@ fn evaluate_positions<E: Evaluator<Game = Board6>>(positions: &[Board6], eval: &
         sum += eval.evaluate(pos, 1);
     }
     sum
-}
-
-fn small_minimax(_depth: u16) {
-    let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
-    let mut board = Board6::try_from_tps(tps).unwrap();
-    let eval = Evaluator6 {};
-    let (mv, score) = root_minimax(&mut board, &eval, 2);
-    assert!(score != LOSE_SCORE);
-    let only_move = GameMove::try_from_ptn("c5-", &board);
-    assert_eq!(mv, only_move);
 }
 
 fn placement_road(_x: ()) {

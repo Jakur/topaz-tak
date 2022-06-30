@@ -1,11 +1,12 @@
 use super::Piece;
-use crate::board::TakBoard;
-use board_game_traits::Color;
-use miniserde::{de::Visitor, make_place, Deserialize, Serialize};
+use crate::board::{BitIndexIterator, TakBoard};
+use crate::Color;
+use crate::{Bitboard, BitboardStorage};
 use std::fmt;
 
 mod move_order;
-pub use move_order::{HistoryMoves, KillerMoves, SmartMoveBuffer};
+pub use move_order::{KillerMoves, PlaceHistory, SmartMoveBuffer};
+pub mod magic;
 pub mod ptn;
 
 pub trait MoveBuffer {
@@ -85,7 +86,16 @@ pub fn generate_aggressive_place_moves<T: TakBoard>(board: &T, moves: &mut Vec<G
 /// Generates all legal sliding movements for the active player's stacks.
 pub fn generate_all_stack_moves<T: TakBoard, B: MoveBuffer>(board: &T, moves: &mut B) {
     let start_locs = board.active_stacks(board.side_to_move());
-    for index in start_locs {
+    generate_masked_stack_moves(board, moves, start_locs);
+}
+
+/// Generates all legal sliding movements for only the provided stacks
+pub fn generate_masked_stack_moves<T: TakBoard, B: MoveBuffer>(
+    board: &T,
+    moves: &mut B,
+    stacks: BitIndexIterator<T::Bits>,
+) {
+    for index in stacks {
         let stack_height = board.index(index).len();
         let start_move = GameMove(index as u32);
         let limits = find_move_limits(board, index);
@@ -115,9 +125,6 @@ pub struct RevGameMove {
 impl RevGameMove {
     pub fn new(game_move: GameMove, dest_sq: usize) -> Self {
         Self { game_move, dest_sq }
-    }
-    pub fn rev_iter(self, board_size: usize) -> RevStackMoveIterator {
-        RevStackMoveIterator::new(self, board_size)
     }
 }
 
@@ -169,6 +176,10 @@ impl GameMove {
         let bits = self.0 & 0x1FF000;
         bits >> 12
     }
+    /// Counts the number of forward steps taken by a sliding move
+    pub fn count_steps(self) -> u8 {
+        self.slide_bits().count_ones() as u8
+    }
     /// Returns the piece being placed.
     ///
     /// # Panics
@@ -204,14 +215,6 @@ impl GameMove {
     /// Returns the number of pieces being picked up by a stack move
     pub fn number(self) -> u32 {
         (self.0 & 0xF00) >> 8
-    }
-    /// Returns an iterator representing the forward movement of a stack
-    ///
-    /// This is primarily used when actually implementing stack movement on a Tak board.
-    /// The board size is necessary because north and south movement need to know the
-    /// amount to increment / decrement the index value by as the stack moves
-    pub fn forward_iter(self, board_size: usize) -> StackMoveIterator {
-        StackMoveIterator::new(self, board_size)
     }
     /// Returns an iterator that returns the quantity and board index for each stack step
     pub fn quantity_iter(self, board_size: usize) -> QuantityMoveIterator {
@@ -274,29 +277,6 @@ impl GameMove {
     }
 }
 
-make_place!(Place);
-
-impl Serialize for GameMove {
-    fn begin(&self) -> miniserde::ser::Fragment {
-        miniserde::ser::Fragment::U64(self.0 as u64)
-    }
-}
-
-impl Visitor for Place<GameMove> {
-    fn nonnegative(&mut self, val: u64) -> miniserde::Result<()> {
-        self.out = Some(GameMove(val as u32));
-        Ok(())
-    }
-}
-
-impl Deserialize for GameMove {
-    fn begin(out: &mut Option<Self>) -> &mut dyn Visitor {
-        // All Deserialize impls will look exactly like this. There is no
-        // other correct implementation of Deserialize.
-        Place::new(out)
-    }
-}
-
 impl fmt::Debug for GameMove {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_stack_move() {
@@ -306,66 +286,6 @@ impl fmt::Debug for GameMove {
         }
     }
 }
-
-pub struct StackMoveIterator {
-    slide_bits: u32,
-    direction: u8,
-    index: usize,
-    board_size: usize,
-    count: u32,
-}
-
-impl StackMoveIterator {
-    fn new(game_move: GameMove, board_size: usize) -> Self {
-        let slide_bits = game_move.slide_bits();
-        let direction = game_move.direction() as u8;
-        let mut index = game_move.src_index();
-        // We want to start on the first dest square, not the origin square
-        match direction {
-            0 => index -= board_size,
-            1 => index += 1,
-            2 => index += board_size,
-            3 => index -= 1,
-            _ => unimplemented!(),
-        }
-        Self {
-            slide_bits,
-            direction,
-            index,
-            board_size,
-            count: game_move.number() + 1,
-        }
-    }
-}
-
-impl Iterator for StackMoveIterator {
-    type Item = usize;
-    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
-        self.count -= 1;
-        if self.count == 0 {
-            return None;
-        }
-        let bit = self.slide_bits & 1;
-        self.slide_bits = self.slide_bits >> 1;
-        let index = self.index;
-        if bit != 0 {
-            // Move
-            // Avoid underflow
-            if self.slide_bits == 0 {
-                return Some(self.index);
-            }
-            match self.direction {
-                0 => self.index -= self.board_size,
-                1 => self.index += 1,
-                2 => self.index += self.board_size,
-                3 => self.index -= 1,
-                _ => unimplemented!(),
-            }
-        }
-        Some(index)
-    }
-}
-
 pub struct QuantityMoveIterator {
     slide_bits: u32,
     direction: u8,
@@ -416,72 +336,15 @@ pub struct QuantityStep {
     pub quantity: u32,
 }
 
-pub struct RevStackMoveIterator {
-    slide_bits: u32,
-    direction: u8,
-    index: usize,
-    board_size: usize,
-    count: u32,
-    dirty: bool,
-}
-
-impl RevStackMoveIterator {
-    fn new(rev_move: RevGameMove, board_size: usize) -> Self {
-        let game_move = rev_move.game_move;
-        let slide = game_move.slide_bits();
-        debug_assert!(slide != 0);
-        let zeros = slide.leading_zeros();
-        let slide_bits = slide << zeros;
-        let direction = game_move.direction() as u8;
-        let index = rev_move.dest_sq;
-        Self {
-            slide_bits,
-            direction,
-            index,
-            board_size,
-            count: game_move.number() + 1,
-            dirty: false,
-        }
-    }
-}
-
-impl Iterator for RevStackMoveIterator {
-    type Item = usize;
-    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
-        self.count -= 1;
-        if self.count == 0 {
-            return None;
-        }
-        // Drop the high bits instead of the low bits
-        let bits = self.slide_bits & 0x8000_0000;
-        self.slide_bits = self.slide_bits << 1;
-        if bits != 0 && self.dirty {
-            // Reversed from the normal direction step, since we're going backwards
-            match self.direction {
-                0 => self.index += self.board_size,
-                1 => self.index -= 1,
-                2 => self.index -= self.board_size,
-                3 => self.index += 1,
-                _ => unimplemented!(),
-            }
-        }
-        self.dirty = true;
-        Some(self.index)
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MoveLimits {
     steps: [u8; 4],
     can_crush: [bool; 4],
 }
 
 impl MoveLimits {
-    pub fn new() -> Self {
-        Self {
-            steps: [0; 4],
-            can_crush: [false; 4],
-        }
+    pub fn new(steps: [u8; 4], can_crush: [bool; 4]) -> Self {
+        Self { steps, can_crush }
     }
 }
 
@@ -493,66 +356,84 @@ impl MoveLimits {
 /// steps[dir] + 1 tile. If a fast bitwise method for wall detection is found,
 /// the empty board limits can be precomputed to replace this function.
 pub fn find_move_limits<T: TakBoard>(board: &T, st_index: usize) -> MoveLimits {
-    let (st_row, st_col) = board.row_col(st_index);
-    let mut limits = MoveLimits::new();
-    find_dir_limit(board, st_row, st_col, 0, &mut limits, step_north);
-    find_dir_limit(board, st_row, st_col, 1, &mut limits, step_east);
-    find_dir_limit(board, st_row, st_col, 2, &mut limits, step_south);
-    find_dir_limit(board, st_row, st_col, 3, &mut limits, step_west);
+    let mut limits = MoveLimits::default();
+    let bits = board.bits();
+    find_dir_limit(bits, st_index, 0, &mut limits, T::Bits::north);
+    find_dir_limit(bits, st_index, 1, &mut limits, T::Bits::east);
+    find_dir_limit(bits, st_index, 2, &mut limits, T::Bits::south);
+    find_dir_limit(bits, st_index, 3, &mut limits, T::Bits::west);
     limits
+}
+
+pub fn legal_stack_move<T: TakBoard>(board: &T, game_move: GameMove) -> bool {
+    // Assume the game_move is a legal move on some board.
+    // Meaning, e.g. it obeys wall crushing stack movement rules
+    let src_index = game_move.src_index();
+    let origin = &board.board()[src_index];
+    let is_cap = match origin.top() {
+        Some(piece) => {
+            if piece.owner() != board.side_to_move() {
+                return false;
+            }
+            piece.is_cap()
+        }
+        None => return false,
+    };
+    if game_move.number() as usize > origin.len() {
+        return false;
+    }
+    let mut limits = MoveLimits::default();
+    let dir = game_move.direction() as usize;
+    let f = match dir {
+        0 => T::Bits::north,
+        1 => T::Bits::east,
+        2 => T::Bits::south,
+        _ => T::Bits::west,
+    };
+    find_dir_limit(board.bits(), src_index, dir, &mut limits, f);
+    let steps_moved = game_move.count_steps();
+    if game_move.crush() {
+        if !is_cap || !limits.can_crush[dir] {
+            return false;
+        }
+        if steps_moved != (limits.steps[dir] + 1) {
+            return false;
+        }
+    } else if steps_moved > limits.steps[dir] {
+        return false;
+    }
+    true
 }
 
 /// Finds the movement limit in a single direction, updating the index to be
 /// searched according to the step_fn. See [find_move_limits].
-fn find_dir_limit<F, T>(
-    board: &T,
-    st_row: usize,
-    st_col: usize,
+fn find_dir_limit<B, F>(
+    board: &BitboardStorage<B>,
+    st_idx: usize,
     dir: usize,
     limits: &mut MoveLimits,
     step_fn: F,
 ) where
-    F: Fn(usize, usize) -> (usize, usize),
-    T: TakBoard,
+    B: Bitboard,
+    F: Fn(B) -> B,
 {
-    let mut row = st_row;
-    let mut col = st_col;
     let mut counter = 0;
-    let res = step_fn(row, col);
-    row = res.0;
-    col = res.1;
-    while let Some(stack) = board.try_tile(row, col) {
-        match stack.last() {
-            Some(piece) if piece.is_blocker() => {
-                if board.tile(st_row, st_col).last().unwrap().is_cap() && piece.is_wall() {
-                    limits.can_crush[dir] = true;
-                }
-                break;
+    let st_bit = B::index_to_bit(st_idx);
+    let cap_stack = (st_bit & board.cap) != B::ZERO;
+    let mut bit = step_fn(st_bit);
+    while bit != B::ZERO {
+        if (bit & board.cap) != B::ZERO {
+            break;
+        } else if (bit & board.wall) != B::ZERO {
+            if cap_stack {
+                limits.can_crush[dir] = true;
             }
-            _ => {}
+            break;
         }
-        let res = step_fn(row, col);
-        row = res.0;
-        col = res.1;
+        bit = step_fn(bit);
         counter += 1;
     }
     limits.steps[dir] = counter;
-}
-
-fn step_north(row: usize, col: usize) -> (usize, usize) {
-    (row.wrapping_sub(1), col)
-}
-
-fn step_south(row: usize, col: usize) -> (usize, usize) {
-    (row + 1, col)
-}
-
-fn step_east(row: usize, col: usize) -> (usize, usize) {
-    (row, col + 1)
-}
-
-fn step_west(row: usize, col: usize) -> (usize, usize) {
-    (row, col.wrapping_sub(1))
 }
 
 /// Find all stack moves for a single stack in one direction. Calls the recursive
@@ -786,7 +667,11 @@ mod test {
             assert!(real_crush_moves.iter().any(|&m| m == c));
         }
         for m in moves.iter().copied() {
+            assert!(board.legal_move(m));
             let r = board.do_move(m);
+            if m.crush() {
+                assert!(!board.legal_move(m));
+            }
             board.reverse_move(r);
         }
         assert_eq!(moves.len(), 228);
@@ -794,6 +679,7 @@ mod test {
         let mut board2 = Board6::try_from_tps(s2).unwrap();
         let moves = all_moves_allocate(&board2);
         for m in moves.iter().copied() {
+            assert!(board2.legal_move(m));
             let r = board2.do_move(m);
             board2.reverse_move(r);
         }
@@ -805,6 +691,7 @@ mod test {
     pub fn quantity_move_test() {
         let ptn = "7a5>1231";
         let m = GameMove::try_from_ptn_m(ptn, 7, Color::White).unwrap();
+        assert_eq!(m.count_steps(), 4);
         let mut iter = m.quantity_iter(7);
         let st = m.src_index();
         let mut counter = 1;
