@@ -41,6 +41,46 @@ impl Evaluator for Evaluator6 {
 pub const WIN_SCORE: i32 = 10_000;
 pub const LOSE_SCORE: i32 = -1 * WIN_SCORE;
 
+pub struct Tinue5 {
+    pub attacker: Color,
+}
+
+pub struct Tinue6 {
+    pub attacker: Color,
+}
+
+pub struct Tinue7 {
+    pub attacker: Color,
+}
+
+macro_rules! tinue_eval {
+    ($board: ty, $weights: ty) => {
+        impl Evaluator for $weights {
+            type Game = $board;
+            #[inline(never)]
+            fn evaluate(&self, game: &Self::Game, _depth: usize) -> i32 {
+                let attacker = self.attacker;
+                let mut score = 100 - 5 * game.pieces_reserve(attacker) as i32;
+                score -= 10 * game.bits().blocker_pieces(!attacker).pop_count() as i32;
+                score += 2 * game
+                    .bits()
+                    .road_pieces(attacker)
+                    .critical_squares()
+                    .pop_count() as i32;
+                if game.side_to_move() == attacker {
+                    score
+                } else {
+                    -score
+                }
+            }
+        }
+    };
+}
+
+tinue_eval![Board5, Tinue5];
+tinue_eval![Board6, Tinue6];
+tinue_eval![crate::Board7, Tinue7];
+
 macro_rules! eval_impl {
     ($board: ty, $weights: ty) => {
         impl Evaluator for $weights {
