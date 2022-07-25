@@ -1,12 +1,13 @@
 use super::*;
 use super::{SearchData, SearchInfo};
 use crate::board::TakBoard;
-use crate::move_gen::{generate_all_moves, generate_all_place_moves};
+use crate::move_gen::generate_all_moves;
 use crate::Piece;
 use crate::RevGameMove;
 use anyhow::{anyhow, Result};
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use termtree::Tree;
 
 pub fn new_tinue_search<T, E>(
@@ -1066,6 +1067,80 @@ where
         } else {
             AttackerOutcome::TakThreats(tak_threats)
         }
+    }
+    pub fn rebuild<W: Write>(
+        &mut self,
+        writer: &mut W,
+        hist: &mut Vec<String>,
+        zobrist_hist: &mut HashSet<u64>,
+    ) -> Result<()> {
+        let attacker = hist.len() % 2 == 0;
+        let mut moves = Vec::new();
+        if let Some(mv) = self.board.can_make_road(&mut moves, None) {
+            moves = vec![mv];
+        } else {
+            moves.clear();
+            self.board.generate_moves(&mut moves);
+            if attacker {
+                moves = self.board.get_tak_threats(&moves, None);
+            }
+        }
+        for mv in moves {
+            let rev = self.board.do_move(mv);
+            hist.push(mv.to_ptn::<T>());
+            let zobrist = self.board.zobrist();
+            if !zobrist_hist.insert(zobrist) {
+                self.board.reverse_move(rev);
+                hist.pop();
+                continue;
+            }
+            if let Some(bounds) = self.bounds_table.get(&zobrist) {
+                let status = get_status(bounds, hist.len());
+                let ch = match status {
+                    Status::Tinue => "t",
+                    Status::NotTinue => "n",
+                    Status::Unknown => "u",
+                };
+                writeln!(writer, "{} 1.{}", hist.join(";"), ch)?;
+                self.rebuild(writer, hist, zobrist_hist)?;
+            }
+            self.board.reverse_move(rev);
+            hist.pop();
+        }
+        Ok(())
+    }
+}
+
+enum Status {
+    Tinue,
+    NotTinue,
+    Unknown,
+}
+
+impl std::ops::Not for Status {
+    type Output = Status;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Self::Tinue => Self::NotTinue,
+            Self::NotTinue => Self::Tinue,
+            Self::Unknown => Self::Unknown,
+        }
+    }
+}
+
+fn get_status(bounds: &Bounds, depth: usize) -> Status {
+    let solved = if bounds.phi == INFINITY {
+        Status::Tinue
+    } else if bounds.phi == 0 {
+        Status::NotTinue
+    } else {
+        Status::Unknown
+    };
+    if depth % 2 == 1 {
+        solved
+    } else {
+        !solved
     }
 }
 

@@ -7,7 +7,7 @@ use getopts::Options;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::env;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, BufWriter};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
@@ -389,58 +389,66 @@ fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>) -> Result<()> {
 
     let seconds = time.elapsed().as_secs();
     println!("Done in {} seconds", seconds);
-    let mut interactive = crate::search::proof::InteractiveSearch::new(search);
-    let mut first = true;
-    interactive.print_root();
-    loop {
-        let mut opts = Options::new();
-        let mut buffer = String::new();
-        // opts.optopt("o", "", "set output file name", "NAME");
-        opts.optopt("m", "move", "Move the root of the tree", "PTN/PTN");
-        opts.optopt(
-            "e",
-            "expand",
-            "Expand the tree of a certain move",
-            "PTN/PTN",
-        );
-        // opts.optflag("v", "verbose", "Expand all children, even explored ones");
-        opts.optflag("h", "help", "Print the help text");
-        opts.optflag("q", "quit", "Quit");
-        opts.optflag(
-            "r",
-            "reset",
-            "Resets the view back to the default root view",
-        );
-        if first {
-            println!("{}", opts.usage(""));
-            first = false;
-        }
-        io::stdin().lock().read_line(&mut buffer)?;
-        let matches = opts.parse(buffer.split_whitespace())?;
-        if matches.opt_present("q") {
-            break;
-        }
-        if matches.opt_present("h") {
-            println!("{}", opts.usage(""));
-            continue;
-        }
-        if matches.opt_present("r") {
-            interactive.reset_expansion();
-            interactive.reset_view();
-        }
-        if let Some(v) = matches.opt_str("m") {
-            let res = interactive.change_view(&v);
-            if res.is_err() {
-                println!("Failed to change view, resetting to default!");
-                interactive.reset_view();
-            }
-        }
-        if let Some(s) = matches.opt_str("e") {
-            interactive.expand_line(s.split('/').collect());
-        }
-        // interactive.expand_line(vec!["c1".to_string(), "b1>".to_string()]);
-        interactive.print_root();
-    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open("proof-data.txt")?;
+    let mut file = BufWriter::new(file);
+    let mut hist = Vec::new();
+    let mut zobrist_hist = std::collections::HashSet::new();
+    search.rebuild(&mut file, &mut hist, &mut zobrist_hist)?;
+    // let mut interactive = crate::search::proof::InteractiveSearch::new(search);
+    // let mut first = true;
+    // interactive.print_root();
+    // loop {
+    //     let mut opts = Options::new();
+    //     let mut buffer = String::new();
+    //     // opts.optopt("o", "", "set output file name", "NAME");
+    //     opts.optopt("m", "move", "Move the root of the tree", "PTN/PTN");
+    //     opts.optopt(
+    //         "e",
+    //         "expand",
+    //         "Expand the tree of a certain move",
+    //         "PTN/PTN",
+    //     );
+    //     // opts.optflag("v", "verbose", "Expand all children, even explored ones");
+    //     opts.optflag("h", "help", "Print the help text");
+    //     opts.optflag("q", "quit", "Quit");
+    //     opts.optflag(
+    //         "r",
+    //         "reset",
+    //         "Resets the view back to the default root view",
+    //     );
+    //     if first {
+    //         println!("{}", opts.usage(""));
+    //         first = false;
+    //     }
+    //     io::stdin().lock().read_line(&mut buffer)?;
+    //     let matches = opts.parse(buffer.split_whitespace())?;
+    //     if matches.opt_present("q") {
+    //         break;
+    //     }
+    //     if matches.opt_present("h") {
+    //         println!("{}", opts.usage(""));
+    //         continue;
+    //     }
+    //     if matches.opt_present("r") {
+    //         interactive.reset_expansion();
+    //         interactive.reset_view();
+    //     }
+    //     if let Some(v) = matches.opt_str("m") {
+    //         let res = interactive.change_view(&v);
+    //         if res.is_err() {
+    //             println!("Failed to change view, resetting to default!");
+    //             interactive.reset_view();
+    //         }
+    //     }
+    //     if let Some(s) = matches.opt_str("e") {
+    //         interactive.expand_line(s.split('/').collect());
+    //     }
+    //     // interactive.expand_line(vec!["c1".to_string(), "b1>".to_string()]);
+    //     interactive.print_root();
+    // }
     Ok(())
 }
 
