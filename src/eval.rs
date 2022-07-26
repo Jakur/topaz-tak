@@ -2,12 +2,14 @@ use super::{Bitboard, Piece, Stack};
 use crate::board::BitIndexIterator;
 use crate::board::TakBoard;
 use crate::board::{Board5, Board6};
+use crate::BitboardStorage;
 use crate::Color;
 use crate::Position;
 
 pub trait Evaluator {
     type Game: TakBoard;
     fn evaluate(&self, game: &Self::Game, depth: usize) -> i32;
+    fn eval_stack(&self, game: &Self::Game, index: usize, stack: &Stack) -> i32;
 }
 
 pub struct Evaluator6 {}
@@ -28,13 +30,6 @@ impl Evaluator6 {
             Piece::WhiteWall | Piece::BlackWall => (-30, 70),
             Piece::WhiteCap | Piece::BlackCap => (-20, 90),
         }
-    }
-}
-
-impl Evaluator for Evaluator6 {
-    type Game = Board6;
-    fn evaluate(&self, _game: &Self::Game, _depth: usize) -> i32 {
-        unimplemented!();
     }
 }
 
@@ -73,6 +68,9 @@ macro_rules! tinue_eval {
                     -score
                 }
             }
+            fn eval_stack(&self, _game: &Self::Game, _index: usize, _stack: &Stack) -> i32 {
+                unimplemented!()
+            }
         }
     };
 }
@@ -102,90 +100,7 @@ macro_rules! eval_impl {
                             score -= pw;
                         }
                     } else if stack.len() > 1 {
-                        let top = stack.top().unwrap();
-                        let mut pw = self.piece_weight(top) + self.location[idx];
-                        let (mut captive, mut friendly) = stack.captive_friendly();
-                        let (c_mul, f_mul) = self.stack_top_multiplier(top);
-                        let mut mobility = 0;
-                        let mut safety = 0;
-                        match top {
-                            Piece::WhiteFlat | Piece::BlackFlat => {}
-                            Piece::WhiteWall | Piece::BlackWall => {
-                                safety += 16;
-                            }
-                            Piece::WhiteCap => {
-                                safety += 64;
-                                mobility += 1;
-                                if let Some(Piece::WhiteFlat) = stack.under_top() {
-                                    pw += 30;
-                                }
-                            }
-                            Piece::BlackCap => {
-                                safety += 64;
-                                mobility += 1;
-                                if let Some(Piece::BlackFlat) = stack.under_top() {
-                                    pw += 30;
-                                }
-                            }
-                        }
-                        let neighbors =
-                            <Self::Game as TakBoard>::Bits::index_to_bit(idx).adjacent();
-                        for sq in BitIndexIterator::new(neighbors) {
-                            let stack = &game.board[sq];
-                            if let Some(piece) = stack.top() {
-                                if piece.owner() == top.owner() {
-                                    match piece {
-                                        Piece::WhiteFlat | Piece::BlackFlat => {
-                                            safety += 1;
-                                            mobility += 1;
-                                        }
-                                        Piece::WhiteWall | Piece::BlackWall => {
-                                            if stack.len() < Self::Game::SIZE {
-                                                safety += 4;
-                                            }
-                                        }
-                                        Piece::WhiteCap | Piece::BlackCap => {
-                                            if stack.len() < Self::Game::SIZE {
-                                                safety += 32;
-                                            }
-                                            mobility += 1;
-                                        }
-                                    }
-                                } else {
-                                    match piece {
-                                        Piece::WhiteFlat | Piece::BlackFlat => {
-                                            mobility += 2;
-                                        }
-                                        Piece::WhiteWall | Piece::BlackWall => {
-                                            if stack.len() < Self::Game::SIZE {
-                                                safety -= 4;
-                                            }
-                                        }
-                                        Piece::WhiteCap | Piece::BlackCap => {
-                                            if stack.len() < Self::Game::SIZE {
-                                                safety -= 32;
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                mobility += 2;
-                            }
-                        }
-                        if mobility < 2 && !top.is_blocker() {
-                            friendly /= 2;
-                        }
-                        if safety < 0 {
-                            captive *= 2;
-                        }
-                        let friendly_score = friendly * f_mul;
-                        // let friendly_score = std::cmp::min(friendly * f_mul, 300);
-                        let stack_score = captive * c_mul + friendly_score + pw;
-                        if let Color::White = top.owner() {
-                            score += stack_score;
-                        } else {
-                            score -= stack_score;
-                        }
+                        score += self.eval_stack(game, idx, stack);
                     }
                 }
                 let black_cap = game.bits.cap & game.bits.black;
@@ -202,24 +117,26 @@ macro_rules! eval_impl {
                         score -= 30;
                     }
                 }
+                score += 50 * attackable_cs(Color::White, game);
+                score -= 50 * attackable_cs(Color::Black, game);
                 let white_r = game.bits.road_pieces(Color::White);
                 let black_r = game.bits.road_pieces(Color::Black);
-                let mut white_cs =
-                    white_r.critical_squares() & !game.bits.blocker_pieces(Color::Black);
-                while white_cs != <Self::Game as TakBoard>::Bits::ZERO {
-                    let lowest = white_cs.pop_lowest();
-                    if (lowest.adjacent() & white_r).pop_count() >= 3 {
-                        score += 50;
-                    }
-                }
-                let mut black_cs =
-                    black_r.critical_squares() & !game.bits.blocker_pieces(Color::White);
-                while black_cs != <Self::Game as TakBoard>::Bits::ZERO {
-                    let lowest = black_cs.pop_lowest();
-                    if (lowest.adjacent() & black_r).pop_count() >= 3 {
-                        score -= 50;
-                    }
-                }
+                // let mut white_cs =
+                //     white_r.critical_squares() & !game.bits.blocker_pieces(Color::Black);
+                // while white_cs != <Self::Game as TakBoard>::Bits::ZERO {
+                //     let lowest = white_cs.pop_lowest();
+                //     if (lowest.adjacent() & white_r).pop_count() >= 3 {
+                //         score += 50;
+                //     }
+                // }
+                // let mut black_cs =
+                //     black_r.critical_squares() & !game.bits.blocker_pieces(Color::White);
+                // while black_cs != <Self::Game as TakBoard>::Bits::ZERO {
+                //     let lowest = black_cs.pop_lowest();
+                //     if (lowest.adjacent() & black_r).pop_count() >= 3 {
+                //         score -= 50;
+                //     }
+                // }
                 let (loose_white_pc, white_comp) =
                     flat_placement_road_h(white_r, game.bits.empty());
                 let (loose_black_pc, black_comp) =
@@ -297,8 +214,106 @@ macro_rules! eval_impl {
                     }
                 }
             }
+            fn eval_stack(&self, game: &Self::Game, idx: usize, stack: &Stack) -> i32 {
+                let top = stack.top().unwrap();
+                let mut pw = self.piece_weight(top) + self.location[idx];
+                let (mut captive, mut friendly) = stack.captive_friendly();
+                let (c_mul, f_mul) = self.stack_top_multiplier(top);
+                let mut mobility = 0;
+                let mut safety = 0;
+                match top {
+                    Piece::WhiteFlat | Piece::BlackFlat => {}
+                    Piece::WhiteWall | Piece::BlackWall => {
+                        safety += 16;
+                    }
+                    Piece::WhiteCap => {
+                        safety += 64;
+                        mobility += 1;
+                        if let Some(Piece::WhiteFlat) = stack.under_top() {
+                            pw += 30;
+                        }
+                    }
+                    Piece::BlackCap => {
+                        safety += 64;
+                        mobility += 1;
+                        if let Some(Piece::BlackFlat) = stack.under_top() {
+                            pw += 30;
+                        }
+                    }
+                }
+                let neighbors = <Self::Game as TakBoard>::Bits::index_to_bit(idx).adjacent();
+                for sq in BitIndexIterator::new(neighbors) {
+                    let stack = &game.board[sq];
+                    if let Some(piece) = stack.top() {
+                        if piece.owner() == top.owner() {
+                            match piece {
+                                Piece::WhiteFlat | Piece::BlackFlat => {
+                                    safety += 1;
+                                    mobility += 1;
+                                }
+                                Piece::WhiteWall | Piece::BlackWall => {
+                                    if stack.len() < Self::Game::SIZE {
+                                        safety += 4;
+                                    }
+                                }
+                                Piece::WhiteCap | Piece::BlackCap => {
+                                    if stack.len() < Self::Game::SIZE {
+                                        safety += 32;
+                                    }
+                                    mobility += 1;
+                                }
+                            }
+                        } else {
+                            match piece {
+                                Piece::WhiteFlat | Piece::BlackFlat => {
+                                    mobility += 2;
+                                }
+                                Piece::WhiteWall | Piece::BlackWall => {
+                                    if stack.len() < Self::Game::SIZE {
+                                        safety -= 4;
+                                    }
+                                }
+                                Piece::WhiteCap | Piece::BlackCap => {
+                                    if stack.len() < Self::Game::SIZE {
+                                        safety -= 32;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        mobility += 2;
+                    }
+                }
+                if mobility < 2 && !top.is_blocker() {
+                    friendly /= 2;
+                }
+                if safety < 0 {
+                    captive *= 2;
+                }
+                let friendly_score = friendly * f_mul;
+                // let friendly_score = std::cmp::min(friendly * f_mul, 300);
+                let stack_score = captive * c_mul + friendly_score + pw;
+                if let Color::White = top.owner() {
+                    return stack_score;
+                } else {
+                    return -stack_score;
+                }
+            }
         }
     };
+}
+
+fn attackable_cs<B: TakBoard>(color: Color, game: &B) -> i32 {
+    let road_pieces = game.bits().road_pieces(color);
+    let mut cs = road_pieces.critical_squares() & !game.bits().blocker_pieces(!color);
+    let mut count = 0;
+    while cs != B::Bits::ZERO {
+        let lowest = cs.pop_lowest();
+        if (lowest.adjacent() & road_pieces).pop_count() >= 3 {
+            count += 1;
+        }
+    }
+    count
 }
 
 eval_impl![Board6, Weights6];
@@ -406,7 +421,6 @@ fn flat_placement_road_h<B: Bitboard + std::fmt::Debug>(road_bits: B, empty: B) 
 /// the original version, but the road play still seems uninspired, extending threats
 /// that seem unlikely to be finished, while ignoring future threats simply because
 /// they haven't yet reached fruition.
-#[cfg(test)]
 fn one_gap_road<B: Bitboard + std::fmt::Debug>(road_bits: B) -> (i32, usize) {
     let mut iter = ComponentIterator::new(road_bits);
     let mut best = 0;
@@ -562,6 +576,78 @@ impl Weights6 {
             stack_top,
         }
     }
+    pub fn eval_components(&self, game: &crate::Board6) -> EvalComponents {
+        let empty = [game.bits().empty().pop_count() as i32];
+        let mut loc_score = [0; 2];
+        let mut pieces = [0; 6];
+        let mut capstone_status = [0; 2];
+        let mut capstone_height = [0; 2];
+        let mut stack_score = [0; 2];
+        let mut stack_count = [0; 2];
+        let reserves = [
+            (game.pieces_reserve(Color::White) + game.caps_reserve(Color::White)) as i32,
+            (game.pieces_reserve(Color::Black) + game.caps_reserve(Color::Black)) as i32,
+        ];
+        let flat_placement = [
+            flat_placement_road_h(game.bits.road_pieces(Color::White), game.bits.empty()),
+            flat_placement_road_h(game.bits.road_pieces(Color::Black), game.bits.empty()),
+        ];
+        let comps = [flat_placement[0].1 as i32, flat_placement[1].1 as i32];
+        let flat_placement = [flat_placement[0].0, flat_placement[1].0];
+        let cs = [
+            attackable_cs(Color::White, game),
+            attackable_cs(Color::Black, game),
+        ];
+        let one_gap = [
+            one_gap_road(game.bits.road_pieces(Color::White)).0,
+            one_gap_road(game.bits.road_pieces(Color::Black)).0,
+        ];
+        // let pieces_left = white_res + black_res;
+        // let time_mul = (pieces_left as i32 * 100) / 60;
+        for (idx, stack) in game.board.iter().enumerate() {
+            if stack.len() == 0 {
+                continue;
+            }
+            let top = stack.top().unwrap();
+            let color = top.owner() as usize;
+            let mul = if top.is_cap() {
+                capstone_height[color] = stack.len() as i32;
+                if let Some(piece) = stack.from_top(1) {
+                    if piece.owner() == top.owner() {
+                        capstone_status[color] = 1;
+                    } else {
+                        capstone_status[color] = -1;
+                    }
+                }
+                2
+            } else {
+                1
+            };
+            loc_score[color] += mul * self.location[idx];
+            if stack.len() == 1 {
+                pieces[top as usize] += 1;
+            } else if stack.len() > 1 {
+                stack_count[color] += 1;
+                stack_score[color] += self.eval_stack(game, idx, stack);
+            }
+        }
+        let vec = vec![
+            empty.as_slice(),
+            &loc_score,
+            &pieces,
+            &capstone_status,
+            &capstone_height,
+            &stack_score,
+            &stack_count,
+            &reserves,
+            &comps,
+            &flat_placement,
+            &one_gap,
+            &cs,
+        ];
+        EvalComponents::from_arrays(vec)
+    }
+
     #[cfg(feature = "random")]
     pub fn add_noise(&mut self) {
         use rand_core::{RngCore, SeedableRng};
@@ -622,6 +708,67 @@ impl Default for Weights6 {
             piece_arr,
             [st1.0, st1.1, st2.0, st2.1, st3.0, st3.1],
         )
+    }
+}
+
+pub struct EvalComponents {
+    data: [i32; 29],
+}
+
+impl EvalComponents {
+    pub fn from_arrays(vals: Vec<&[i32]>) -> Self {
+        let mut data = [0; 29];
+        let mut idx = 0;
+        for slice in vals {
+            for x in slice {
+                data[idx] = *x;
+                idx += 1;
+            }
+        }
+        assert_eq!(idx, data.len());
+        Self { data }
+    }
+    pub fn write_data<W: std::io::Write>(&self, writer: &mut W) -> anyhow::Result<()> {
+        for x in self.data.iter() {
+            write!(writer, "{},", *x)?;
+        }
+        Ok(())
+    }
+    pub fn labels() -> Vec<String> {
+        let mut out = [
+            "empty",
+            "loc_white",
+            "loc_black",
+            "flat_white",
+            "wall_white",
+            "cap_white",
+            "flat_black",
+            "wall_black",
+            "cap_black",
+        ]
+        .iter()
+        .map(|x| format!("\"{}\"", x))
+        .collect();
+        for name in [
+            "cap_status",
+            "cap_height",
+            "stack_score",
+            "stack_count",
+            "reserves",
+            "comps",
+            "flat_placement_r",
+            "one_gap_r",
+            "cs",
+        ]
+        .iter()
+        {
+            Self::add_names(name, &mut out);
+        }
+        out
+    }
+    fn add_names(name: &str, vec: &mut Vec<String>) {
+        vec.push(format!("\"{}_white\"", name));
+        vec.push(format!("\"{}_black\"", name));
     }
 }
 
