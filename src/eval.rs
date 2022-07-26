@@ -728,7 +728,7 @@ impl EvalComponents {
         assert_eq!(idx, data.len());
         Self { data }
     }
-    pub fn write_data<W: std::io::Write>(&self, writer: &mut W) -> anyhow::Result<()> {
+    pub fn write_data<W: std::fmt::Write>(&self, writer: &mut W) -> anyhow::Result<()> {
         for x in self.data.iter() {
             write!(writer, "{},", *x)?;
         }
