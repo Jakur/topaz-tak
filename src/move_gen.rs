@@ -275,6 +275,18 @@ impl GameMove {
         };
         bits & mask
     }
+    /// A quick but non-exhaustive check that a move is valid
+    pub fn is_valid(&self) -> bool {
+        if *self == Self::null_move() {
+            return false;
+        } else if self.is_place_move() {
+            !self.crush() && !self.is_stack_move()
+        } else {
+            let slide_bits_count = self.slide_bits().count_ones();
+            let number = self.number();
+            slide_bits_count != 0 && slide_bits_count < 8 && number != 0 && number <= 8
+        }
+    }
 }
 
 impl fmt::Debug for GameMove {

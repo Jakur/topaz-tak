@@ -540,6 +540,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "stride"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cad80558d150d7cb56fcd5f1f1845ab341939bf57825f6125ff28cd8e1efc877"
+
+[[package]]
 name = "syn"
 version = "1.0.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -601,6 +607,7 @@ dependencies = [
  "rand_xoshiro",
  "telnet",
  "termtree",
+ "vectrix",
 ]
 
 [[package]]
@@ -614,6 +621,15 @@ name = "unicode-xid"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
+
+[[package]]
+name = "vectrix"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fb606b169844f203d2a2df4f98162a7281d272b44c15cd47250279ae90c29d4"
+dependencies = [
+ "stride",
+]
 
 [[package]]
 name = "walkdir"

@@ -5,11 +5,15 @@ use crate::board::{Board5, Board6};
 use crate::BitboardStorage;
 use crate::Color;
 use crate::Position;
+use nn::SmallNN;
+
+mod nn;
 
 pub trait Evaluator {
     type Game: TakBoard;
     fn evaluate(&self, game: &Self::Game, depth: usize) -> i32;
     fn eval_stack(&self, game: &Self::Game, index: usize, stack: &Stack) -> i32;
+    fn eval_components(&self, game: &Self::Game) -> EvalComponents;
 }
 
 pub struct Evaluator6 {}
@@ -71,6 +75,9 @@ macro_rules! tinue_eval {
             fn eval_stack(&self, _game: &Self::Game, _index: usize, _stack: &Stack) -> i32 {
                 unimplemented!()
             }
+            fn eval_components(&self, _game: &Self::Game) -> EvalComponents {
+                unimplemented!()
+            }
         }
     };
 }
@@ -121,22 +128,6 @@ macro_rules! eval_impl {
                 score -= 50 * attackable_cs(Color::Black, game);
                 let white_r = game.bits.road_pieces(Color::White);
                 let black_r = game.bits.road_pieces(Color::Black);
-                // let mut white_cs =
-                //     white_r.critical_squares() & !game.bits.blocker_pieces(Color::Black);
-                // while white_cs != <Self::Game as TakBoard>::Bits::ZERO {
-                //     let lowest = white_cs.pop_lowest();
-                //     if (lowest.adjacent() & white_r).pop_count() >= 3 {
-                //         score += 50;
-                //     }
-                // }
-                // let mut black_cs =
-                //     black_r.critical_squares() & !game.bits.blocker_pieces(Color::White);
-                // while black_cs != <Self::Game as TakBoard>::Bits::ZERO {
-                //     let lowest = black_cs.pop_lowest();
-                //     if (lowest.adjacent() & black_r).pop_count() >= 3 {
-                //         score -= 50;
-                //     }
-                // }
                 let (loose_white_pc, white_comp) =
                     flat_placement_road_h(white_r, game.bits.empty());
                 let (loose_black_pc, black_comp) =
@@ -199,6 +190,17 @@ macro_rules! eval_impl {
                     } else if flat_diff < 0 {
                         score += (flat_diff * 100) / black_res as i32;
                     }
+                }
+                if Self::Game::SIZE == 6 && score.abs() < 350 {
+                    if let Color::White = game.side_to_move() {
+                        let eval_comp = self.eval_components(game);
+                        score =
+                            score / 2 + self.nn.forward(SmallNN::prepare_data(eval_comp.data)) / 2;
+                    }
+                    // if let Color::Black = game.side_to_move() {
+                    //     SmallNN::flip_color(&mut eval_comp.data);
+                    // }
+                    // score = score / 2 + self.nn.forward(SmallNN::prepare_data(eval_comp.data)) / 2;
                 }
                 if let Color::White = game.side_to_move() {
                     if depth % 2 == 1 {
@@ -298,6 +300,83 @@ macro_rules! eval_impl {
                 } else {
                     return -stack_score;
                 }
+            }
+            fn eval_components(&self, game: &Self::Game) -> EvalComponents {
+                let empty = [game.bits().empty().pop_count() as i32];
+                let mut loc_score = [0; 2];
+                let mut pieces = [0; 6];
+                let mut capstone_status = [0; 2];
+                let mut capstone_height = [0; 2];
+                let mut stack_score = [0; 2];
+                let mut stack_count = [0; 2];
+                let reserves = [
+                    (game.pieces_reserve(Color::White) + game.caps_reserve(Color::White)) as i32,
+                    (game.pieces_reserve(Color::Black) + game.caps_reserve(Color::Black)) as i32,
+                ];
+                let flat_placement = [
+                    flat_placement_road_h(
+                        game.bits().road_pieces(Color::White),
+                        game.bits().empty(),
+                    ),
+                    flat_placement_road_h(
+                        game.bits().road_pieces(Color::Black),
+                        game.bits().empty(),
+                    ),
+                ];
+                let comps = [flat_placement[0].1 as i32, flat_placement[1].1 as i32];
+                let flat_placement = [flat_placement[0].0, flat_placement[1].0];
+                let cs = [
+                    attackable_cs(Color::White, game),
+                    attackable_cs(Color::Black, game),
+                ];
+                let one_gap = [
+                    one_gap_road(game.bits().road_pieces(Color::White)).0,
+                    one_gap_road(game.bits().road_pieces(Color::Black)).0,
+                ];
+                // let pieces_left = white_res + black_res;
+                // let time_mul = (pieces_left as i32 * 100) / 60;
+                for (idx, stack) in game.board().iter().enumerate() {
+                    if stack.len() == 0 {
+                        continue;
+                    }
+                    let top = stack.top().unwrap();
+                    let color = top.owner() as usize;
+                    let mul = if top.is_cap() {
+                        capstone_height[color] = stack.len() as i32;
+                        if let Some(piece) = stack.from_top(1) {
+                            if piece.owner() == top.owner() {
+                                capstone_status[color] = 1;
+                            } else {
+                                capstone_status[color] = -1;
+                            }
+                        }
+                        2
+                    } else {
+                        1
+                    };
+                    loc_score[color] += mul * self.location[idx];
+                    if stack.len() == 1 {
+                        pieces[top as usize - 1] += 1;
+                    } else if stack.len() > 1 {
+                        stack_count[color] += 1;
+                        stack_score[color] += self.eval_stack(game, idx, stack);
+                    }
+                }
+                let vec = vec![
+                    empty.as_slice(),
+                    &loc_score,
+                    &pieces,
+                    &capstone_status,
+                    &capstone_height,
+                    &stack_score,
+                    &stack_count,
+                    &reserves,
+                    &comps,
+                    &flat_placement,
+                    &one_gap,
+                    &cs,
+                ];
+                EvalComponents::from_arrays(vec)
             }
         }
     };
@@ -498,6 +577,7 @@ pub struct Weights5 {
     tempo_offset: i32,
     piece: [i32; 3],
     stack_top: [i32; 6],
+    nn: SmallNN,
 }
 
 impl Weights5 {
@@ -514,6 +594,7 @@ impl Weights5 {
             tempo_offset,
             piece,
             stack_top,
+            nn: SmallNN::new(),
         }
     }
     fn piece_weight(&self, p: Piece) -> i32 {
@@ -558,6 +639,7 @@ pub struct Weights6 {
     tempo_offset: i32,
     piece: [i32; 3],
     stack_top: [i32; 6],
+    nn: SmallNN,
 }
 
 impl Weights6 {
@@ -574,78 +656,8 @@ impl Weights6 {
             tempo_offset,
             piece,
             stack_top,
+            nn: SmallNN::new(),
         }
-    }
-    pub fn eval_components(&self, game: &crate::Board6) -> EvalComponents {
-        let empty = [game.bits().empty().pop_count() as i32];
-        let mut loc_score = [0; 2];
-        let mut pieces = [0; 6];
-        let mut capstone_status = [0; 2];
-        let mut capstone_height = [0; 2];
-        let mut stack_score = [0; 2];
-        let mut stack_count = [0; 2];
-        let reserves = [
-            (game.pieces_reserve(Color::White) + game.caps_reserve(Color::White)) as i32,
-            (game.pieces_reserve(Color::Black) + game.caps_reserve(Color::Black)) as i32,
-        ];
-        let flat_placement = [
-            flat_placement_road_h(game.bits.road_pieces(Color::White), game.bits.empty()),
-            flat_placement_road_h(game.bits.road_pieces(Color::Black), game.bits.empty()),
-        ];
-        let comps = [flat_placement[0].1 as i32, flat_placement[1].1 as i32];
-        let flat_placement = [flat_placement[0].0, flat_placement[1].0];
-        let cs = [
-            attackable_cs(Color::White, game),
-            attackable_cs(Color::Black, game),
-        ];
-        let one_gap = [
-            one_gap_road(game.bits.road_pieces(Color::White)).0,
-            one_gap_road(game.bits.road_pieces(Color::Black)).0,
-        ];
-        // let pieces_left = white_res + black_res;
-        // let time_mul = (pieces_left as i32 * 100) / 60;
-        for (idx, stack) in game.board.iter().enumerate() {
-            if stack.len() == 0 {
-                continue;
-            }
-            let top = stack.top().unwrap();
-            let color = top.owner() as usize;
-            let mul = if top.is_cap() {
-                capstone_height[color] = stack.len() as i32;
-                if let Some(piece) = stack.from_top(1) {
-                    if piece.owner() == top.owner() {
-                        capstone_status[color] = 1;
-                    } else {
-                        capstone_status[color] = -1;
-                    }
-                }
-                2
-            } else {
-                1
-            };
-            loc_score[color] += mul * self.location[idx];
-            if stack.len() == 1 {
-                pieces[top as usize] += 1;
-            } else if stack.len() > 1 {
-                stack_count[color] += 1;
-                stack_score[color] += self.eval_stack(game, idx, stack);
-            }
-        }
-        let vec = vec![
-            empty.as_slice(),
-            &loc_score,
-            &pieces,
-            &capstone_status,
-            &capstone_height,
-            &stack_score,
-            &stack_count,
-            &reserves,
-            &comps,
-            &flat_placement,
-            &one_gap,
-            &cs,
-        ];
-        EvalComponents::from_arrays(vec)
     }
 
     #[cfg(feature = "random")]
@@ -712,12 +724,12 @@ impl Default for Weights6 {
 }
 
 pub struct EvalComponents {
-    data: [i32; 29],
+    data: [i32; 27],
 }
 
 impl EvalComponents {
     pub fn from_arrays(vals: Vec<&[i32]>) -> Self {
-        let mut data = [0; 29];
+        let mut data = [0; 27];
         let mut idx = 0;
         for slice in vals {
             for x in slice {
@@ -747,7 +759,7 @@ impl EvalComponents {
             "cap_black",
         ]
         .iter()
-        .map(|x| format!("\"{}\"", x))
+        .map(|x| format!("{}", x))
         .collect();
         for name in [
             "cap_status",
@@ -767,8 +779,8 @@ impl EvalComponents {
         out
     }
     fn add_names(name: &str, vec: &mut Vec<String>) {
-        vec.push(format!("\"{}_white\"", name));
-        vec.push(format!("\"{}_black\"", name));
+        vec.push(format!("{}_white", name));
+        vec.push(format!("{}_black", name));
     }
 }
 
