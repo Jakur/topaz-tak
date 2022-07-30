@@ -252,33 +252,31 @@ macro_rules! board_impl {
                 let cs_wall = cs.reachable_any();
                 let cs_flat = (cs & !self.bits.wall).reachable_any();
                 let mut bad_bits = Self::Bits::ZERO;
-                if true {
-                    for st_idx in stacks.clone() {
-                        let (_, friendly) = self.board[st_idx].captive_friendly();
-                        let bit = Self::Bits::index_to_bit(st_idx);
-                        // Filter squares we don't need
-                        match self.board[st_idx].top().unwrap() {
-                            Piece::WhiteFlat | Piece::BlackFlat => {
-                                if friendly == 0 && (bit & cs_flat) == Self::Bits::ZERO {
-                                    bad_bits |= bit;
-                                }
+                for st_idx in stacks.clone() {
+                    let (_, friendly) = self.board[st_idx].captive_friendly();
+                    let bit = Self::Bits::index_to_bit(st_idx);
+                    // Filter squares we don't need
+                    match self.board[st_idx].top().unwrap() {
+                        Piece::WhiteFlat | Piece::BlackFlat => {
+                            if friendly == 0 && (bit & cs_flat) == Self::Bits::ZERO {
+                                bad_bits |= bit;
                             }
-                            Piece::WhiteWall | Piece::BlackWall => {
-                                if friendly == 0
-                                    || (friendly == 1 && (bit & (cs | cs_flat)) == Self::Bits::ZERO)
-                                {
-                                    bad_bits |= Self::Bits::index_to_bit(st_idx);
-                                }
+                        }
+                        Piece::WhiteWall | Piece::BlackWall => {
+                            if friendly == 0
+                                || (friendly == 1 && (bit & (cs | cs_flat)) == Self::Bits::ZERO)
+                            {
+                                bad_bits |= Self::Bits::index_to_bit(st_idx);
                             }
-                            Piece::WhiteCap | Piece::BlackCap => {
-                                if friendly == 0 && (bit & cs_wall) == Self::Bits::ZERO {
-                                    bad_bits |= Self::Bits::index_to_bit(st_idx);
-                                }
+                        }
+                        Piece::WhiteCap | Piece::BlackCap => {
+                            if friendly == 0 && (bit & cs_wall) == Self::Bits::ZERO {
+                                bad_bits |= Self::Bits::index_to_bit(st_idx);
                             }
                         }
                     }
-                    stacks.mask(!bad_bits);
                 }
+                stacks.mask(!bad_bits);
                 generate_masked_stack_moves(self, storage, stacks);
                 for m in storage.iter().copied() {
                     if self.road_stack_throw(road_pieces, m) {

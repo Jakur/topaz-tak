@@ -7,6 +7,7 @@ use crate::Color;
 use crate::Position;
 use nn::SmallNN;
 
+#[allow(dead_code)]
 mod nn;
 
 pub trait Evaluator {
@@ -167,40 +168,74 @@ macro_rules! eval_impl {
 
                 score += (white_road_score * mul) / 100;
                 score -= (black_road_score * mul) / 100;
-                if white_res < 10 || black_res < 10 {
+                let empty_count = game.bits().empty().pop_count() as usize;
+                if white_res < 10 || black_res < 10 || empty_count <= 4 {
                     // Half flats in white's favor
                     let mut flat_diff = (game.bits.flat & game.bits.white).pop_count() as i32
                         - (game.bits.flat & game.bits.black).pop_count() as i32;
                     flat_diff *= 2;
                     flat_diff -= game.komi() as i32;
                     // TODO board fill considerations?
-                    if white_res < black_res {
+                    let (white_fill, black_fill) = if empty_count % 2 == 0 {
+                        (empty_count / 2, empty_count / 2)
+                    } else {
                         match game.side_to_move() {
-                            Color::White => flat_diff += 2,
-                            _ => {}
+                            Color::White => (1 + empty_count / 2, empty_count / 2),
+                            Color::Black => (empty_count / 2, 1 + empty_count / 2),
+                        }
+                    };
+                    // Todo checkout this side to move business
+                    if white_res < black_res {
+                        if white_fill < white_res {
+                            if empty_count % 2 == 1 {
+                                flat_diff += 2;
+                            }
+                        } else {
+                            match game.side_to_move() {
+                                Color::White => flat_diff += 2,
+                                _ => {}
+                            }
                         }
                     } else if black_res < white_res {
+                        if black_fill < black_res {
+                            if empty_count % 2 == 1 {
+                                flat_diff -= 2;
+                            }
+                        } else {
+                            match game.side_to_move() {
+                                Color::Black => flat_diff -= 2,
+                                _ => {}
+                            }
+                        }
+                    } else {
                         match game.side_to_move() {
-                            Color::Black => flat_diff -= 2,
-                            _ => {}
+                            Color::White => {
+                                if white_fill < white_res {
+                                    if empty_count % 2 == 1 {
+                                        flat_diff += 2;
+                                    }
+                                } else {
+                                    flat_diff += 2;
+                                }
+                            }
+                            Color::Black => {
+                                if black_fill < black_res {
+                                    if empty_count % 2 == 1 {
+                                        flat_diff -= 2;
+                                    }
+                                } else {
+                                    flat_diff -= 2;
+                                }
+                            }
                         }
                     }
                     if flat_diff > 0 {
-                        score += (flat_diff * 100) / white_res as i32;
+                        score +=
+                            (flat_diff * 100) / std::cmp::min(white_res, white_fill + 1) as i32;
                     } else if flat_diff < 0 {
-                        score += (flat_diff * 100) / black_res as i32;
+                        score +=
+                            (flat_diff * 100) / std::cmp::min(black_res, black_fill + 1) as i32;
                     }
-                }
-                if Self::Game::SIZE == 6 && score.abs() < 350 {
-                    if let Color::White = game.side_to_move() {
-                        let eval_comp = self.eval_components(game);
-                        score =
-                            score / 2 + self.nn.forward(SmallNN::prepare_data(eval_comp.data)) / 2;
-                    }
-                    // if let Color::Black = game.side_to_move() {
-                    //     SmallNN::flip_color(&mut eval_comp.data);
-                    // }
-                    // score = score / 2 + self.nn.forward(SmallNN::prepare_data(eval_comp.data)) / 2;
                 }
                 if let Color::White = game.side_to_move() {
                     if depth % 2 == 1 {
@@ -215,6 +250,13 @@ macro_rules! eval_impl {
                         -1 * score
                     }
                 }
+                // if Self::Game::SIZE == 10 && score.abs() < 350 {
+                //     let eval_comp = self.eval_components(game);
+                //     let pred_delta = self.nn.forward(SmallNN::prepare_data(eval_comp.data));
+                //     score + pred_delta
+                // } else {
+                //     score
+                // }
             }
             fn eval_stack(&self, game: &Self::Game, idx: usize, stack: &Stack) -> i32 {
                 let top = stack.top().unwrap();
@@ -302,6 +344,8 @@ macro_rules! eval_impl {
                 }
             }
             fn eval_components(&self, game: &Self::Game) -> EvalComponents {
+                let player = game.side_to_move();
+                let opp = !game.side_to_move();
                 let empty = [game.bits().empty().pop_count() as i32];
                 let mut loc_score = [0; 2];
                 let mut pieces = [0; 6];
@@ -310,28 +354,19 @@ macro_rules! eval_impl {
                 let mut stack_score = [0; 2];
                 let mut stack_count = [0; 2];
                 let reserves = [
-                    (game.pieces_reserve(Color::White) + game.caps_reserve(Color::White)) as i32,
-                    (game.pieces_reserve(Color::Black) + game.caps_reserve(Color::Black)) as i32,
+                    (game.pieces_reserve(player) + game.caps_reserve(player)) as i32,
+                    (game.pieces_reserve(opp) + game.caps_reserve(opp)) as i32,
                 ];
                 let flat_placement = [
-                    flat_placement_road_h(
-                        game.bits().road_pieces(Color::White),
-                        game.bits().empty(),
-                    ),
-                    flat_placement_road_h(
-                        game.bits().road_pieces(Color::Black),
-                        game.bits().empty(),
-                    ),
+                    flat_placement_road_h(game.bits().road_pieces(player), game.bits().empty()),
+                    flat_placement_road_h(game.bits().road_pieces(opp), game.bits().empty()),
                 ];
                 let comps = [flat_placement[0].1 as i32, flat_placement[1].1 as i32];
                 let flat_placement = [flat_placement[0].0, flat_placement[1].0];
-                let cs = [
-                    attackable_cs(Color::White, game),
-                    attackable_cs(Color::Black, game),
-                ];
+                let cs = [attackable_cs(player, game), attackable_cs(opp, game)];
                 let one_gap = [
-                    one_gap_road(game.bits().road_pieces(Color::White)).0,
-                    one_gap_road(game.bits().road_pieces(Color::Black)).0,
+                    one_gap_road(game.bits().road_pieces(player)).0,
+                    one_gap_road(game.bits().road_pieces(opp)).0,
                 ];
                 // let pieces_left = white_res + black_res;
                 // let time_mul = (pieces_left as i32 * 100) / 60;
@@ -340,10 +375,11 @@ macro_rules! eval_impl {
                         continue;
                     }
                     let top = stack.top().unwrap();
-                    let color = top.owner() as usize;
+                    let color = (top.owner() != player) as usize; // Friendly 0, Enemy 1
                     let mul = if top.is_cap() {
                         capstone_height[color] = stack.len() as i32;
                         if let Some(piece) = stack.from_top(1) {
+                            // Todo check this
                             if piece.owner() == top.owner() {
                                 capstone_status[color] = 1;
                             } else {
@@ -356,10 +392,19 @@ macro_rules! eval_impl {
                     };
                     loc_score[color] += mul * self.location[idx];
                     if stack.len() == 1 {
-                        pieces[top as usize - 1] += 1;
+                        let piece_idx = if let Color::White = player {
+                            top as usize - 1
+                        } else {
+                            top.swap_color() as usize - 1
+                        };
+                        pieces[piece_idx] += 1;
                     } else if stack.len() > 1 {
+                        if let Color::White = top.owner() {
+                            stack_score[color] += self.eval_stack(game, idx, stack);
+                        } else {
+                            stack_score[color] -= self.eval_stack(game, idx, stack);
+                        }
                         stack_count[color] += 1;
-                        stack_score[color] += self.eval_stack(game, idx, stack);
                     }
                 }
                 let vec = vec![
@@ -749,14 +794,14 @@ impl EvalComponents {
     pub fn labels() -> Vec<String> {
         let mut out = [
             "empty",
-            "loc_white",
-            "loc_black",
-            "flat_white",
-            "wall_white",
-            "cap_white",
-            "flat_black",
-            "wall_black",
-            "cap_black",
+            "loc_friendly",
+            "loc_enemy",
+            "flat_friendly",
+            "wall_friendly",
+            "cap_friendly",
+            "flat_enemy",
+            "wall_enemy",
+            "cap_enemy",
         ]
         .iter()
         .map(|x| format!("{}", x))
@@ -779,8 +824,8 @@ impl EvalComponents {
         out
     }
     fn add_names(name: &str, vec: &mut Vec<String>) {
-        vec.push(format!("{}_white", name));
-        vec.push(format!("{}_black", name));
+        vec.push(format!("{}_friendly", name));
+        vec.push(format!("{}_enemy", name));
     }
 }
 

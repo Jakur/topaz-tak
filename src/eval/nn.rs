@@ -2,32 +2,32 @@ use vectrix::Matrix;
 
 const LABELS: [&'static str; 27] = [
     "empty",
-    "loc_white",
-    "loc_black",
-    "flat_white",
-    "wall_white",
-    "cap_white",
-    "flat_black",
-    "wall_black",
-    "cap_black",
-    "cap_status_white",
-    "cap_status_black",
-    "cap_height_white",
-    "cap_height_black",
-    "stack_score_white",
-    "stack_score_black",
-    "stack_count_white",
-    "stack_count_black",
-    "reserves_white",
-    "reserves_black",
-    "comps_white",
-    "comps_black",
-    "flat_placement_r_white",
-    "flat_placement_r_black",
-    "one_gap_r_white",
-    "one_gap_r_black",
-    "cs_white",
-    "cs_black",
+    "loc_friendly",
+    "loc_enemy",
+    "flat_friendly",
+    "wall_friendly",
+    "cap_friendly",
+    "flat_enemy",
+    "wall_enemy",
+    "cap_enemy",
+    "cap_status_friendly",
+    "cap_status_enemy",
+    "cap_height_friendly",
+    "cap_height_enemy",
+    "stack_score_friendly",
+    "stack_score_enemy",
+    "stack_count_friendly",
+    "stack_count_enemy",
+    "reserves_friendly",
+    "reserves_enemy",
+    "comps_friendly",
+    "comps_enemy",
+    "flat_placement_r_friendly",
+    "flat_placement_r_enemy",
+    "one_gap_r_friendly",
+    "one_gap_r_enemy",
+    "cs_friendly",
+    "cs_enemy",
 ];
 static WEIGHTS1: &'static str = include_str!("data.mat");
 
@@ -49,37 +49,13 @@ impl SmallNN {
         .into_iter()
         .collect();
         let weights2 = [
-            -0.16706082224845886,
-            0.2679905593395233,
-            -0.20251516997814178,
-            -0.366769015789032,
-            0.06854448467493057,
-            0.7047578692436218,
-            0.3592526614665985,
-            -0.2475123256444931,
-            -0.5606487989425659,
-            -0.03941737487912178,
-            -0.0992896556854248,
-            0.0679473802447319,
-            0.18884554505348206,
-            0.04559066891670227,
-            0.14979691803455353,
-            0.2755080759525299,
-            0.09012038260698318,
-            0.274671345949173,
-            0.11925443261861801,
-            -0.24413184821605682,
-            -0.4876846671104431,
-            0.0966338962316513,
-            0.17707756161689758,
-            0.15273012220859528,
-            0.2814192473888397,
-            -0.11357637494802475,
-            -0.08102928847074509,
+            -0.1671, 0.2680, -0.2025, -0.3668, 0.0685, 0.7048, 0.3593, -0.2475, -0.5606, -0.0394,
+            -0.0993, 0.0679, 0.1888, 0.0456, 0.1498, 0.2755, 0.0901, 0.2747, 0.1193, -0.2441,
+            -0.4877, 0.0966, 0.1771, 0.1527, 0.2814, -0.1136, -0.0810,
         ]
         .into_iter()
         .collect();
-        let bias2 = 0.15925399959087372;
+        let bias2 = 0.1593;
         Self {
             weights1,
             bias1,
@@ -87,26 +63,26 @@ impl SmallNN {
             bias2,
         }
     }
-    pub fn flip_color(input: &mut [i32; 27]) {
-        const STACK_SCORE: usize = find(LABELS, "stack_score_white");
-        input.swap(1, 2);
-        input.swap(3, 6);
-        input.swap(4, 7);
-        input.swap(5, 8);
+    // pub fn flip_color(input: &mut [i32; 27]) {
+    //     const STACK_SCORE: usize = find(LABELS, "stack_score_friendly");
+    //     input.swap(1, 2);
+    //     input.swap(3, 6);
+    //     input.swap(4, 7);
+    //     input.swap(5, 8);
 
-        // Swaps
-        for i in 9..LABELS.len() / 2 {
-            let idx = 1 + i * 2;
-            input.swap(idx, idx + 1);
-        }
-        // Fix the poor feature construction of stack score
-        input[STACK_SCORE] *= -1;
-        input[STACK_SCORE + 1] *= -1;
-    }
+    //     // Swaps
+    //     for i in 9..LABELS.len() / 2 {
+    //         let idx = 1 + i * 2;
+    //         input.swap(idx, idx + 1);
+    //     }
+    //     // Fix the poor feature construction of stack score
+    //     input[STACK_SCORE] *= -1;
+    //     input[STACK_SCORE + 1] *= -1;
+    // }
     pub fn prepare_data(input: [i32; 27]) -> Matrix<f32, 1, 27> {
-        const FLAT_P: usize = find(LABELS, "flat_placement_r_white");
-        const LOC: usize = find(LABELS, "loc_white");
-        const STACK_SCORE: usize = find(LABELS, "stack_score_white");
+        const FLAT_P: usize = find(LABELS, "flat_placement_r_friendly");
+        const LOC: usize = find(LABELS, "loc_friendly");
+        const STACK_SCORE: usize = find(LABELS, "stack_score_friendly");
         const EMPTY: usize = find(LABELS, "empty");
         let mut out: Matrix<f32, 1, 27> = input.into_iter().map(|x| x as f32).collect();
         out[FLAT_P] = f32::min(16.0, out[FLAT_P]);

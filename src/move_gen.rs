@@ -6,6 +6,7 @@ use std::fmt;
 
 mod move_order;
 pub use move_order::{KillerMoves, PlaceHistory, SmartMoveBuffer};
+#[allow(dead_code)]
 pub mod magic;
 pub mod ptn;
 
@@ -179,6 +180,18 @@ impl GameMove {
     /// Counts the number of forward steps taken by a sliding move
     pub fn count_steps(self) -> u8 {
         self.slide_bits().count_ones() as u8
+    }
+    /// Determines the destination square of a sliding move
+    pub fn dest_sq(self, board_size: usize) -> usize {
+        let sq = self.src_index();
+        let steps = self.count_steps() as usize;
+        match self.direction() {
+            0 => sq - board_size * steps,
+            1 => sq + steps,
+            2 => sq + board_size * steps,
+            3 => sq - steps,
+            _ => unimplemented!(),
+        }
     }
     /// Returns the piece being placed.
     ///
