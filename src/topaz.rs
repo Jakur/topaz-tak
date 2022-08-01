@@ -224,13 +224,8 @@ pub fn main() {
                     let search = crate::search::proof::TinueSearch::new(board);
                     proof_interactive(search).unwrap();
                 }
-                TakGame::Standard6(mut board) => {
+                TakGame::Standard6(board) => {
                     let search = crate::search::proof::TinueSearch::new(board.clone());
-                    let mut info = SearchInfo::new(20, 2 << 20).time_bank(TimeBank::flat(40_000));
-                    let eval = Tinue6 {
-                        attacker: board.side_to_move(),
-                    };
-                    crate::search::proof::new_tinue_search(&mut board, &eval, &mut info);
                     proof_interactive(search).unwrap();
                 }
                 TakGame::Standard7(board) => {

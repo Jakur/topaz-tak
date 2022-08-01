@@ -2,13 +2,8 @@ use super::{Bitboard, Piece, Stack};
 use crate::board::BitIndexIterator;
 use crate::board::TakBoard;
 use crate::board::{Board5, Board6};
-use crate::BitboardStorage;
 use crate::Color;
 use crate::Position;
-use nn::SmallNN;
-
-#[allow(dead_code)]
-mod nn;
 
 pub trait Evaluator {
     type Game: TakBoard;
@@ -622,7 +617,6 @@ pub struct Weights5 {
     tempo_offset: i32,
     piece: [i32; 3],
     stack_top: [i32; 6],
-    nn: SmallNN,
 }
 
 impl Weights5 {
@@ -639,7 +633,6 @@ impl Weights5 {
             tempo_offset,
             piece,
             stack_top,
-            nn: SmallNN::new(),
         }
     }
     fn piece_weight(&self, p: Piece) -> i32 {
@@ -684,7 +677,6 @@ pub struct Weights6 {
     tempo_offset: i32,
     piece: [i32; 3],
     stack_top: [i32; 6],
-    nn: SmallNN,
 }
 
 impl Weights6 {
@@ -701,7 +693,6 @@ impl Weights6 {
             tempo_offset,
             piece,
             stack_top,
-            nn: SmallNN::new(),
         }
     }
 
