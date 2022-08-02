@@ -120,8 +120,8 @@ macro_rules! eval_impl {
                         score -= 30;
                     }
                 }
-                score += 50 * attackable_cs(Color::White, game);
-                score -= 50 * attackable_cs(Color::Black, game);
+                score += self.cs_threat * attackable_cs(Color::White, game);
+                score -= self.cs_threat * attackable_cs(Color::Black, game);
                 let white_r = game.bits.road_pieces(Color::White);
                 let black_r = game.bits.road_pieces(Color::Black);
                 let (loose_white_pc, white_comp) =
@@ -132,17 +132,17 @@ macro_rules! eval_impl {
                 score += black_comp as i32 * self.connectivity;
 
                 let mut white_road_score = match loose_white_pc {
-                    1 => 40,
-                    2 => 30,
-                    3 => 15,
-                    4 => 5,
+                    1 => self.flat_road[0],
+                    2 => self.flat_road[1],
+                    3 => self.flat_road[2],
+                    4 => self.flat_road[3],
                     _ => 0,
                 };
                 let mut black_road_score = match loose_black_pc {
-                    1 => 40,
-                    2 => 30,
-                    3 => 15,
-                    4 => 5,
+                    1 => self.flat_road[0],
+                    2 => self.flat_road[1],
+                    3 => self.flat_road[2],
+                    4 => self.flat_road[3],
                     _ => 0,
                 };
 
@@ -617,6 +617,8 @@ pub struct Weights5 {
     tempo_offset: i32,
     piece: [i32; 3],
     stack_top: [i32; 6],
+    flat_road: [i32; 4],
+    cs_threat: i32,
 }
 
 impl Weights5 {
@@ -626,6 +628,8 @@ impl Weights5 {
         tempo_offset: i32,
         piece: [i32; 3],
         stack_top: [i32; 6],
+        flat_road: [i32; 4],
+        cs_threat: i32,
     ) -> Self {
         Self {
             location,
@@ -633,6 +637,8 @@ impl Weights5 {
             tempo_offset,
             piece,
             stack_top,
+            flat_road,
+            cs_threat,
         }
     }
     fn piece_weight(&self, p: Piece) -> i32 {
@@ -667,16 +673,21 @@ impl Default for Weights5 {
             Evaluator6::TEMPO_OFFSET,
             piece_arr,
             [st1.0, st1.1, st2.0, st2.1, st3.0, st3.1],
+            [40, 30, 15, 5],
+            50,
         )
     }
 }
 
+#[derive(Debug)]
 pub struct Weights6 {
     location: [i32; 36],
     connectivity: i32,
     tempo_offset: i32,
     piece: [i32; 3],
     stack_top: [i32; 6],
+    flat_road: [i32; 4],
+    cs_threat: i32,
 }
 
 impl Weights6 {
@@ -686,6 +697,8 @@ impl Weights6 {
         tempo_offset: i32,
         piece: [i32; 3],
         stack_top: [i32; 6],
+        flat_road: [i32; 4],
+        cs_threat: i32,
     ) -> Self {
         Self {
             location,
@@ -693,7 +706,26 @@ impl Weights6 {
             tempo_offset,
             piece,
             stack_top,
+            flat_road,
+            cs_threat,
         }
+    }
+
+    pub fn get_genome(&self) -> Vec<i32> {
+        let loc = &self.location;
+        let mut out = vec![loc[0], loc[1], loc[2], loc[7], loc[8], loc[14]];
+        out.push(self.connectivity);
+        for x in self.piece.iter() {
+            out.push(*x);
+        }
+        for x in self.stack_top.iter() {
+            out.push(*x);
+        }
+        for x in self.flat_road.iter() {
+            out.push(*x);
+        }
+        out.push(self.cs_threat);
+        out
     }
 
     #[cfg(feature = "random")]
@@ -741,21 +773,18 @@ impl Weights6 {
 
 impl Default for Weights6 {
     fn default() -> Self {
-        let piece_arr = [
-            Evaluator6::piece_weight(Piece::WhiteFlat),
-            Evaluator6::piece_weight(Piece::WhiteWall),
-            Evaluator6::piece_weight(Piece::WhiteCap),
-        ];
-        let st1 = Evaluator6::stack_top_multiplier(Piece::WhiteFlat);
-        let st2 = Evaluator6::stack_top_multiplier(Piece::WhiteWall);
-        let st3 = Evaluator6::stack_top_multiplier(Piece::WhiteCap);
-        Self::new(
-            LOCATION_WEIGHT,
-            Evaluator6::CONNECTIVITY,
-            Evaluator6::TEMPO_OFFSET,
-            piece_arr,
-            [st1.0, st1.1, st2.0, st2.1, st3.0, st3.1],
-        )
+        Weights6 {
+            location: [
+                -11, -5, -2, -2, -5, -11, -5, 4, 9, 9, 4, -11, -2, 9, 14, 14, 9, -2, -2, 9, 14, 14,
+                9, -2, -5, 4, 9, 9, 4, -11, -11, -5, -2, -2, -5, -11,
+            ],
+            connectivity: 14,
+            tempo_offset: 150,
+            piece: [122, 57, 113],
+            stack_top: [-61, 85, -29, 99, -20, 116],
+            flat_road: [40, 22, 13, 8],
+            cs_threat: 64,
+        }
     }
 }
 
