@@ -10,43 +10,6 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use termtree::Tree;
 
-fn defender_responses<T>(board: &mut T) -> DefenderOutcome
-where
-    T: TakBoard,
-{
-    let mut moves = Vec::new();
-    let side = board.side_to_move();
-    let enemy = !board.side_to_move();
-    let has_cap = board.caps_reserve(side) > 0;
-    // Todo optimization: only check if there is only one flat threat
-    board.null_move();
-    let threat = board.can_make_road(&mut moves, None).unwrap();
-    board.rev_null_move();
-    moves.clear();
-    if threat.is_place_move() {
-        let sq = threat.src_index();
-        moves.push(GameMove::from_placement(Piece::flat(side), sq));
-        moves.push(GameMove::from_placement(Piece::wall(side), sq));
-        if has_cap {
-            moves.push(GameMove::from_placement(Piece::cap(side), sq));
-        }
-    } else {
-        let wall = crate::Piece::wall(!enemy);
-        for item in threat.quantity_iter(T::SIZE) {
-            let sq = item.index;
-            if board.index(sq).is_empty() {
-                moves.push(GameMove::from_placement(wall, sq));
-                if has_cap {
-                    moves.push(GameMove::from_placement(Piece::cap(side), sq));
-                }
-            }
-        }
-    }
-    generate_all_stack_moves(board, &mut moves);
-    assert!(moves.len() > 0); // All stack moves should already be generated
-    DefenderOutcome::Defenses(moves)
-}
-
 const INFINITY: u32 = 100_000_000;
 
 #[derive(Clone)]
@@ -479,7 +442,15 @@ where
                     self.undo_move();
                     return;
                 }
-                DefenderOutcome::Defenses(moves) => moves,
+                DefenderOutcome::Defenses(moves) => {
+                    if moves.is_empty() {
+                        let eval = Bounds::losing();
+                        child.update_bounds(eval, &mut self.bounds_table);
+                        self.undo_move();
+                        return;
+                    }
+                    moves
+                }
             }
         };
         assert!(!moves.is_empty());
@@ -511,42 +482,6 @@ where
             self.mid(best_child, depth + 1);
         }
     }
-    // fn defender_responses<T>(board: &mut T) -> DefenderOutcome
-    // where
-    //     T: TakBoard,
-    // {
-    //     let mut moves = Vec::new();
-    //     let side = board.side_to_move();
-    //     let enemy = !board.side_to_move();
-    //     let has_cap = board.caps_reserve(side) > 0;
-    //     // Todo optimization: only check if there is only one flat threat
-    //     board.null_move();
-    //     let threat = board.can_make_road(&mut moves, None).unwrap();
-    //     board.rev_null_move();
-    //     moves.clear();
-    //     if threat.is_place_move() {
-    //         let sq = threat.src_index();
-    //         moves.push(GameMove::from_placement(Piece::flat(side), sq));
-    //         moves.push(GameMove::from_placement(Piece::wall(side), sq));
-    //         if has_cap {
-    //             moves.push(GameMove::from_placement(Piece::cap(side), sq));
-    //         }
-    //     } else {
-    //         let wall = crate::Piece::wall(!enemy);
-    //         for item in threat.quantity_iter(T::SIZE) {
-    //             let sq = item.index;
-    //             if board.index(sq).is_empty() {
-    //                 moves.push(GameMove::from_placement(wall, sq));
-    //                 if has_cap {
-    //                     moves.push(GameMove::from_placement(Piece::cap(side), sq));
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     generate_all_stack_moves(board, &mut moves);
-    //     assert!(moves.len() > 0); // All stack moves should already be generated
-    //     DefenderOutcome::Defenses(moves)
-    // }
     fn defender_responses(board: &mut T, hint: Option<&[GameMove]>) -> DefenderOutcome {
         let mut moves = Vec::new();
         if let Some(m) = board.can_make_road(&mut moves, hint) {
@@ -581,7 +516,6 @@ where
             }
         }
         generate_all_stack_moves(board, &mut moves);
-        assert!(moves.len() > 0); // All stack moves should already be generated
         DefenderOutcome::Defenses(moves)
     }
     fn select_child(children: &[Child]) -> (usize, Bounds) {
