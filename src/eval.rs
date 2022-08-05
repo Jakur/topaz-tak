@@ -1,3 +1,5 @@
+use std::f32::consts::E;
+
 use super::{Bitboard, Piece, Stack};
 use crate::board::BitIndexIterator;
 use crate::board::TakBoard;
@@ -257,7 +259,7 @@ macro_rules! eval_impl {
                 let top = stack.top().unwrap();
                 let mut pw = self.piece_weight(top) + self.location[idx];
                 let (mut captive, mut friendly) = stack.captive_friendly();
-                let (c_mul, f_mul) = self.stack_top_multiplier(top);
+                // let (c_mul, f_mul) = self.stack_top_multiplier(top);
                 let mut mobility = 0;
                 let mut safety = 0;
                 match top {
@@ -323,15 +325,17 @@ macro_rules! eval_impl {
                         mobility += 2;
                     }
                 }
+                // Todo reconsider these with new method?
                 if mobility < 2 && !top.is_blocker() {
                     friendly /= 2;
                 }
                 if safety < 0 {
                     captive *= 2;
                 }
-                let friendly_score = friendly * f_mul;
-                // let friendly_score = std::cmp::min(friendly * f_mul, 300);
-                let stack_score = captive * c_mul + friendly_score + pw;
+                let stack_score = pw + self.stack_eval.eval_cap_friendly(top, captive, friendly);
+                // let friendly_score = friendly * f_mul;
+                // // let friendly_score = std::cmp::min(friendly * f_mul, 300);
+                // let stack_score = captive * c_mul + friendly_score + pw;
                 if let Color::White = top.owner() {
                     return stack_score;
                 } else {
@@ -616,7 +620,7 @@ pub struct Weights5 {
     connectivity: i32,
     tempo_offset: i32,
     piece: [i32; 3],
-    stack_top: [i32; 6],
+    stack_eval: StackEval,
     flat_road: [i32; 4],
     cs_threat: i32,
 }
@@ -636,7 +640,7 @@ impl Weights5 {
             connectivity,
             tempo_offset,
             piece,
-            stack_top,
+            stack_eval: StackEval::build_simple(stack_top),
             flat_road,
             cs_threat,
         }
@@ -648,13 +652,13 @@ impl Weights5 {
             Piece::WhiteCap | Piece::BlackCap => self.piece[2],
         }
     }
-    fn stack_top_multiplier(&self, p: Piece) -> (i32, i32) {
-        match p {
-            Piece::WhiteFlat | Piece::BlackFlat => (self.stack_top[0], self.stack_top[1]),
-            Piece::WhiteWall | Piece::BlackWall => (self.stack_top[2], self.stack_top[3]),
-            Piece::WhiteCap | Piece::BlackCap => (self.stack_top[4], self.stack_top[5]),
-        }
-    }
+    // fn stack_top_multiplier(&self, p: Piece) -> (i32, i32) {
+    //     match p {
+    //         Piece::WhiteFlat | Piece::BlackFlat => (self.stack_top[0], self.stack_top[1]),
+    //         Piece::WhiteWall | Piece::BlackWall => (self.stack_top[2], self.stack_top[3]),
+    //         Piece::WhiteCap | Piece::BlackCap => (self.stack_top[4], self.stack_top[5]),
+    //     }
+    // }
 }
 
 impl Default for Weights5 {
@@ -680,12 +684,91 @@ impl Default for Weights5 {
 }
 
 #[derive(Debug)]
+pub struct StackEval {
+    stack_top: [i32; 6],
+    flat: [i32; 36],
+    wall: [i32; 36],
+    cap: [i32; 36],
+}
+
+impl StackEval {
+    pub fn new(stack_top: [i32; 6], flat: [i32; 36], wall: [i32; 36], cap: [i32; 36]) -> Self {
+        Self {
+            stack_top,
+            flat,
+            wall,
+            cap,
+        }
+    }
+    /// Construct a new StackEval table by beginning with default valuess
+    pub fn build_simple(stack_top: [i32; 6]) -> Self {
+        let mut flat = [0; 36];
+        let mut wall = [0; 36];
+        let mut cap = [0; 36];
+        Self::fill(&mut flat, stack_top[0], stack_top[1]);
+        Self::fill(&mut wall, stack_top[2], stack_top[3]);
+        Self::fill(&mut cap, stack_top[4], stack_top[5]);
+        Self {
+            stack_top,
+            flat,
+            wall,
+            cap,
+        }
+    }
+    /// Set a special case in the value table
+    pub fn set_cap_friendly(&mut self, top: Piece, captive: usize, friendly: usize, value: i32) {
+        let idx = captive * 6 + friendly;
+        match top {
+            Piece::WhiteFlat | Piece::BlackFlat => {
+                self.flat[idx] = value;
+            }
+            Piece::WhiteWall | Piece::BlackWall => {
+                self.wall[idx] = value;
+            }
+            Piece::WhiteCap | Piece::BlackCap => {
+                self.cap[idx] = value;
+            }
+        }
+    }
+    fn fill(arr: &mut [i32; 36], cap_mul: i32, f_mul: i32) {
+        for idx in 1..36 {
+            let cap = idx / 6;
+            let friendly = idx % 6;
+            arr[idx] = cap_mul * (cap as i32) + f_mul * (friendly as i32);
+        }
+    }
+    /// Evaluate the side-agnostic value of a stack according to its captive and friendly count
+    pub fn eval_cap_friendly(&self, top: Piece, captive: i32, friendly: i32) -> i32 {
+        if captive > 5 || friendly > 5 {
+            if top.is_flat() {
+                return self.stack_top[0] * captive + self.stack_top[1] * friendly;
+            } else if top.is_wall() {
+                return self.stack_top[2] * captive + self.stack_top[3] * friendly;
+            } else {
+                return self.stack_top[4] * captive + self.stack_top[5] * friendly;
+            }
+        } else {
+            let captive = captive as usize;
+            let friendly = friendly as usize;
+            if top.is_flat() {
+                return self.flat[captive * 6 + friendly];
+            } else if top.is_wall() {
+                return self.wall[captive * 6 + friendly];
+            } else {
+                return self.cap[captive * 6 + friendly];
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Weights6 {
     location: [i32; 36],
     connectivity: i32,
     tempo_offset: i32,
     piece: [i32; 3],
-    stack_top: [i32; 6],
+    pub stack_eval: StackEval,
+    // stack_top: [i32; 6],
     flat_road: [i32; 4],
     cs_threat: i32,
 }
@@ -705,7 +788,7 @@ impl Weights6 {
             connectivity,
             tempo_offset,
             piece,
-            stack_top,
+            stack_eval: StackEval::build_simple(stack_top),
             flat_road,
             cs_threat,
         }
@@ -718,8 +801,15 @@ impl Weights6 {
         for x in self.piece.iter() {
             out.push(*x);
         }
-        for x in self.stack_top.iter() {
+        for x in self.stack_eval.stack_top.iter() {
             out.push(*x);
+        }
+        for top in [Piece::WhiteFlat, Piece::WhiteWall, Piece::WhiteCap].into_iter() {
+            for cap in 1..=5 {
+                for friendly in 0..=5 - cap {
+                    out.push(self.stack_eval.eval_cap_friendly(top, cap, friendly));
+                }
+            }
         }
         for x in self.flat_road.iter() {
             out.push(*x);
@@ -762,13 +852,13 @@ impl Weights6 {
             Piece::WhiteCap | Piece::BlackCap => self.piece[2],
         }
     }
-    fn stack_top_multiplier(&self, p: Piece) -> (i32, i32) {
-        match p {
-            Piece::WhiteFlat | Piece::BlackFlat => (self.stack_top[0], self.stack_top[1]),
-            Piece::WhiteWall | Piece::BlackWall => (self.stack_top[2], self.stack_top[3]),
-            Piece::WhiteCap | Piece::BlackCap => (self.stack_top[4], self.stack_top[5]),
-        }
-    }
+    // fn stack_top_multiplier(&self, p: Piece) -> (i32, i32) {
+    //     match p {
+    //         Piece::WhiteFlat | Piece::BlackFlat => (self.stack_top[0], self.stack_top[1]),
+    //         Piece::WhiteWall | Piece::BlackWall => (self.stack_top[2], self.stack_top[3]),
+    //         Piece::WhiteCap | Piece::BlackCap => (self.stack_top[4], self.stack_top[5]),
+    //     }
+    // }
 }
 
 impl Default for Weights6 {
@@ -781,7 +871,7 @@ impl Default for Weights6 {
             connectivity: 14,
             tempo_offset: 150,
             piece: [122, 57, 113],
-            stack_top: [-61, 85, -29, 99, -20, 116],
+            stack_eval: StackEval::build_simple([-61, 85, -29, 99, -20, 116]),
             flat_road: [40, 22, 13, 8],
             cs_threat: 64,
         }

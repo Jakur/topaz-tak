@@ -427,6 +427,8 @@ macro_rules! board_impl {
                 for (idx, stack) in out.board.iter_mut().enumerate() {
                     stack.set_index(idx);
                 }
+                out.active_player = self.active_player;
+                out.move_num = self.move_num;
                 // Set zobrist
                 out.bits = BitboardStorage::build::<Self>(&out.board);
                 out.bits.set_zobrist(zobrist::TABLE.manual_build_hash(&out));
