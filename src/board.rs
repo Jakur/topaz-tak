@@ -10,6 +10,9 @@ mod stack;
 mod zobrist;
 pub use piece::*;
 pub use stack::*;
+
+type Tile2D = (usize, usize);
+
 pub trait TakBoard:
     Position<Move = GameMove, ReverseMove = RevGameMove> + std::fmt::Debug + Clone
 {
@@ -40,6 +43,7 @@ pub trait TakBoard:
     fn active_player(&self) -> Color;
     fn swap_active_player(&mut self);
     fn row_col_static(index: usize) -> (usize, usize);
+    fn index_static(row: usize, col: usize) -> usize;
     fn try_tile(&self, row: usize, col: usize) -> Option<&Stack>;
     fn tile(&self, row: usize, col: usize) -> &Stack;
     fn tile_mut(&mut self, row: usize, col: usize) -> &mut Stack;
@@ -59,7 +63,10 @@ pub trait TakBoard:
         Self: Sized;
     fn komi(&self) -> u8;
     fn flat_diff(&self, player: Color) -> i32;
+    /// Returns a cloned board rotated counter-clockwise in standard orientation
     fn rotate(&self) -> Self;
+    /// Returns all 8 possible symmetrics of the board, including a copy of the board itself
+    fn symmetries(&self) -> Vec<Self>;
 }
 
 macro_rules! board_impl {
@@ -160,6 +167,33 @@ macro_rules! board_impl {
                 let zobrist_hash = zobrist::TABLE.manual_build_hash(&board);
                 board.bits.set_zobrist(zobrist_hash);
                 Ok(board.with_komi(komi))
+            }
+            fn transform_board<T>(&self, f: T) -> Self
+            where
+                T: Fn(Tile2D) -> Tile2D,
+            {
+                let mut out = self.clone();
+                for row in 0..Self::SIZE {
+                    for col in 0..Self::SIZE {
+                        let src = self.tile(row, col);
+                        let (dest_row, dest_col) = f((row, col));
+                        *out.tile_mut(dest_row, dest_col) = src.clone();
+                    }
+                }
+                // Fix stack index
+                for (idx, stack) in out.board.iter_mut().enumerate() {
+                    stack.set_index(idx);
+                }
+                // Set zobrist
+                out.bits = BitboardStorage::build::<Self>(&out.board);
+                out.bits.set_zobrist(zobrist::TABLE.manual_build_hash(&out));
+                out
+            }
+            fn flip_ns(&self) -> Self {
+                self.transform_board(|(row, col)| (Self::SIZE - 1 - row, col))
+            }
+            fn flip_ew(&self) -> Self {
+                self.transform_board(|(row, col)| (row, Self::SIZE - 1 - col))
             }
         }
 
@@ -314,6 +348,9 @@ macro_rules! board_impl {
             fn row_col_static(index: usize) -> (usize, usize) {
                 (index / Self::SIZE, index % Self::SIZE)
             }
+            fn index_static(row: usize, col: usize) -> usize {
+                row * Self::SIZE + col
+            }
             fn try_tile(&self, row: usize, col: usize) -> Option<&Stack> {
                 if row >= Self::SIZE || col >= Self::SIZE {
                     None
@@ -414,25 +451,20 @@ macro_rules! board_impl {
             }
 
             fn rotate(&self) -> Self {
-                let mut out = Self::new();
-                for row in 0..Self::SIZE {
-                    for col in 0..Self::SIZE {
-                        let src = self.tile(row, col);
-                        let dest_col = row;
-                        let dest_row = Self::SIZE - 1 - col;
-                        *out.tile_mut(dest_row, dest_col) = src.clone();
-                    }
-                }
-                // Fix stack index
-                for (idx, stack) in out.board.iter_mut().enumerate() {
-                    stack.set_index(idx);
-                }
-                out.active_player = self.active_player;
-                out.move_num = self.move_num;
-                // Set zobrist
-                out.bits = BitboardStorage::build::<Self>(&out.board);
-                out.bits.set_zobrist(zobrist::TABLE.manual_build_hash(&out));
-                out
+                self.transform_board(|(row, col)| (Self::SIZE - 1 - col, row))
+            }
+
+            fn symmetries(&self) -> Vec<Self> {
+                vec![
+                    self.clone(),
+                    self.flip_ns(),
+                    self.flip_ew(),
+                    self.rotate(),
+                    self.rotate().rotate(),
+                    self.rotate().rotate().rotate(),
+                    self.rotate().flip_ns(),
+                    self.rotate().flip_ew(),
+                ]
             }
         }
         impl Position for $t {

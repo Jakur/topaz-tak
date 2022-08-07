@@ -300,6 +300,93 @@ impl GameMove {
             slide_bits_count != 0 && slide_bits_count < 8 && number != 0 && number <= 8
         }
     }
+    /// Returns all symmetric versions of a move corresponding to symmetries of the board
+    pub fn symmetries<T: TakBoard>(&self) -> Vec<GameMove> {
+        vec![
+            *self,
+            self.flip_ns::<T>(),
+            self.flip_ew::<T>(),
+            self.rotate::<T>(),
+            self.rotate::<T>().rotate::<T>(),
+            self.rotate::<T>().rotate::<T>().rotate::<T>(),
+            self.rotate::<T>().flip_ns::<T>(),
+            self.rotate::<T>().flip_ew::<T>(),
+        ]
+    }
+    pub fn reverse_symmetry<T: TakBoard>(self, symmetry: usize) -> GameMove {
+        match symmetry {
+            0 => self,
+            1 => self.flip_ns::<T>(),
+            2 => self.flip_ew::<T>(),
+            3 => self.rotate::<T>().rotate::<T>().rotate::<T>(),
+            4 => self.rotate::<T>().rotate::<T>(),
+            5 => self.rotate::<T>(),
+            6 => self
+                .flip_ns::<T>()
+                .rotate::<T>()
+                .rotate::<T>()
+                .rotate::<T>(),
+            7 => self
+                .flip_ew::<T>()
+                .rotate::<T>()
+                .rotate::<T>()
+                .rotate::<T>(),
+            _ => unimplemented!(),
+        }
+    }
+    fn rotate<T: TakBoard>(&self) -> Self {
+        assert!(self.is_valid());
+        let (row, col) = T::row_col_static(self.src_index());
+        dbg!(row);
+        dbg!(col);
+        let dest_idx = T::index_static(T::SIZE - 1 - col, row);
+        dbg!(dest_idx);
+        let out = Self(self.0 & 0xFFFF_FF00).set_index(dest_idx as u32);
+        if self.is_place_move() {
+            out
+        } else {
+            let dir = match self.direction() {
+                0 => 3,
+                1 => 0,
+                2 => 1,
+                3 => 2,
+                _ => unimplemented!(),
+            };
+            out.set_direction(dir)
+        }
+    }
+    fn flip_ns<T: TakBoard>(&self) -> Self {
+        assert!(self.is_valid());
+        let (row, col) = T::row_col_static(self.src_index());
+        let dest_idx = T::index_static(T::SIZE - 1 - row, col);
+        let out = Self(self.0 & 0xFFFF_FF00).set_index(dest_idx as u32);
+        if self.is_place_move() {
+            out
+        } else {
+            let dir = match self.direction() {
+                0 => 2,
+                2 => 0,
+                d => d,
+            };
+            out.set_direction(dir)
+        }
+    }
+    fn flip_ew<T: TakBoard>(&self) -> Self {
+        assert!(self.is_valid());
+        let (row, col) = T::row_col_static(self.src_index());
+        let dest_idx = T::index_static(row, T::SIZE - 1 - col);
+        let out = Self(self.0 & 0xFFFF_FF00).set_index(dest_idx as u32);
+        if self.is_place_move() {
+            out
+        } else {
+            let dir = match self.direction() {
+                1 => 3,
+                3 => 1,
+                d => d,
+            };
+            out.set_direction(dir)
+        }
+    }
 }
 
 impl fmt::Debug for GameMove {
@@ -739,5 +826,13 @@ mod test {
         assert!(mv2.slide_bits() < 256);
         // dbg!(format!("{:#X}", mv.slide_bits()));
         // dbg!(format!("{:#X}", mv2.slide_bits()));
+    }
+
+    #[test]
+    pub fn move_rotation() {
+        let ptn = "e3";
+        let mv = GameMove::try_from_ptn_m(ptn, 6, Color::White).unwrap();
+        let rotated = mv.reverse_symmetry::<Board6>(5);
+        assert_eq!(rotated.to_ptn::<Board6>(), "d5");
     }
 }
