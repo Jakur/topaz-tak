@@ -677,18 +677,32 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
     let mut my_side = None;
     let mut board = Board6::new().with_komi(KOMI);
     let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
-    if let Some(book) = playtak_book() {
-        info = info.book(book);
-    }
+    let book = playtak_book();
+
     let eval = Weights6::default();
     // eval.add_noise();
     // let eval = Evaluator6 {};
-    loop {
+    'outer: loop {
         let message = server_recv.recv()?;
         match message {
             TeiCommand::Go(_) => {
+                if let Some(ref book) = book {
+                    let symmetries = board.symmetries();
+                    for (sym_idx, pos) in symmetries.into_iter().enumerate() {
+                        if let Some(mv_str) = book.get(&pos.hash()) {
+                            let mv = GameMove::try_from_ptn(mv_str.as_str(), &pos);
+                            if let Some(mv) = mv {
+                                let fixed_mv = mv.reverse_symmetry::<Board6>(sym_idx);
+                                if board.legal_move(fixed_mv) {
+                                    server_send.send(fixed_mv.to_ptn::<Board6>()).unwrap();
+                                    continue 'outer;
+                                }
+                            }
+                        }
+                    }
+                }
                 my_side = Some(board.side_to_move());
-                let use_time = 12_000; // Todo better time management
+                let use_time = 24_000; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, 0)
                     .take_table(&mut info)
                     .take_book(&mut info)
@@ -719,24 +733,24 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
             }
             TeiCommand::NewGame(_size) => {
                 // Record poor opening outcome
-                if last_score < -400 {
-                    if let Some(side) = my_side {
-                        let res = match side {
-                            Color::White => GameResult::BlackWin,
-                            Color::Black => GameResult::WhiteWin,
-                        };
-                        if let Some(op_book) = info.book_mut() {
-                            op_book.update(Board6::new().with_komi(KOMI), res, move_cache);
-                            save_playtak_book(op_book)?;
-                        }
-                    }
-                } else if last_score == 0 && board.move_num() >= 30 {
-                    let res = GameResult::Draw;
-                    if let Some(op_book) = info.book_mut() {
-                        op_book.update(Board6::new().with_komi(KOMI), res, move_cache);
-                        save_playtak_book(op_book)?;
-                    }
-                }
+                // if last_score < -400 {
+                //     if let Some(side) = my_side {
+                //         let res = match side {
+                //             Color::White => GameResult::BlackWin,
+                //             Color::Black => GameResult::WhiteWin,
+                //         };
+                //         if let Some(op_book) = info.book_mut() {
+                //             op_book.update(Board6::new().with_komi(KOMI), res, move_cache);
+                //             save_playtak_book(op_book)?;
+                //         }
+                //     }
+                // } else if last_score == 0 && board.move_num() >= 30 {
+                //     let res = GameResult::Draw;
+                //     if let Some(op_book) = info.book_mut() {
+                //         op_book.update(Board6::new().with_komi(KOMI), res, move_cache);
+                //         save_playtak_book(op_book)?;
+                //     }
+                // }
                 info.clear_tt();
                 board = Board6::new().with_komi(KOMI);
                 move_cache = Vec::new();
@@ -900,8 +914,7 @@ fn playtak_auth() -> Option<(String, String)> {
     Some((username?, password?))
 }
 
-fn playtak_book() -> Option<book::Book> {
-    use miniserde::json;
+fn playtak_book() -> Option<HashMap<u64, String>> {
     use std::io::Read;
     dotenv::dotenv().ok()?;
     let mut pt_book = None;
@@ -911,13 +924,19 @@ fn playtak_book() -> Option<book::Book> {
         }
     }
     let pt_book = pt_book?;
+    let mut map = HashMap::new();
     if let Ok(mut file) = std::fs::File::open(&pt_book) {
         let mut book_data = String::new();
         file.read_to_string(&mut book_data).ok()?;
-        json::from_str(&book_data).ok()
+        for line in book_data.lines() {
+            let mut split = line.split(",");
+            let hash: u64 = split.next()?.parse().ok()?;
+            let ptn = split.next()?.to_string();
+            map.insert(hash, ptn);
+        }
+        Some(map)
     } else {
-        // If a file name is set but the file does not exist, make a new book
-        Some(book::Book::new(book::BookMode::Learn, HashMap::new()))
+        None
     }
 }
 

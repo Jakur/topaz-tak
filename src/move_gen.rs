@@ -140,7 +140,7 @@ impl RevGameMove {
 /// 01FF000 Spread
 /// 0800000 Wall Smash
 /// F000000 Placement Piece
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub struct GameMove(u32);
 
 impl GameMove {

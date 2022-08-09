@@ -633,8 +633,10 @@ where
                     Status::NotTinue => "n",
                     Status::Unknown => "u",
                 };
-                writeln!(writer, "{} 1.{}", hist.join(";"), ch)?;
-                self.rebuild(writer, hist, zobrist_hist)?;
+                if ch != "u" {
+                    writeln!(writer, "{} 1.{}", hist.join(";"), ch)?;
+                    self.rebuild(writer, hist, zobrist_hist)?;
+                }
             }
             self.board.reverse_move(rev);
             hist.pop();
