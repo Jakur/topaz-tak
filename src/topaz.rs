@@ -59,7 +59,7 @@ pub fn main() {
         } else if arg1 == "white" {
             play_game_cmd(true);
         } else if arg1 == "analyze" {
-            let game = build_tps(&args).unwrap();
+            let game = build_tps(&args[2..]).unwrap();
             let mut info = SearchInfo::new(20, 2 << 20);
             match game {
                 TakGame::Standard5(mut board) => {
@@ -130,7 +130,7 @@ pub fn main() {
                 .expect("Failed to write book");
         } else if arg1 == "selfplay" {
             let mut moves = Vec::new();
-            let mut game = build_tps(&args).unwrap();
+            let mut game = build_tps(&args[2..]).unwrap();
             let mut info = SearchInfo::new(20, 2 << 20).time_bank(TimeBank::flat(12_000));
             while game.game_result().is_none() {
                 match game {
@@ -218,21 +218,73 @@ pub fn main() {
             println!("Time: {} ms", time.elapsed().as_millis());
             return;
         } else if arg1 == "tinue" {
-            let game = build_tps(&args).unwrap();
-            match game {
+            let mut attacker = true;
+            let mut nodes = usize::MAX;
+            let mut svg = true;
+            let game = if let Ok(g) = build_tps(&args[2..]) {
+                g
+            } else {
+                let mut opts = Options::new();
+                opts.optopt("t", "tps", "Set position tps", "TPS");
+                opts.optopt("n", "nodes", "Sets the node limit for the search", "NODES");
+                opts.optflag("h", "help", "Print this help menu");
+                opts.optflag("d", "defender", "Set flag if it's the defender's move");
+                opts.optflag("i", "interactive", "Use cmd interface instead of svg");
+                // let join = args.join(" ");
+                // let data = join.split("tinue ").nth(1).unwrap();
+                // let vals: Vec<_> = data.split(";").collect();
+                let matches = match opts.parse(&args[2..]) {
+                    Ok(m) => m,
+                    Err(f) => {
+                        panic!("{}", f.to_string())
+                    }
+                };
+                if matches.opt_present("h") {
+                    println!("{}", opts.usage(""));
+                    return;
+                }
+                dbg!(&args);
+                let t = matches.opt_str("t").and_then(|x| {
+                    let slice: Vec<_> = x.split_whitespace().collect();
+                    build_tps(&slice).ok()
+                });
+                // dbg!(&tps);
+                nodes = matches
+                    .opt_str("n")
+                    .map(|x| x.trim().parse().unwrap())
+                    .unwrap_or(usize::MAX);
+                attacker = !matches.opt_present("d");
+                svg = !matches.opt_present("i");
+                if let Some(game) = t {
+                    game // If the game was sent as a single quoted arg
+                } else {
+                    // If tps is sent as three space separated args
+                    args.windows(3).find_map(|s| build_tps(s).ok()).unwrap()
+                }
+            };
+            let res = match game {
                 TakGame::Standard5(board) => {
-                    let search = crate::search::proof::TinueSearch::new(board);
-                    proof_interactive(search).unwrap();
+                    let search = crate::search::proof::TinueSearch::new(board)
+                        .attacker(attacker)
+                        .limit(nodes);
+                    proof_interactive(search, svg)
                 }
                 TakGame::Standard6(board) => {
-                    let search = crate::search::proof::TinueSearch::new(board.clone());
-                    proof_interactive(search).unwrap();
+                    let search = crate::search::proof::TinueSearch::new(board.clone())
+                        .attacker(attacker)
+                        .limit(nodes);
+                    proof_interactive(search, svg)
                 }
                 TakGame::Standard7(board) => {
-                    let search = crate::search::proof::TinueSearch::new(board);
-                    proof_interactive(search).unwrap();
+                    let search = crate::search::proof::TinueSearch::new(board)
+                        .attacker(attacker)
+                        .limit(nodes);
+                    proof_interactive(search, svg)
                 }
                 _ => todo!(),
+            };
+            if res.is_err() {
+                println!("Search failed, perhaps max_nodes was exceeded?");
             }
             return;
         } else if arg1 == "playtak" {
@@ -291,10 +343,10 @@ fn play_book_game(st: &[&str], book: book::Book) -> (Vec<GameMove>, GameResult) 
     return (moves, board.game_result().unwrap());
 }
 
-fn build_tps(args: &[String]) -> Result<TakGame> {
+fn build_tps<S: AsRef<str>>(args: &[S]) -> Result<TakGame> {
     let mut rest = String::new();
-    for s in args[2..].iter() {
-        rest.push_str(s);
+    for s in args.iter() {
+        rest.push_str(s.as_ref());
         rest.push_str(" ");
     }
     rest.pop();
@@ -369,9 +421,11 @@ fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> 
     Ok(vec)
 }
 
-fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>) -> Result<()> {
+fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>, svg: bool) -> Result<()> {
     let time = Instant::now();
-    let tinue = search.is_tinue().unwrap();
+    let tinue = search
+        .is_tinue()
+        .ok_or_else(|| anyhow::anyhow!("Search ended improperly"))?;
     if tinue {
         println!("Tinue Found!")
     } else {
@@ -384,66 +438,77 @@ fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>) -> Result<()> {
 
     let seconds = time.elapsed().as_secs();
     println!("Done in {} seconds", seconds);
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .open("proof-data.txt")?;
-    let mut file = BufWriter::new(file);
-    let mut hist = Vec::new();
-    let mut zobrist_hist = std::collections::HashSet::new();
-    search.rebuild(&mut file, &mut hist, &mut zobrist_hist)?;
-    // let mut interactive = crate::search::proof::InteractiveSearch::new(search);
-    // let mut first = true;
-    // interactive.print_root();
-    // loop {
-    //     let mut opts = Options::new();
-    //     let mut buffer = String::new();
-    //     // opts.optopt("o", "", "set output file name", "NAME");
-    //     opts.optopt("m", "move", "Move the root of the tree", "PTN/PTN");
-    //     opts.optopt(
-    //         "e",
-    //         "expand",
-    //         "Expand the tree of a certain move",
-    //         "PTN/PTN",
-    //     );
-    //     // opts.optflag("v", "verbose", "Expand all children, even explored ones");
-    //     opts.optflag("h", "help", "Print the help text");
-    //     opts.optflag("q", "quit", "Quit");
-    //     opts.optflag(
-    //         "r",
-    //         "reset",
-    //         "Resets the view back to the default root view",
-    //     );
-    //     if first {
-    //         println!("{}", opts.usage(""));
-    //         first = false;
-    //     }
-    //     io::stdin().lock().read_line(&mut buffer)?;
-    //     let matches = opts.parse(buffer.split_whitespace())?;
-    //     if matches.opt_present("q") {
-    //         break;
-    //     }
-    //     if matches.opt_present("h") {
-    //         println!("{}", opts.usage(""));
-    //         continue;
-    //     }
-    //     if matches.opt_present("r") {
-    //         interactive.reset_expansion();
-    //         interactive.reset_view();
-    //     }
-    //     if let Some(v) = matches.opt_str("m") {
-    //         let res = interactive.change_view(&v);
-    //         if res.is_err() {
-    //             println!("Failed to change view, resetting to default!");
-    //             interactive.reset_view();
-    //         }
-    //     }
-    //     if let Some(s) = matches.opt_str("e") {
-    //         interactive.expand_line(s.split('/').collect());
-    //     }
-    //     // interactive.expand_line(vec!["c1".to_string(), "b1>".to_string()]);
-    //     interactive.print_root();
-    // }
+    if svg {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open("proof-data.txt")?;
+        let mut file = BufWriter::new(file);
+        let mut hist = Vec::new();
+        let mut zobrist_hist = std::collections::HashSet::new();
+        search
+            .rebuild(
+                &mut file,
+                &mut hist,
+                &mut zobrist_hist,
+                search.is_attacker(),
+            )
+            .unwrap();
+    } else {
+        let mut interactive = crate::search::proof::InteractiveSearch::new(search);
+        let mut first = true;
+        interactive.print_root();
+        loop {
+            let mut opts = Options::new();
+            let mut buffer = String::new();
+            // opts.optopt("o", "", "set output file name", "NAME");
+            opts.optopt("m", "move", "Move the root of the tree", "PTN/PTN");
+            opts.optopt(
+                "e",
+                "expand",
+                "Expand the tree of a certain move",
+                "PTN/PTN",
+            );
+            // opts.optflag("v", "verbose", "Expand all children, even explored ones");
+            opts.optflag("h", "help", "Print the help text");
+            opts.optflag("q", "quit", "Quit");
+            opts.optflag(
+                "r",
+                "reset",
+                "Resets the view back to the default root view",
+            );
+            if first {
+                println!("{}", opts.usage(""));
+                first = false;
+            }
+            io::stdin().lock().read_line(&mut buffer)?;
+            let matches = opts.parse(buffer.split_whitespace())?;
+            if matches.opt_present("q") {
+                break;
+            }
+            if matches.opt_present("h") {
+                println!("{}", opts.usage(""));
+                continue;
+            }
+            if matches.opt_present("r") {
+                interactive.reset_expansion();
+                interactive.reset_view();
+            }
+            if let Some(v) = matches.opt_str("m") {
+                let res = interactive.change_view(&v);
+                if res.is_err() {
+                    println!("Failed to change view, resetting to default!");
+                    interactive.reset_view();
+                }
+            }
+            if let Some(s) = matches.opt_str("e") {
+                interactive.expand_line(s.split('/').collect());
+            }
+            // interactive.expand_line(vec!["c1".to_string(), "b1>".to_string()]);
+            interactive.print_root();
+        }
+    }
+
     Ok(())
 }
 

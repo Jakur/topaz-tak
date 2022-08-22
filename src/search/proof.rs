@@ -1,5 +1,4 @@
 use super::*;
-use super::{SearchData, SearchInfo};
 use crate::board::TakBoard;
 use crate::move_gen::generate_all_moves;
 use crate::Piece;
@@ -340,6 +339,7 @@ where
             max_nodes: usize::MAX,
         }
     }
+    /// Searches for tinue in the provided position, returning None if the search aborted early
     pub fn is_tinue(&mut self) -> Option<bool> {
         let mut root = Child::new(Bounds::root(), GameMove::null_move(), self.board.hash());
         self.mid(&mut root, 0);
@@ -352,22 +352,40 @@ where
             return None;
         }
         if root.delta() == INFINITY {
-            Some(true)
+            Some(self.attacker == self.board.side_to_move())
         } else {
-            Some(false)
+            Some(self.attacker != self.board.side_to_move())
         }
     }
+    /// Returns true if the tinue search starts with the attacker's move
+    pub fn is_attacker(&self) -> bool {
+        self.attacker == self.board.side_to_move()
+    }
+    /// Applies a limit of max_nodes in a builder pattern
     pub fn limit(mut self, max_nodes: usize) -> Self {
         self.max_nodes = max_nodes;
         self
     }
+    /// Suppresses CLI output of the search in a builder pattern
     pub fn quiet(mut self) -> Self {
         self.quiet = true;
         self
     }
+    /// Set whether the attacker is the next player in a builder pattern
+    pub fn attacker(mut self, next_side: bool) -> Self {
+        let color = if next_side {
+            self.board.side_to_move()
+        } else {
+            !self.board.side_to_move()
+        };
+        self.attacker = color;
+        return self;
+    }
+    /// Returns true if the search aborted due to exceeding max_nodes before finding a solution
     pub fn aborted(&self) -> bool {
         self.nodes > self.max_nodes
     }
+    /// Crudely returns the principal variation by looking at the last refuted line
     pub fn principal_variation(&mut self) -> Vec<GameMove> {
         let mut hist = Vec::new();
         let mut pv = Vec::new();
@@ -605,8 +623,8 @@ where
         writer: &mut W,
         hist: &mut Vec<String>,
         zobrist_hist: &mut HashSet<u64>,
+        attacker: bool,
     ) -> Result<()> {
-        let attacker = hist.len() % 2 == 0;
         let mut moves = Vec::new();
         if let Some(mv) = self.board.can_make_road(&mut moves, None) {
             moves = vec![mv];
@@ -627,7 +645,7 @@ where
                 continue;
             }
             if let Some(bounds) = self.bounds_table.get(&zobrist) {
-                let status = get_status(bounds, hist.len());
+                let status = get_status(bounds, attacker);
                 let ch = match status {
                     Status::Tinue => "t",
                     Status::NotTinue => "n",
@@ -635,7 +653,7 @@ where
                 };
                 if ch != "u" {
                     writeln!(writer, "{} 1.{}", hist.join(";"), ch)?;
-                    self.rebuild(writer, hist, zobrist_hist)?;
+                    self.rebuild(writer, hist, zobrist_hist, !attacker)?;
                 }
             }
             self.board.reverse_move(rev);
@@ -663,7 +681,7 @@ impl std::ops::Not for Status {
     }
 }
 
-fn get_status(bounds: &Bounds, depth: usize) -> Status {
+fn get_status(bounds: &Bounds, attacker: bool) -> Status {
     let solved = if bounds.phi == INFINITY {
         Status::Tinue
     } else if bounds.phi == 0 {
@@ -671,7 +689,7 @@ fn get_status(bounds: &Bounds, depth: usize) -> Status {
     } else {
         Status::Unknown
     };
-    if depth % 2 == 1 {
+    if attacker {
         solved
     } else {
         !solved
