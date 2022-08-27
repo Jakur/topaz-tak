@@ -67,6 +67,8 @@ pub trait TakBoard:
     fn rotate(&self) -> Self;
     /// Returns all 8 possible symmetrics of the board, including a copy of the board itself
     fn symmetries(&self) -> Vec<Self>;
+    /// Reset all stack indices and the zobrist hash of the position
+    fn reset_stacks(&mut self);
 }
 
 macro_rules! board_impl {
@@ -180,13 +182,7 @@ macro_rules! board_impl {
                         *out.tile_mut(dest_row, dest_col) = src.clone();
                     }
                 }
-                // Fix stack index
-                for (idx, stack) in out.board.iter_mut().enumerate() {
-                    stack.set_index(idx);
-                }
-                // Set zobrist
-                out.bits = BitboardStorage::build::<Self>(&out.board);
-                out.bits.set_zobrist(zobrist::TABLE.manual_build_hash(&out));
+                out.reset_stacks();
                 out
             }
             fn flip_ns(&self) -> Self {
@@ -465,6 +461,17 @@ macro_rules! board_impl {
                     self.rotate().flip_ns(),
                     self.rotate().flip_ew(),
                 ]
+            }
+
+            fn reset_stacks(&mut self) {
+                // Fix stack index
+                for (idx, stack) in self.board.iter_mut().enumerate() {
+                    stack.set_index(idx);
+                }
+                // Set zobrist
+                self.bits = BitboardStorage::build::<Self>(&self.board);
+                self.bits
+                    .set_zobrist(zobrist::TABLE.manual_build_hash(self));
             }
         }
         impl Position for $t {
