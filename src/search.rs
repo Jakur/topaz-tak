@@ -521,7 +521,7 @@ where
         // }
         // road_check.clear();
     }
-
+    // Investigate prevalence of null moves in the pv table. It seems to be very rare.
     let mut pv_entry: Option<HashEntry> = None;
     let pv_entry_foreign = info.lookup_move(board);
 

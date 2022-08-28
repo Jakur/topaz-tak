@@ -478,6 +478,9 @@ pub fn find_move_limits<T: TakBoard>(board: &T, st_index: usize) -> MoveLimits {
 }
 
 pub fn legal_stack_move<T: TakBoard>(board: &T, game_move: GameMove) -> bool {
+    if !game_move.is_valid() {
+        return false;
+    }
     // Assume the game_move is a legal move on some board.
     // Meaning, e.g. it obeys wall crushing stack movement rules
     let src_index = game_move.src_index();
