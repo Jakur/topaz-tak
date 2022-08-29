@@ -1,4 +1,5 @@
 use crate::GameMove;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 // transposition table parameters
 const TT_BUCKET_SIZE: usize = 5; // how many HashEntries for each HashTable slot
@@ -30,8 +31,9 @@ impl HashTable {
     pub fn clear(&mut self) {
         for i in 0..self.size {
             for e_i in 0..TT_BUCKET_SIZE {
-                self.buckets[i].entries[e_i].ply = 0;
-                self.buckets[i].entries[e_i].depth_flags &= !DEPTH_MASK;
+                self.buckets[i].entries[e_i].clear();
+                // self.buckets[i].entries[e_i].ply = 0;
+                // self.buckets[i].entries[e_i].depth_flags &= !DEPTH_MASK;
             }
         }
     }
@@ -41,7 +43,7 @@ impl HashTable {
         for i in 0..1000 {
             let bucket = &self.buckets[i];
             for e_i in 0..TT_BUCKET_SIZE {
-                if bucket.entries[e_i].ply > 0 {
+                if bucket.entries[e_i].ply() > 0 {
                     hits += 1;
                 }
             }
@@ -62,13 +64,13 @@ impl HashTable {
     // put for 2 way hash table (bucket size == 2)
     fn put_2way(&mut self, hash: u64, entry: HashEntry) {
         let bucket = &mut self.buckets[hash as usize % self.size];
-        let depth_entry = bucket.entries[0];
+        let depth_entry: HashEntry = (&bucket.entries[0]).into();
         if entry.depth() > depth_entry.depth()
             || entry.depth() + entry.ply > depth_entry.depth() + depth_entry.ply + TT_DISCARD_AGE
         {
-            bucket.entries[0] = entry;
+            bucket.entries[0] = entry.into();
         } else {
-            bucket.entries[1] = entry;
+            bucket.entries[1] = entry.into();
         }
     }
 
@@ -80,11 +82,11 @@ impl HashTable {
         let mut worst_idx = 0;
         let mut worst_score = 10000;
         for i in 0..TT_BUCKET_SIZE {
-            let cur_entry = bucket.entries[i];
+            let cur_entry: HashEntry = (&bucket.entries[i]).into();
             // we never want 2 entries of same position!!!
             if cur_entry.check_hash(hash) {
                 if entry.depth() >= cur_entry.depth() {
-                    bucket.entries[i] = entry;
+                    bucket.entries[i] = entry.into();
                 }
                 return;
             }
@@ -94,40 +96,116 @@ impl HashTable {
                 worst_idx = i;
             }
         }
-        bucket.entries[worst_idx] = entry;
+        bucket.entries[worst_idx] = entry.into();
     }
 
     #[inline]
-    pub fn get(&self, hash: &u64) -> Option<&HashEntry> {
+    pub fn get(&self, hash: &u64) -> Option<HashEntry> {
         let slot: usize = *hash as usize % self.size;
         for i in 0..TT_BUCKET_SIZE {
-            if self.buckets[slot].entries[i].check_hash(*hash) {
-                return Some(&self.buckets[slot].entries[i]);
+            let entry: HashEntry = (&self.buckets[slot].entries[i]).into();
+            if entry.check_hash(*hash) {
+                return Some(entry);
             }
         }
         None
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 #[repr(align(32))]
 struct HashBucket {
-    entries: [HashEntry; TT_BUCKET_SIZE],
+    entries: [ConcurrentEntry; TT_BUCKET_SIZE],
 }
 
 impl HashBucket {
-    fn new() -> Self {
+    const fn new() -> Self {
+        let entries = [
+            ConcurrentEntry::empty(),
+            ConcurrentEntry::empty(),
+            ConcurrentEntry::empty(),
+            ConcurrentEntry::empty(),
+            ConcurrentEntry::empty(),
+        ];
+        Self { entries }
+    }
+}
+
+struct ConcurrentEntry {
+    hash_and_move: AtomicU64,
+    score_flags: AtomicU32,
+}
+
+impl ConcurrentEntry {
+    fn new(hash_and_move: AtomicU64, score_flags: AtomicU32) -> Self {
         Self {
-            entries: [HashEntry::empty(); TT_BUCKET_SIZE],
+            hash_and_move,
+            score_flags,
+        }
+    }
+    const fn empty() -> Self {
+        Self {
+            hash_and_move: AtomicU64::new(0),
+            score_flags: AtomicU32::new((ALPHA_FLAG as u32) << 8),
+        }
+    }
+    fn clear(&self) {
+        const MASK: u32 = 0xFFFF_0000 | (!(DEPTH_MASK as u32) << 8);
+        self.score_flags.fetch_and(MASK, Ordering::Relaxed);
+    }
+    fn ply(&self) -> u32 {
+        self.score_flags.load(Ordering::Relaxed) & 0xFF
+    }
+}
+
+impl Clone for ConcurrentEntry {
+    fn clone(&self) -> Self {
+        Self {
+            hash_and_move: AtomicU64::new(self.hash_and_move.load(Ordering::Relaxed)),
+            score_flags: AtomicU32::new(self.score_flags.load(Ordering::Relaxed)),
         }
     }
 }
 
-// right now this totals to 16 bytes, extended to 24 bytes for 8 byte memory alignment.
-// it would be nice to get this into 16 bytes!
-// this would be not only mean less memory usage, but also be much faster because of
-// cache utilization. each slot (2 entries) would be loaded with a single cache line.
-#[derive(Clone, Copy)]
+impl From<HashEntry> for ConcurrentEntry {
+    fn from(e: HashEntry) -> Self {
+        let mut first = (e.hash_hi as u64) << 32;
+        first |= e.game_move.raw() as u64;
+        let hash_and_move = AtomicU64::new(first);
+        let mut second = (e.score_val as u32) << 16;
+        second |= (e.depth_flags as u32) << 8;
+        second |= e.ply as u32;
+        let score_flags = AtomicU32::new(second);
+        Self {
+            hash_and_move,
+            score_flags,
+        }
+    }
+}
+
+impl From<&ConcurrentEntry> for HashEntry {
+    fn from(e: &ConcurrentEntry) -> Self {
+        let val = e.hash_and_move.load(Ordering::Relaxed);
+        let hash_hi = (val >> 32) as u32;
+        let game_move = GameMove::from_raw((val & 0xFFFF_FFFF) as u32);
+        let val2 = e.score_flags.load(Ordering::Relaxed);
+        let score_val = val2 as i32 >> 16;
+        let depth_flags = ((val2 & 0xFF00) >> 8) as u8;
+        let ply = (val2 & 0xFF) as u8;
+        HashEntry {
+            hash_hi,
+            game_move,
+            score_val,
+            depth_flags,
+            ply,
+        }
+    }
+}
+
+// Right now this totals to 16 bytes.
+// This means not only less memory usage, but is also much faster because of
+// cache utilization. each slot (2 entries) is loaded with a single cache line.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HashEntry {
     hash_hi: u32,            // 4 bytes (~3 low bytes are encoded in the HashTable idx)
     pub game_move: GameMove, // 4 bytes
@@ -141,11 +219,11 @@ const BETA_FLAG: u8 = 0b01000000;
 const DEPTH_MASK: u8 = 0b00111111;
 
 impl HashEntry {
-    fn empty() -> Self {
+    const fn empty() -> Self {
         Self::new(1, GameMove::null_move(), ScoreCutoff::Alpha(0), 0, 0)
     }
 
-    pub fn new(
+    pub const fn new(
         hash: u64,
         game_move: GameMove,
         score: ScoreCutoff,
@@ -196,7 +274,6 @@ impl HashEntry {
         self.hash_hi == (hash >> 32) as u32
     }
 }
-
 #[derive(Clone, Copy)]
 pub enum ScoreCutoff {
     Alpha(i32),
@@ -210,5 +287,24 @@ mod test {
     #[test]
     fn check_size() {
         assert_eq!(std::mem::size_of::<HashEntry>(), 16);
+    }
+    #[test]
+    fn concurrent() {
+        let mut m = HashEntry::new(
+            0xDEADBEEF_6969,
+            GameMove::from_placement(crate::Piece::WhiteCap, 15),
+            ScoreCutoff::Beta(-10000),
+            6,
+            16,
+        );
+        let x: ConcurrentEntry = m.into();
+        let m2: HashEntry = (&x).into();
+        assert_eq!(m, m2);
+        x.clear();
+        m.ply = 0;
+        m.depth_flags &= !DEPTH_MASK;
+        let m2: HashEntry = (&x).into();
+        assert_eq!(m, m2);
+        assert_eq!(HashEntry::empty(), (&ConcurrentEntry::empty()).into());
     }
 }

@@ -158,7 +158,7 @@ impl GameMove {
     /// so it should only appear when explicitly made for low level data structures or advanced
     /// search heuristics, i.e. the [null move heuristic](https://www.chessprogramming.org/Null_Move_Pruning) in alpha beta search.
     /// In situations where a null move might arise, it must be checked for explicitly.
-    pub fn null_move() -> Self {
+    pub const fn null_move() -> Self {
         Self(0)
     }
     /// Returns true if this is a placement move, i.e. not a stack move or null move.
@@ -386,6 +386,12 @@ impl GameMove {
             };
             out.set_direction(dir)
         }
+    }
+    pub(crate) fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+    pub(crate) fn raw(&self) -> u32 {
+        self.0
     }
 }
 

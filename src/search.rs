@@ -144,7 +144,7 @@ impl SearchInfo {
     fn store_move<E: TakBoard>(&mut self, position: &E, entry: HashEntry) {
         self.pv_table.put(position.hash(), entry);
     }
-    fn lookup_move<E: TakBoard>(&mut self, position: &E) -> Option<&HashEntry> {
+    fn lookup_move<E: TakBoard>(&mut self, position: &E) -> Option<HashEntry> {
         self.pv_table.get(&position.hash())
     }
     pub fn pv_move<E: TakBoard>(&mut self, position: &E) -> Option<GameMove> {
@@ -526,7 +526,7 @@ where
     let pv_entry_foreign = info.lookup_move(board);
 
     if let Some(entry) = pv_entry_foreign {
-        pv_entry = Some(*entry); // save for move lookup
+        pv_entry = Some(entry); // save for move lookup
     }
 
     if let Some(entry) = pv_entry {
@@ -629,7 +629,7 @@ where
         let pv_entry_foreign_2 = info.lookup_move(board);
 
         if let Some(entry) = pv_entry_foreign_2 {
-            pv_entry = Some(*entry);
+            pv_entry = Some(entry);
         }
     }
 
