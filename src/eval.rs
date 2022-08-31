@@ -1,5 +1,3 @@
-use std::f32::consts::E;
-
 use super::{Bitboard, Piece, Stack};
 use crate::board::BitIndexIterator;
 use crate::board::TakBoard;
@@ -7,11 +5,83 @@ use crate::board::{Board5, Board6};
 use crate::Color;
 use crate::Position;
 
+use std::fs::File;
+
+lazy_static::lazy_static!(
+    pub static ref NN6: incremental::Weights = {
+        let f_name = nn_file().expect("Could not read NN variable from env");
+        incremental::Weights::from_file(File::open(f_name).unwrap()).unwrap()
+    };
+);
+
+fn nn_file() -> Option<String> {
+    dotenv::dotenv().ok()?;
+    let mut path = None;
+    for (key, value) in std::env::vars() {
+        if key == "NN" {
+            path = Some(value);
+        }
+    }
+    path
+}
+
+mod incremental;
+
 pub trait Evaluator {
     type Game: TakBoard;
-    fn evaluate(&self, game: &Self::Game, depth: usize) -> i32;
+    fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32;
     fn eval_stack(&self, game: &Self::Game, index: usize, stack: &Stack) -> i32;
     fn eval_components(&self, game: &Self::Game) -> EvalComponents;
+}
+
+pub struct NNUE6 {
+    incremental_weights: incremental::Incremental,
+    old: Vec<u16>,
+}
+
+impl Default for NNUE6 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NNUE6 {
+    pub fn new() -> Self {
+        let incremental_weights = NN6.build_incremental(&[]);
+        let old = Vec::new();
+        Self {
+            incremental_weights,
+            old,
+        }
+    }
+}
+
+impl Evaluator for NNUE6 {
+    type Game = Board6;
+
+    fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
+        const TEMPO_OFFSET: i32 = 150;
+        let mut new = incremental::nn_repr(game);
+        self.incremental_weights.update_diff(&self.old, &new, &NN6);
+        let score = NN6.incremental_forward(
+            &self.incremental_weights,
+            game.side_to_move() == Color::White,
+        );
+        std::mem::swap(&mut new, &mut self.old);
+        if depth % 2 == 1 {
+            score + TEMPO_OFFSET
+        } else {
+            score
+        }
+    }
+
+    fn eval_stack(&self, _game: &Self::Game, _index: usize, _stack: &Stack) -> i32 {
+        unimplemented!()
+    }
+
+    fn eval_components(&self, _game: &Self::Game) -> EvalComponents {
+        unimplemented!()
+    }
 }
 
 pub struct Evaluator6 {}
@@ -55,7 +125,7 @@ macro_rules! tinue_eval {
         impl Evaluator for $weights {
             type Game = $board;
             #[inline(never)]
-            fn evaluate(&self, game: &Self::Game, _depth: usize) -> i32 {
+            fn evaluate(&mut self, game: &Self::Game, _depth: usize) -> i32 {
                 let attacker = self.attacker;
                 let mut score = 100 - 5 * game.pieces_reserve(attacker) as i32;
                 score -= 10 * game.bits().blocker_pieces(!attacker).pop_count() as i32;
@@ -89,7 +159,7 @@ macro_rules! eval_impl {
         impl Evaluator for $weights {
             type Game = $board;
             #[inline(never)]
-            fn evaluate(&self, game: &Self::Game, depth: usize) -> i32 {
+            fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
                 let mut score = 0;
 
                 for (idx, stack) in game.board.iter().enumerate() {

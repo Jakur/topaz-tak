@@ -299,7 +299,7 @@ where
     }
 }
 
-pub fn search<T, E>(board: &mut T, eval: &E, info: &mut SearchInfo) -> Option<SearchOutcome<T>>
+pub fn search<T, E>(board: &mut T, eval: &mut E, info: &mut SearchInfo) -> Option<SearchOutcome<T>>
 where
     T: TakBoard,
     E: Evaluator<Game = T>,
@@ -443,7 +443,12 @@ impl SearchData {
     }
 }
 
-fn alpha_beta<T, E>(board: &mut T, evaluator: &E, info: &mut SearchInfo, data: SearchData) -> i32
+fn alpha_beta<T, E>(
+    board: &mut T,
+    evaluator: &mut E,
+    info: &mut SearchInfo,
+    data: SearchData,
+) -> i32
 where
     T: TakBoard,
     E: Evaluator<Game = T>,
@@ -973,7 +978,7 @@ fn gen_and_score<T>(
 
 fn q_search<T, E>(
     board: &mut T,
-    evaluator: &E,
+    evaluator: &mut E,
     info: &mut SearchInfo,
     mut alpha: i32,
     beta: i32,
@@ -1075,7 +1080,7 @@ where
 
 /// A naive minimax function without pruning used for debugging and benchmarking
 #[cfg(test)]
-pub fn root_minimax<T, E>(board: &mut T, eval: &E, depth: u16) -> (Option<GameMove>, i32)
+pub fn root_minimax<T, E>(board: &mut T, eval: &mut E, depth: u16) -> (Option<GameMove>, i32)
 where
     T: TakBoard,
     E: Evaluator<Game = T>,
@@ -1099,7 +1104,11 @@ where
     (best_move, best_eval)
 }
 #[cfg(test)]
-fn naive_minimax<T: TakBoard, E: Evaluator<Game = T>>(board: &mut T, eval: &E, depth: u16) -> i32 {
+fn naive_minimax<T: TakBoard, E: Evaluator<Game = T>>(
+    board: &mut T,
+    eval: &mut E,
+    depth: u16,
+) -> i32 {
     match board.game_result() {
         Some(GameResult::WhiteWin) => {
             // dbg!("Found a winning position for white");
@@ -1152,8 +1161,8 @@ mod test {
     fn small_minimax() {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let eval = Weights6::default();
-        let (mv, score) = root_minimax(&mut board, &eval, 2);
+        let mut eval = Weights6::default();
+        let (mv, score) = root_minimax(&mut board, &mut eval, 2);
         assert!(score != LOSE_SCORE);
         let only_move = GameMove::try_from_ptn("c5-", &board);
         assert_eq!(mv, only_move);
@@ -1164,29 +1173,29 @@ mod test {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut info = SearchInfo::new(4, 50000);
-        let eval = Weights6::default();
-        search(&mut board, &eval, &mut info);
+        let mut eval = Weights6::default();
+        search(&mut board, &mut eval, &mut info);
         let tps5 = "x4,1/x3,1,x/x,1,2C,1,2/x,2,1C,2,x/2,x4 1 6";
         let mut board = Board5::try_from_tps(tps5).unwrap();
         let mut info = SearchInfo::new(3, 50000);
-        let eval = Weights5::default();
-        search(&mut board, &eval, &mut info);
+        let mut eval = Weights5::default();
+        search(&mut board, &mut eval, &mut info);
     }
     #[test]
     fn unk_puzzle() {
         let tps = "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27";
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let eval = Weights6::default();
+        let mut eval = Weights6::default();
         let mut info = SearchInfo::new(5, 100000);
-        search(&mut board, &eval, &mut info);
+        search(&mut board, &mut eval, &mut info);
     }
     #[test]
     fn no_capstone_zero_flats() {
         let tps = "2,1,2,1,1,1/2,1,2,2,2,2/1,2,1,1,1,2/1,2,2,1,1,2/1,11112,1112,12,11112,1/1,1,2121,x,2,x 2 33";
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let eval = Weights6::default();
+        let mut eval = Weights6::default();
         eval.evaluate(&board, 2);
         let mut info = SearchInfo::new(5, 1 << 14);
-        search(&mut board, &eval, &mut info);
+        search(&mut board, &mut eval, &mut info);
     }
 }

@@ -63,12 +63,13 @@ pub fn main() {
             let mut info = SearchInfo::new(20, 2 << 20);
             match game {
                 TakGame::Standard5(mut board) => {
-                    let eval = Weights5::default();
-                    search(&mut board, &eval, &mut info);
+                    let mut eval = Weights5::default();
+                    search(&mut board, &mut eval, &mut info);
                 }
                 TakGame::Standard6(mut board) => {
-                    let eval = Weights6::default();
-                    search(&mut board, &eval, &mut info);
+                    // let mut eval = Weights6::default();
+                    let mut eval = eval::NNUE6::new();
+                    search(&mut board, &mut eval, &mut info);
                 }
                 _ => todo!(),
             }
@@ -135,8 +136,8 @@ pub fn main() {
             while game.game_result().is_none() {
                 match game {
                     TakGame::Standard5(ref mut board) => {
-                        let eval = Weights5::default();
-                        let outcome = search(board, &eval, &mut info).unwrap();
+                        let mut eval = Weights5::default();
+                        let outcome = search(board, &mut eval, &mut info).unwrap();
                         println!("{}", outcome.best_move().unwrap());
                         let mv = outcome.next().unwrap();
                         board.do_move(mv);
@@ -147,8 +148,8 @@ pub fn main() {
                         moves.push(mv);
                     }
                     TakGame::Standard6(ref mut board) => {
-                        let eval = Weights6::default();
-                        let outcome = search(board, &eval, &mut info).unwrap();
+                        let mut eval = Weights6::default();
+                        let outcome = search(board, &mut eval, &mut info).unwrap();
                         println!("{}", outcome.best_move().unwrap());
                         let mv = outcome.next().unwrap();
                         board.do_move(mv);
@@ -316,7 +317,7 @@ pub fn main() {
 }
 
 fn play_book_game(st: &[&str], book: book::Book) -> (Vec<GameMove>, GameResult) {
-    let eval = Weights6::default();
+    let mut eval = Weights6::default();
     let mut moves = Vec::new();
     let mut board = Board6::new().with_komi(4);
     for mv in st {
@@ -329,7 +330,7 @@ fn play_book_game(st: &[&str], book: book::Book) -> (Vec<GameMove>, GameResult) 
         .book(book)
         .quiet(true);
     while board.game_result().is_none() {
-        let outcome = search(&mut board, &eval, &mut info).unwrap();
+        let outcome = search(&mut board, &mut eval, &mut info).unwrap();
         // println!("{}", outcome.best_move().unwrap());
         let mv = outcome.next().unwrap();
         board.do_move(mv);
@@ -397,9 +398,9 @@ fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> 
             name
         };
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let eval = Weights6::default();
+        let mut eval = Weights6::default();
         let mut info = SearchInfo::new(*depth, 2 << 20);
-        search(&mut board, &eval, &mut info);
+        search(&mut board, &mut eval, &mut info);
         dbg!(info.stats);
         // for idx in 0..36 {
         //     let dummy_move = GameMove::from_placement(Piece::WhiteFlat, idx);
@@ -514,12 +515,12 @@ fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>, svg: bool) -> Resu
 
 fn play_game_cmd(mut computer_turn: bool) {
     let mut board = Board6::new();
-    let eval = Weights6::default();
+    let mut eval = Weights6::default();
     while let None = board.game_result() {
         println!("{:?}", &board);
         if computer_turn {
             let mut info = SearchInfo::new(6, 5000);
-            search(&mut board, &eval, &mut info);
+            search(&mut board, &mut eval, &mut info);
             let pv_move = info.pv_move(&board).unwrap();
             println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
             board.do_move(pv_move);
@@ -605,7 +606,7 @@ fn play_game_tei<E: Evaluator + Default>(
                 if board.ply() == 8 || board.ply() == 9 {
                     eval = E::default();
                 }
-                let res = search(&mut board, &eval, &mut info);
+                let res = search(&mut board, &mut eval, &mut info);
                 if let Some(outcome) = res {
                     println!("info {}", outcome);
                     println!(
@@ -691,7 +692,7 @@ fn tei_loop() {
                 let init = init.clone();
                 thread::spawn(move || match size {
                     5 => play_game_tei::<Weights5>(recv, init).unwrap(),
-                    6 => play_game_tei::<Weights6>(recv, init).unwrap(),
+                    6 => play_game_tei::<eval::NNUE6>(recv, init).unwrap(),
                     _ => unimplemented!(),
                 });
             }
@@ -744,7 +745,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
     let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
     let book = playtak_book();
 
-    let eval = Weights6::default();
+    let mut eval = Weights6::default();
     // eval.add_noise();
     // let eval = Evaluator6 {};
     'outer: loop {
@@ -773,7 +774,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                     .take_book(&mut info)
                     .time_bank(TimeBank::flat(use_time))
                     .abort_depth(50);
-                let res = search(&mut board, &eval, &mut info);
+                let res = search(&mut board, &mut eval, &mut info);
                 if let Some(outcome) = res {
                     last_score = outcome.score();
                     server_send

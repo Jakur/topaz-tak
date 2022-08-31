@@ -145,12 +145,12 @@ mod test {
         dbg!(&board);
         dbg!(board.ply());
         assert_eq!(zo_0, board.zobrist());
-        let eval = Weights5::default();
+        let mut eval = Weights5::default();
         // let mut moves = Vec::new();
         let mut info = SearchInfo::new(4, 2 << 14)
             .time_bank(TimeBank::flat(1_000))
             .book(book.clone());
-        let outcome = search(&mut board, &eval, &mut info).unwrap();
+        let outcome = search(&mut board, &mut eval, &mut info).unwrap();
         let mv = outcome.next().unwrap();
         let mv_ptn = mv.to_ptn::<Board5>();
         dbg!(&mv_ptn);
