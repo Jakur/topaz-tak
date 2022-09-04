@@ -1,7 +1,7 @@
-use crate::{board::TakBoard, Board6};
+use crate::{board::TakBoard, Board6, Color};
 use std::str::FromStr;
 
-const DIM1: usize = 14016;
+const DIM1: usize = 14016 + 64;
 const DIM2: usize = 128;
 const DIM3: usize = 64;
 
@@ -37,20 +37,6 @@ impl Weights {
         })
     }
     #[cfg(test)]
-    fn zeros() -> Self {
-        let init = [0; DIM2];
-        Self {
-            outer: vec![init; DIM1].into_boxed_slice(),
-            bias1: [0; DIM2],
-            inner1: [[0.0; DIM2]; DIM3], // Todo see if more precision is needed
-            bias2: [0.0; DIM3],
-            white: [0.0; DIM3],
-            black: [0.0; DIM3],
-            white_bias: 0.0,
-            black_bias: 0.0,
-        }
-    }
-    #[cfg(test)]
     fn ones() -> Self {
         let init = [1; DIM2];
         Self {
@@ -84,13 +70,6 @@ impl Weights {
                 middle[j] += input[i] * self.inner1[j][i];
             }
         }
-        // dbg!(middle);
-        // for w in self.inner1 {
-        //     dbg!(w.len());
-        //     for i in 0..w.len() {
-        //         middle[i] += input[i] * w[i];
-        //     }
-        // }
         let (mut out, inner2) = if is_white {
             (self.white_bias, &self.white)
         } else {
@@ -108,16 +87,17 @@ impl Weights {
 pub fn nn_repr(board: &Board6) -> Vec<u16> {
     const OFFSET: usize = 12288;
     let mut arr1 = make_array(board);
-    debug_assert!(arr1.iter().all(|&x| x < OFFSET as u16));
+    debug_assert!(arr1.iter().all(|&x| x < (OFFSET + 64) as u16));
     arr1.extend(make_under_array(board).into_iter());
     arr1
 }
 
 fn make_array(board: &Board6) -> Vec<u16> {
+    const OFFSET: usize = 12288;
     use crate::Bitboard;
     use bitintr::Pext;
     let mut bits = Vec::new();
-    let mut out = Vec::with_capacity(24);
+    let mut out = Vec::with_capacity(26);
     for color in [board.bits().white, board.bits().black] {
         for piece in [board.bits().flat, board.bits().wall, board.bits().cap] {
             bits.push(color & piece);
@@ -131,19 +111,28 @@ fn make_array(board: &Board6) -> Vec<u16> {
             counter += 1;
         }
     }
+
+    out.push(
+        (OFFSET + board.caps_reserve(Color::White) + board.pieces_reserve(Color::White)) as u16,
+    );
+    out.push(
+        (OFFSET + 32 + board.caps_reserve(Color::Black) + board.pieces_reserve(Color::Black))
+            as u16,
+    );
     out
 }
 
 fn make_under_array(board: &Board6) -> Vec<u16> {
-    const OFFSET: usize = 12288;
+    const UNDER_OFFSET: usize = 12288 + 64;
     let mut out = Vec::with_capacity(32);
     for (outer_idx, stack) in board.board().iter().enumerate() {
         let len = std::cmp::min(stack.len(), 17);
         for pos in 1..len {
             let p = stack.from_top(pos).unwrap();
+            let c = (p.owner() == Color::White) as usize;
             assert!(p.is_flat());
-            let idx = pos - 1 + outer_idx * 16;
-            out.push((OFFSET + idx) as u16);
+            let idx = c + 2 * pos - 1 + outer_idx * 32;
+            out.push((UNDER_OFFSET + idx) as u16);
         }
     }
     out
@@ -166,22 +155,16 @@ fn array_2d_boxed<const A: usize, const B: usize, T: Scalar>(line: &str) -> Box<
     let mut out = vec![init; B];
     // let mut out = Box::new([[T::ZERO; A]; B]);
     let mut count = 0;
-    let mut max_i = 0;
-    let mut max_j = 0;
     for (i, sp) in line.split(";").enumerate() {
         for (j, val) in sp
             .split(",")
             .filter_map(|x| x.parse::<T>().ok())
             .enumerate()
         {
-            max_i = i;
-            max_j = j;
             out[i][j] = val;
             count += 1;
         }
     }
-    dbg!(max_i);
-    dbg!(max_j);
     assert_eq!(count, A * B);
     out.into_boxed_slice()
 }
@@ -189,22 +172,16 @@ fn array_2d_boxed<const A: usize, const B: usize, T: Scalar>(line: &str) -> Box<
 fn array_2d<const A: usize, const B: usize, T: Scalar>(line: &str) -> [[T; A]; B] {
     let mut out = [[T::ZERO; A]; B];
     let mut count = 0;
-    let mut max_i = 0;
-    let mut max_j = 0;
     for (i, sp) in line.split(";").enumerate() {
         for (j, val) in sp
             .split(",")
             .filter_map(|x| x.parse::<T>().ok())
             .enumerate()
         {
-            max_i = i;
-            max_j = j;
             out[i][j] = val;
             count += 1;
         }
     }
-    dbg!(max_i);
-    dbg!(max_j);
     assert_eq!(count, A * B);
     out
 }
@@ -311,7 +288,9 @@ impl Incremental {
 
 #[cfg(test)]
 mod test {
-    use super::{Incremental, Weights};
+    use crate::{board::Bitboard6, Bitboard, BitboardStorage, Piece};
+
+    use super::*;
 
     #[test]
     fn compute_diff() {
@@ -368,5 +347,101 @@ mod test {
         }
         assert_eq!(vec![56, 1096], hash_out);
         assert_eq!(vec![40, 51, 52, 1200], hash_in);
+    }
+    #[test]
+    fn undo_nn_repr() {
+        use bitintr::Pdep;
+        let board = crate::Board6::try_from_tps(
+            "1,12,1,1,x2/x3,1,x2/x,2,2,1C,1,1/x2,1,12C,12,221/2,2,12,2,x,2/x3,1,x2 1 17",
+        )
+        .unwrap();
+        // let mut out = Vec::with_capacity(26);
+        // for color in [board.bits().white, board.bits().black] {
+        //     for piece in [board.bits().flat, board.bits().wall, board.bits().cap] {
+        //         bits.push(color & piece);
+        //     }
+        // }
+        // let mut counter = 0;
+        // for mask in [0xe0e0e00, 0x70707000, 0x70707000000000, 0xe0e0e00000000] {
+        //     for b in bits.iter().copied() {
+        //         let val = b.raw_bits().pext(mask);
+        //         out.push(counter * 512 + val as u16);
+        //         counter += 1;
+        //     }
+        // }
+        let mut stacks = vec![Vec::new(); 36];
+        let mut bits = vec![Bitboard6::ZERO; 6];
+        let nn = nn_repr(&board);
+        let mut st = nn.iter().take_while(|&&x| x < 12288);
+
+        for mask in [0xe0e0e00, 0x70707000, 0x70707000000000, 0xe0e0e00000000] {
+            for b in bits.iter_mut() {
+                let v = *st.next().unwrap() as u64 % 512;
+                *b |= Bitboard6::new(v.pdep(mask));
+            }
+        }
+        for (mut b, p) in bits.into_iter().zip(
+            [
+                Piece::WhiteFlat,
+                Piece::WhiteWall,
+                Piece::WhiteCap,
+                Piece::BlackFlat,
+                Piece::BlackWall,
+                Piece::BlackCap,
+            ]
+            .into_iter(),
+        ) {
+            while b.nonzero() {
+                let idx = b.lowest_index();
+                stacks[idx].push(p);
+                b.pop_lowest();
+            }
+        }
+        // Todo reserves / understacks
+        let res: Vec<_> = nn
+            .iter()
+            .filter(|&&x| x >= 12288 && x < 12288 + 64)
+            .collect();
+        assert_eq!(res.len(), 2);
+        dbg!(res[0]);
+        dbg!(res[1]);
+        for under in nn.iter().copied().filter(|&x| x >= 12288 + 64) {
+            let x = under - (12288 + 64) - 1;
+            dbg!(x);
+            let p = if x % 2 == 1 {
+                Piece::WhiteFlat
+            } else {
+                Piece::BlackFlat
+            };
+            dbg!(p);
+            let outer = x / 32;
+            stacks[outer as usize].push(p);
+            // const UNDER_OFFSET: usize = 12288 + 64;
+            // let mut out = Vec::with_capacity(32);
+            // for (outer_idx, stack) in board.board().iter().enumerate() {
+            //     let len = std::cmp::min(stack.len(), 17);
+            //     for pos in 1..len {
+            //         let p = stack.from_top(pos).unwrap();
+            //         let c = (p.owner() == Color::White) as usize;
+            //         assert!(p.is_flat());
+            //         let idx = c + 2 * pos - 1 + outer_idx * 32;
+            //         out.push((UNDER_OFFSET + idx) as u16);
+            //     }
+            // }
+        }
+        for s in stacks.iter_mut() {
+            s.reverse();
+        }
+        let mut out = Board6::new();
+        let mut storage = BitboardStorage::<Bitboard6>::default();
+        for (idx, st) in stacks.into_iter().enumerate() {
+            for p in st.into_iter() {
+                out.board[idx].push(p, &mut storage);
+            }
+        }
+        out.reset_stacks();
+        dbg!(out.pieces_reserve(Color::White) + out.caps_reserve(Color::White));
+        dbg!(out.pieces_reserve(Color::Black) + out.caps_reserve(Color::Black));
+        dbg!(out);
     }
 }

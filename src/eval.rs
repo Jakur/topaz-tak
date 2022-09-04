@@ -5,6 +5,8 @@ use crate::board::{Board5, Board6};
 use crate::Color;
 use crate::Position;
 
+pub use incremental::nn_repr;
+
 use std::fs::File;
 
 lazy_static::lazy_static!(
@@ -15,7 +17,7 @@ lazy_static::lazy_static!(
 );
 
 fn nn_file() -> Option<String> {
-    dotenv::dotenv().ok()?;
+    let _ = dotenv::dotenv();
     let mut path = None;
     for (key, value) in std::env::vars() {
         if key == "NN" {
@@ -37,6 +39,7 @@ pub trait Evaluator {
 pub struct NNUE6 {
     incremental_weights: incremental::Incremental,
     old: Vec<u16>,
+    classical: Weights6,
 }
 
 impl Default for NNUE6 {
@@ -49,9 +52,11 @@ impl NNUE6 {
     pub fn new() -> Self {
         let incremental_weights = NN6.build_incremental(&[]);
         let old = Vec::new();
+        let classical = Weights6::default();
         Self {
             incremental_weights,
             old,
+            classical,
         }
     }
 }
@@ -60,14 +65,25 @@ impl Evaluator for NNUE6 {
     type Game = Board6;
 
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
+        // if game.ply().saturating_sub(depth) < 10
+        // // || game.pieces_reserve(Color::White) <= 5
+        // // || game.pieces_reserve(Color::Black) <= 5
+        // {
+        //     return self.classical.evaluate(game, depth);
+        // }
         const TEMPO_OFFSET: i32 = 150;
-        let mut new = incremental::nn_repr(game);
+        let mut new = nn_repr(game);
         self.incremental_weights.update_diff(&self.old, &new, &NN6);
         let score = NN6.incremental_forward(
             &self.incremental_weights,
             game.side_to_move() == Color::White,
         );
+        // let rev_score = NN6.incremental_forward(
+        //     &self.incremental_weights,
+        //     game.side_to_move() != Color::White,
+        // );
         std::mem::swap(&mut new, &mut self.old);
+        // let tempo =score - rev_score.min(0) / 2
         if depth % 2 == 1 {
             score + TEMPO_OFFSET
         } else {
