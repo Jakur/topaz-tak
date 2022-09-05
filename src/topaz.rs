@@ -745,7 +745,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
     let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
     let book = playtak_book();
 
-    let mut eval = Weights6::default();
+    let mut eval = crate::eval::NNUE6::default();
     // eval.add_noise();
     // let eval = Evaluator6 {};
     'outer: loop {
@@ -768,7 +768,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                     }
                 }
                 my_side = Some(board.side_to_move());
-                let use_time = 24_000; // Todo better time management
+                let use_time = 12_000; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, 0)
                     .take_table(&mut info)
                     .take_book(&mut info)
@@ -829,7 +829,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
     // let mut opp = "Tiltak_Bot"; // Todo make this env variable
-    let mut opp = "WilemBot";
+    let mut opp = "Tiltak_Bot";
     let login_s = if let Some((user, pass)) = playtak_auth() {
         format!("Login {} {}\n", user, pass)
     } else {

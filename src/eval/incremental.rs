@@ -105,11 +105,31 @@ fn make_array(board: &Board6) -> Vec<u16> {
     }
     let mut counter = 0;
     for mask in [0xe0e0e00, 0x70707000, 0x70707000000000, 0xe0e0e00000000] {
-        for b in bits.iter().copied() {
+        for b in [
+            board.bits().white & board.bits().flat,
+            board.bits().black & board.bits().flat,
+        ] {
             let val = b.raw_bits().pext(mask);
             out.push(counter * 512 + val as u16);
             counter += 1;
         }
+    }
+    const LITTLE_OFFSET: usize = 512 * 8;
+    for x in (board.bits().white & board.bits().cap).index_iter() {
+        let val = LITTLE_OFFSET + x;
+        out.push(val as u16);
+    }
+    for x in (board.bits().black & board.bits().cap).index_iter() {
+        let val = LITTLE_OFFSET + 36 + x;
+        out.push(val as u16);
+    }
+    for x in (board.bits().white & board.bits().wall).index_iter() {
+        let val = LITTLE_OFFSET + 72 + x;
+        out.push(val as u16);
+    }
+    for x in (board.bits().black & board.bits().wall).index_iter() {
+        let val = LITTLE_OFFSET + 108 + x;
+        out.push(val as u16);
     }
 
     out.push(

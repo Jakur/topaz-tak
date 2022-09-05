@@ -217,6 +217,7 @@ pub trait Bitboard:
     /// Returns the board size that this bitboard corresponds to
     fn size() -> usize;
     fn simple_road_est(self) -> i32;
+    fn index_iter(self) -> BitIndexIterator<Self>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -750,6 +751,9 @@ macro_rules! bitboard_impl {
                     ns_count
                 }
             }
+            fn index_iter(self) -> BitIndexIterator<Self> {
+                BitIndexIterator::new(self)
+            }
         }
     };
 }
@@ -874,5 +878,16 @@ mod test {
         assert_eq!(b2.east_bits(2).0, 0x30000000);
         assert_eq!(b2.south_bits(2).0, 0x80800000000);
         assert_eq!(b2.west_bits(2).0, 0x6000000);
+    }
+
+    #[test]
+    fn index_iter_ascending() {
+        let index: Vec<_> = Bitboard6::new(u64::MAX).index_iter().collect();
+        let mut sorted = index.clone();
+        sorted.sort();
+        assert!(sorted[0] < sorted[1]);
+        for (x, y) in index.into_iter().zip(sorted.into_iter()) {
+            assert_eq!(x, y);
+        }
     }
 }
