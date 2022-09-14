@@ -7,6 +7,7 @@ use std::str::FromStr;
 const DIM1: usize = 5464;
 const DIM2: usize = 128;
 const DIM3: usize = 64;
+const DIM_MOVE: usize = 256;
 
 const SCALE_INT: i16 = 500;
 const SCALE_FLOAT: f32 = SCALE_INT as f32;
@@ -18,44 +19,49 @@ const UNDER_OFFSET: u16 = OFFSET + 64;
 pub struct Weights {
     outer: Box<[[i16; DIM2]]>,
     bias1: [i16; DIM2],
-    inner1: [[f32; DIM2]; DIM3], // Todo see if more precision is needed
-    bias2: [f32; DIM3],
-    white: [f32; DIM3],
-    black: [f32; DIM3],
-    white_bias: f32,
-    black_bias: f32,
+    white1: [[f32; DIM3]; DIM2],
+    black1: [[f32; DIM3]; DIM2],
+    white_bias1: [f32; DIM3],
+    black_bias1: [f32; DIM3],
+    white2: [[f32; DIM_MOVE]; DIM3],
+    black2: [[f32; DIM_MOVE]; DIM3],
+    white_bias2: [f32; DIM_MOVE],
+    black_bias2: [f32; DIM_MOVE],
 }
 
 impl Weights {
     pub fn from_file<R: std::io::Read>(mut r: R) -> Option<Self> {
         let mut s = String::new();
         r.read_to_string(&mut s).unwrap();
-        let mut lines = s.lines();
+        let lines: Vec<_> = s.lines().collect();
 
         Some(Self {
-            outer: array_2d_boxed::<DIM2, DIM1, i16>(lines.next()?),
-            bias1: array_1d(lines.next()?),
-            inner1: array_2d(lines.next()?),
-            bias2: array_1d(lines.next()?),
-            white: array_1d(lines.next()?),
-            black: array_1d(lines.next()?),
-            white_bias: lines.next().map(|x| x.parse().ok())??,
-            black_bias: lines.next().map(|x| x.parse().ok())??,
+            outer: array_2d_boxed::<DIM2, DIM1, i16>(lines.get(0)?),
+            bias1: array_1d(lines.get(1)?),
+            white1: array_2d(lines.get(2)?),
+            white_bias1: array_1d(lines.get(3)?),
+            white2: array_2d(lines.get(4)?),
+            white_bias2: array_1d(lines.get(5)?),
+            black1: array_2d(lines.get(6)?),
+            black_bias1: array_1d(lines.get(7)?),
+            black2: array_2d(lines.get(8)?),
+            black_bias2: array_1d(lines.get(9)?),
         })
     }
     #[cfg(test)]
     fn ones() -> Self {
-        let init = [1; DIM2];
-        Self {
-            outer: vec![init; DIM1].into_boxed_slice(),
-            bias1: [1; DIM2],
-            inner1: [[1.0; DIM2]; DIM3], // Todo see if more precision is needed
-            bias2: [1.0; DIM3],
-            white: [1.0; DIM3],
-            black: [1.0; DIM3],
-            white_bias: 1.0,
-            black_bias: 1.0,
-        }
+        // let init = [1; DIM2];
+        // Self {
+        //     outer: vec![init; DIM1].into_boxed_slice(),
+        //     bias1: [1; DIM2],
+        //     inner1: [[1.0; DIM2]; DIM3],
+        //     bias2: [1.0; DIM3],
+        //     white: [1.0; DIM3],
+        //     black: [1.0; DIM3],
+        //     white_bias: 1.0,
+        //     black_bias: 1.0,
+        // }
+        unimplemented!()
     }
     pub fn build_incremental(&self, nonzero_input: &[usize]) -> Incremental {
         let mut out = Incremental {
@@ -66,32 +72,69 @@ impl Weights {
         }
         out
     }
-    pub fn incremental_forward(&self, inc: &Incremental, is_white: bool) -> i32 {
+    pub fn move_weights(&self, inc: &Incremental, is_white: bool) -> Vec<f32> {
         let mut input = [0.0; DIM2];
         for i in 0..input.len() {
             input[i] = (relu6_int(inc.storage[i]) as f32) / SCALE_FLOAT;
         }
-        let mut middle = self.bias2.clone();
+        let (inner1, bias2, inner2, bias3) = if is_white {
+            (
+                &self.white1,
+                &self.white_bias1,
+                &self.white2,
+                &self.white_bias2,
+            )
+        } else {
+            (
+                &self.black1,
+                &self.black_bias1,
+                &self.black2,
+                &self.black_bias2,
+            )
+        };
+        let mut middle = bias2.clone();
         for i in 0..DIM2 {
             for j in 0..DIM3 {
-                middle[j] += input[i] * self.inner1[j][i];
+                middle[j] += input[i] * inner1[i][j];
             }
         }
-        let (mut out, inner2) = if is_white {
-            (self.white_bias, &self.white)
-        } else {
-            (self.black_bias, &self.black)
-        };
-
-        for i in 0..middle.len() {
-            out += relu6(middle[i]) * inner2[i];
+        for m in middle.iter_mut() {
+            *m = relu6(*m);
         }
-        // dbg!(out);
-        ((out as f64).tanh() * SCALE_FLOAT as f64).trunc() as i32
+        let mut out: Vec<_> = bias3.iter().copied().collect();
+        for i in 0..DIM3 {
+            for j in 0..DIM_MOVE {
+                out[j] += middle[i] * inner2[i][j];
+            }
+        }
+        out
     }
+    // pub fn incremental_forward(&self, inc: &Incremental, is_white: bool) -> i32 {
+    //     let mut input = [0.0; DIM2];
+    //     for i in 0..input.len() {
+    //         input[i] = (relu6_int(inc.storage[i]) as f32) / SCALE_FLOAT;
+    //     }
+    //     let mut middle = self.bias2.clone();
+    // for i in 0..DIM2 {
+    //     for j in 0..DIM3 {
+    //         middle[j] += input[i] * self.inner1[j][i];
+    //     }
+    // }
+    //     let (mut out, inner2) = if is_white {
+    //         (self.white_bias, &self.white)
+    //     } else {
+    //         (self.black_bias, &self.black)
+    //     };
+
+    //     for i in 0..middle.len() {
+    //         out += relu6(middle[i]) * inner2[i];
+    //     }
+    //     // dbg!(out);
+    //     ((out as f64).tanh() * SCALE_FLOAT as f64).trunc() as i32
+    // }
 }
 
-pub fn nn_repr(board: &Board6) -> Vec<u16> {
+pub fn nn_repr<T: TakBoard>(board: &T) -> Vec<u16> {
     const OFFSET: usize = 4240;
     let mut arr1 = make_array(board);
     debug_assert!(arr1.iter().all(|&x| x < (OFFSET + 64) as u16));
@@ -99,8 +142,7 @@ pub fn nn_repr(board: &Board6) -> Vec<u16> {
     arr1
 }
 
-fn make_array(board: &Board6) -> Vec<u16> {
-    use crate::Bitboard;
+fn make_array<T: TakBoard>(board: &T) -> Vec<u16> {
     use bitintr::Pext;
     let mut bits = Vec::new();
     let mut out = Vec::with_capacity(26);
@@ -151,7 +193,7 @@ fn make_array(board: &Board6) -> Vec<u16> {
     out
 }
 
-fn make_under_array(board: &Board6) -> Vec<u16> {
+fn make_under_array<T: TakBoard>(board: &T) -> Vec<u16> {
     let mut out = Vec::with_capacity(32);
     for (outer_idx, stack) in board.board().iter().enumerate() {
         let len = std::cmp::min(stack.len(), 17);
@@ -397,6 +439,8 @@ pub fn undo_nn_repr(nn: Vec<u16>) -> Board6 {
 
 #[cfg(test)]
 mod test {
+    use crate::Position;
+
     use super::*;
 
     #[test]
@@ -457,15 +501,13 @@ mod test {
     }
     #[test]
     fn dummy() {
-        // let v = vec![
-        //     16, 512, 1032, 1604, 2305, 2560, 3078, 3652, 4110, 4403, 4817, 4819, 4851, 5010,
-        // ];
-        let s = "68 516 1025 1808 2112 2624 3073 3592 4594 4626";
-        let v = s.split_whitespace().map(|x| x.parse().unwrap()).collect();
-
-        let b = undo_nn_repr(v);
-        dbg!(b);
-        assert!(false);
+        let tps = "x,x,x,2,x,2/x,x,x,2,x,x/x,x,1C,2,1S,x/x,1,1,1,2,x/x,x,2,2,1,1/x,x,2,1,x,x 1 9";
+        let board = Board6::try_from_tps(tps).unwrap();
+        let repr: Vec<_> = nn_repr(&board).into_iter().map(|x| x as usize).collect();
+        dbg!(&repr);
+        let inc = crate::eval::NN6.build_incremental(&repr);
+        let v = crate::eval::NN6.move_weights(&inc, board.side_to_move() == Color::White);
+        dbg!(&v[64]);
     }
     #[test]
     fn test_undo_nn_repr() {

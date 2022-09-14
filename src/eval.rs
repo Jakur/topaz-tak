@@ -6,6 +6,7 @@ use crate::Color;
 use crate::Position;
 
 pub use incremental::nn_repr;
+pub(crate) use incremental::Incremental;
 
 use std::fs::File;
 
@@ -39,7 +40,6 @@ pub trait Evaluator {
 pub struct NNUE6 {
     incremental_weights: incremental::Incremental,
     old: Vec<u16>,
-    classical: Weights6,
 }
 
 impl Default for NNUE6 {
@@ -52,11 +52,9 @@ impl NNUE6 {
     pub fn new() -> Self {
         let incremental_weights = NN6.build_incremental(&[]);
         let old = Vec::new();
-        let classical = Weights6::default();
         Self {
             incremental_weights,
             old,
-            classical,
         }
     }
 }
@@ -71,33 +69,34 @@ impl Evaluator for NNUE6 {
         // {
         //     return self.classical.evaluate(game, depth);
         // }
-        const TEMPO_OFFSET: i32 = 150;
-        let mut new = nn_repr(game);
-        self.incremental_weights.update_diff(&self.old, &new, &NN6);
-        let score = NN6.incremental_forward(
-            &self.incremental_weights,
-            game.side_to_move() == Color::White,
-        );
-        std::mem::swap(&mut new, &mut self.old);
-        // let rev_score = NN6.incremental_forward(
+        // const TEMPO_OFFSET: i32 = 150;
+        // let mut new = nn_repr(game);
+        // self.incremental_weights.update_diff(&self.old, &new, &NN6);
+        // let score = NN6.incremental_forward(
         //     &self.incremental_weights,
-        //     game.side_to_move() != Color::White,
+        //     game.side_to_move() == Color::White,
         // );
-        // let diff = score + rev_score;
-        // let tempo = {
-        //     if diff < 50 {
-        //         TEMPO_OFFSET / 2
-        //     } else if diff <= TEMPO_OFFSET {
-        //         TEMPO_OFFSET
-        //     } else {
-        //         TEMPO_OFFSET + TEMPO_OFFSET / 2
-        //     }
-        // };
-        if depth % 2 == 1 {
-            score + TEMPO_OFFSET
-        } else {
-            score
-        }
+        // std::mem::swap(&mut new, &mut self.old);
+        // // let rev_score = NN6.incremental_forward(
+        // //     &self.incremental_weights,
+        // //     game.side_to_move() != Color::White,
+        // // );
+        // // let diff = score + rev_score;
+        // // let tempo = {
+        // //     if diff < 50 {
+        // //         TEMPO_OFFSET / 2
+        // //     } else if diff <= TEMPO_OFFSET {
+        // //         TEMPO_OFFSET
+        // //     } else {
+        // //         TEMPO_OFFSET + TEMPO_OFFSET / 2
+        // //     }
+        // // };
+        // if depth % 2 == 1 {
+        //     score + TEMPO_OFFSET
+        // } else {
+        //     score
+        // }
+        unimplemented!()
     }
 
     fn eval_stack(&self, _game: &Self::Game, _index: usize, _stack: &Stack) -> i32 {
@@ -205,16 +204,14 @@ macro_rules! eval_impl {
                 }
                 let black_cap = game.bits.cap & game.bits.black;
                 if black_cap != <Self::Game as TakBoard>::Bits::ZERO {
-                    let black_c_lonely =
-                        black_cap.adjacent() & (game.bits.flat | game.bits.wall) & game.bits.white;
+                    let black_c_lonely = black_cap.adjacent() & (game.bits.flat | game.bits.wall);
                     if black_c_lonely == <Self::Game as TakBoard>::Bits::ZERO {
                         score += 30;
                     }
                 }
                 let white_cap = game.bits.cap & game.bits.white;
                 if white_cap != <Self::Game as TakBoard>::Bits::ZERO {
-                    let white_c_lonely =
-                        white_cap.adjacent() & (game.bits.flat | game.bits.wall) & game.bits.black;
+                    let white_c_lonely = white_cap.adjacent() & (game.bits.flat | game.bits.wall);
                     if white_c_lonely == <Self::Game as TakBoard>::Bits::ZERO {
                         score -= 30;
                     }

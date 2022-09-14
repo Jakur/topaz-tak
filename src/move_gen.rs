@@ -5,7 +5,7 @@ use crate::{Bitboard, BitboardStorage};
 use std::fmt;
 
 mod move_order;
-pub use move_order::{KillerMoves, PlaceHistory, SmartMoveBuffer};
+pub use move_order::{KillerMoves, PlaceHistory, SmartMoveBuffer, TOP_MOVES};
 #[allow(dead_code)]
 pub mod magic;
 pub mod ptn;
@@ -256,9 +256,13 @@ impl GameMove {
             self
         }
     }
-    /// Sets the crush bit according to the given value
+    /// Sets the crush bit
     pub fn set_crush(self) -> Self {
         Self(self.0 | 0x800000)
+    }
+    // Unsets the crush bit
+    pub fn no_crush(self) -> Self {
+        Self(self.0 & !0x800000)
     }
     /// Returns true if move is a stack move that crushes a wall
     ///
@@ -333,6 +337,24 @@ impl GameMove {
                 .rotate::<T>(),
             _ => unimplemented!(),
         }
+    }
+    pub fn white(self) -> Self {
+        if self.is_place_move() {
+            let piece = self.place_piece();
+            if piece.owner() != Color::White {
+                return Self::from_placement(piece.swap_color(), self.src_index());
+            }
+        }
+        self
+    }
+    pub fn black(self) -> Self {
+        if self.is_place_move() {
+            let piece = self.place_piece();
+            if piece.owner() != Color::Black {
+                return Self::from_placement(piece.swap_color(), self.src_index());
+            }
+        }
+        self
     }
     fn rotate<T: TakBoard>(&self) -> Self {
         assert!(self.is_valid());

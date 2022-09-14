@@ -1,6 +1,6 @@
 use super::{Color, GameResult};
 use crate::board::TakBoard;
-use crate::eval::Evaluator;
+use crate::eval::{Evaluator, Incremental, NN6};
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
     generate_aggressive_place_moves, generate_all_stack_moves, generate_masked_stack_moves,
@@ -64,6 +64,32 @@ pub struct SearchInfo {
     early_abort_depth: usize,
     quiet: bool,
     book: Option<book::Book>,
+    pub(crate) inc_weight: Update,
+}
+
+pub(crate) struct Update {
+    old: Vec<u16>,
+    incremental_weights: Incremental,
+}
+
+impl Update {
+    fn new() -> Self {
+        let incremental_weights = NN6.build_incremental(&[]);
+        Self {
+            old: vec![],
+            incremental_weights,
+        }
+    }
+    pub(crate) fn forward<T: TakBoard>(&mut self, game: &T) -> Vec<f32> {
+        let mut new = crate::eval::nn_repr(game);
+        self.incremental_weights.update_diff(&self.old, &new, &NN6);
+        let scores = NN6.move_weights(
+            &self.incremental_weights,
+            game.side_to_move() == Color::White,
+        );
+        std::mem::swap(&mut new, &mut self.old);
+        scores
+    }
 }
 
 impl SearchInfo {
@@ -84,6 +110,7 @@ impl SearchInfo {
             early_abort_depth: 6,
             quiet: false,
             book: None,
+            inc_weight: Update::new(),
         }
     }
     pub fn print_cuts(&self) {
@@ -738,7 +765,7 @@ where
     let ply_depth = info.ply_depth(board);
     for c in 0..moves.len() {
         let count = if has_searched_pv { c + 1 } else { c };
-        let m = moves.get_best(ply_depth, info);
+        let m = moves.get_best(board, info, true);
 
         let rev_move = board.do_move(m);
         let next_extensions = extensions;
@@ -1064,7 +1091,7 @@ where
         return evaluator.evaluate(board, ply_depth);
     }
     for _ in 0..moves.len() {
-        let mv = moves.get_best(ply_depth, info);
+        let mv = moves.get_best(board, info, false);
         let rev = board.do_move(mv);
         let score = -q_search(board, evaluator, info, -beta, -alpha, rev);
         board.reverse_move(rev);

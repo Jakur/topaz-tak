@@ -1,11 +1,24 @@
+use std::collections::HashMap;
+
 use super::*;
-use crate::search::SearchInfo;
+use crate::{
+    eval::{nn_repr, Incremental, NN6},
+    search::SearchInfo,
+};
+use lazy_static::lazy_static;
+
+lazy_static! {
+    pub static ref TOP_MOVES: HashMap<GameMove, usize> = top_moves();
+}
+
+const NEURAL_SEARCH: bool = true;
 
 pub struct SmartMoveBuffer {
     moves: Vec<ScoredMove>,
     stack_hist: Vec<i16>,
     queries: usize,
     flat_attempts: i16,
+    nn_out: Vec<f32>,
 }
 
 impl SmartMoveBuffer {
@@ -15,6 +28,7 @@ impl SmartMoveBuffer {
             stack_hist: vec![0; 36],
             queries: 0,
             flat_attempts: 0,
+            nn_out: Vec::new(),
         }
     }
     pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T) {
@@ -178,8 +192,34 @@ impl SmartMoveBuffer {
             }
         }
     }
-    pub fn get_best(&mut self, ply: usize, info: &SearchInfo) -> GameMove {
-        if self.queries <= 16 {
+    pub fn get_best<T: TakBoard>(
+        &mut self,
+        board: &T,
+        info: &mut SearchInfo,
+        thorough: bool,
+    ) -> GameMove {
+        if NEURAL_SEARCH && thorough && self.queries <= 3 {
+            self.queries += 1;
+            if self.nn_out.len() == 0 {
+                self.nn_out = info.inc_weight.forward(board);
+            }
+            let (idx, m) = self
+                .moves
+                .iter()
+                .enumerate()
+                .max_by_key(|(_i, &m)| {
+                    TOP_MOVES
+                        .get(&m.mv.white().no_crush())
+                        .map(|x| (self.nn_out[*x] * 1_000.0) as i32)
+                        .unwrap_or(i32::MIN)
+                })
+                .unwrap();
+            let mv = m.mv;
+            self.moves.swap_remove(idx);
+            return mv;
+        }
+        if false {
+            // self.queries <= 16
             self.queries += 1;
             let (idx, m) = self
                 .moves
@@ -390,6 +430,38 @@ impl HistoryMoves {
     }
 }
 
+fn top_moves() -> HashMap<GameMove, usize> {
+    let ptn = [
+        "d5", "d2", "c5", "b4", "c2", "e3", "b3", "e4", "d4", "d3", "c4", "c3", "b2", "b5", "e2",
+        "e5", "d1", "d6", "c1", "f4", "c6", "a3", "f3", "a4", "e6", "e1", "b6", "a5", "b1", "f2",
+        "a2", "f5", "a6", "a1", "f6", "f1", "a3>", "a4>", "f3<", "d1+", "f4<", "c6-", "d6-", "c1+",
+        "d3<", "d4<", "c3>", "d4-", "c4>", "c3+", "d3+", "c4-", "b2>", "b5>", "e2<", "e2+", "e5<",
+        "b5-", "e5-", "b2+", "Sd4", "Sd3", "Sc4", "Sc3", "b3+", "b4-", "e3+", "d2<", "e4-", "c5>",
+        "d5<", "c2>", "d3-", "d4+", "c3-", "d4>", "c4+", "c3<", "d3>", "c4<", "e4<", "e3<", "b4>",
+        "c5-", "b3>", "d2+", "c2+", "d5-", "e1+", "e6-", "b1+", "f5<", "b6-", "a2>", "f2<", "a5>",
+        "Cc4", "Cc3", "Cd4", "Cd3", "c5<", "c2<", "d5>", "b3-", "d2>", "e4+", "b4+", "e3-", "Sc2",
+        "Sc5", "Sd2", "Se3", "Sd5", "Sb4", "Se4", "Sb3", "Sb2", "Sb5", "Se2", "Se5", "a6>", "a1>",
+        "f6<", "a1+", "f1<", "f6-", "a6-", "f1+", "d6<", "d1<", "c6>", "a4-", "c1>", "f3+", "a3+",
+        "f4-", "a5-", "a2+", "f5-", "b1>", "f2+", "e6<", "b6>", "e1<", "2d3<", "2d4<", "2c3>",
+        "2d4-", "2c4>", "2c3+", "2d3+", "2c4-", "2d4+", "2d3-", "2c4+", "2c4<", "2c3-", "2d3>",
+        "2c3<", "2d4>", "a3-", "a4+", "f3-", "d1>", "f4+", "c6<", "d6>", "c1<", "e2>", "e5>",
+        "b2<", "e5+", "b5<", "b2-", "e2-", "b5+", "e4>", "e3>", "b4<", "c5+", "b3<", "d2-", "c2-",
+        "d5+", "2b3+", "2b4-", "2e3+", "2d2<", "2e4-", "2c5>", "2d5<", "2c2>", "2b4>", "2b3>",
+        "2e4<", "2c2+", "2e3<", "2d5-", "2c5-", "2d2+", "Sd6", "Sd1", "Sc6", "Sa4", "Sc1", "Sf3",
+        "Sa3", "Sf4", "2e4+", "2e3-", "2b4+", "2c5<", "2b3-", "2d2>", "2c2<", "2d5>", "2e2+",
+        "2e5-", "2b2+", "2e5<", "2b5-", "2b2>", "2e2<", "2b5>", "Cd2", "Cd5", "Cc2", "Ce4", "Cc5",
+        "Cb3", "Ce3", "Cb4", "3c3+", "3c4-", "3d3+", "3d3<", "3d4-", "3c4>", "3d4<", "3c3>",
+        "3c3<", "3c4<", "3d3>", "3d3-", "3d4>", "3c4+", "3d4+", "3c3-", "Sb6", "Sb1", "Se6", "Sa2",
+        "Se1", "Sf5", "Sa5", "Sf2",
+    ];
+    let mut out = HashMap::new();
+    for (i, m) in ptn.into_iter().enumerate() {
+        let m = GameMove::try_from_ptn_m(m, 6, Color::White).unwrap();
+        out.insert(m, i);
+    }
+    out
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -403,8 +475,8 @@ mod test {
         moves.score_stack_moves(&board);
         moves.moves.sort_by_key(|x| -x.score);
         assert!(moves.moves[0].score >= moves.moves.last().unwrap().score);
-        let info = SearchInfo::new(1, 0);
-        let order = (0..moves.moves.len()).map(|_| moves.get_best(0, &info));
+        let mut info = SearchInfo::new(1, 0);
+        let order = (0..moves.moves.len()).map(|_| moves.get_best(&board, &mut info, false));
         // let order: Vec<_> = moves.moves.into_iter().map(|x| *x.mv).collect();
         for m in order {
             println!("{}", m.to_ptn::<Board6>());
