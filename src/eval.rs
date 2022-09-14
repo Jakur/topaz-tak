@@ -78,12 +78,21 @@ impl Evaluator for NNUE6 {
             &self.incremental_weights,
             game.side_to_move() == Color::White,
         );
+        std::mem::swap(&mut new, &mut self.old);
         // let rev_score = NN6.incremental_forward(
         //     &self.incremental_weights,
         //     game.side_to_move() != Color::White,
         // );
-        std::mem::swap(&mut new, &mut self.old);
-        // let tempo =score - rev_score.min(0) / 2
+        // let diff = score + rev_score;
+        // let tempo = {
+        //     if diff < 50 {
+        //         TEMPO_OFFSET / 2
+        //     } else if diff <= TEMPO_OFFSET {
+        //         TEMPO_OFFSET
+        //     } else {
+        //         TEMPO_OFFSET + TEMPO_OFFSET / 2
+        //     }
+        // };
         if depth % 2 == 1 {
             score + TEMPO_OFFSET
         } else {
@@ -196,14 +205,16 @@ macro_rules! eval_impl {
                 }
                 let black_cap = game.bits.cap & game.bits.black;
                 if black_cap != <Self::Game as TakBoard>::Bits::ZERO {
-                    let black_c_lonely = black_cap.adjacent() & (game.bits.flat | game.bits.wall);
+                    let black_c_lonely =
+                        black_cap.adjacent() & (game.bits.flat | game.bits.wall) & game.bits.white;
                     if black_c_lonely == <Self::Game as TakBoard>::Bits::ZERO {
                         score += 30;
                     }
                 }
                 let white_cap = game.bits.cap & game.bits.white;
                 if white_cap != <Self::Game as TakBoard>::Bits::ZERO {
-                    let white_c_lonely = white_cap.adjacent() & (game.bits.flat | game.bits.wall);
+                    let white_c_lonely =
+                        white_cap.adjacent() & (game.bits.flat | game.bits.wall) & game.bits.black;
                     if white_c_lonely == <Self::Game as TakBoard>::Bits::ZERO {
                         score -= 30;
                     }

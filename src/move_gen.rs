@@ -337,10 +337,7 @@ impl GameMove {
     fn rotate<T: TakBoard>(&self) -> Self {
         assert!(self.is_valid());
         let (row, col) = T::row_col_static(self.src_index());
-        dbg!(row);
-        dbg!(col);
         let dest_idx = T::index_static(T::SIZE - 1 - col, row);
-        dbg!(dest_idx);
         let out = Self(self.0 & 0xFFFF_FF00).set_index(dest_idx as u32);
         if self.is_place_move() {
             out
@@ -463,6 +460,18 @@ pub struct MoveLimits {
 impl MoveLimits {
     pub fn new(steps: [u8; 4], can_crush: [bool; 4]) -> Self {
         Self { steps, can_crush }
+    }
+    pub fn cap_north(&self) -> u8 {
+        self.steps[0] + self.can_crush[0] as u8
+    }
+    pub fn cap_east(&self) -> u8 {
+        self.steps[1] + self.can_crush[1] as u8
+    }
+    pub fn cap_south(&self) -> u8 {
+        self.steps[2] + self.can_crush[2] as u8
+    }
+    pub fn cap_west(&self) -> u8 {
+        self.steps[3] + self.can_crush[3] as u8
     }
 }
 

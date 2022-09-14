@@ -67,8 +67,9 @@ pub fn main() {
                     search(&mut board, &mut eval, &mut info);
                 }
                 TakGame::Standard6(mut board) => {
-                    // let mut eval = Weights6::default();
-                    let mut eval = eval::NNUE6::new();
+                    let mut eval = Weights6::default();
+                    let mut board = board.with_komi(4);
+                    // let mut eval = eval::NNUE6::new();
                     search(&mut board, &mut eval, &mut info);
                 }
                 _ => todo!(),
@@ -692,7 +693,8 @@ fn tei_loop() {
                 let init = init.clone();
                 thread::spawn(move || match size {
                     5 => play_game_tei::<Weights5>(recv, init).unwrap(),
-                    6 => play_game_tei::<eval::NNUE6>(recv, init).unwrap(),
+                    // 6 => play_game_tei::<eval::NNUE6>(recv, init).unwrap(),
+                    6 => play_game_tei::<Weights6>(recv, init).unwrap(),
                     _ => unimplemented!(),
                 });
             }
@@ -739,13 +741,11 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
     const MAX_DEPTH: usize = 32;
     const KOMI: u8 = 4;
     let mut move_cache = Vec::new();
-    let mut last_score = 0;
-    let mut my_side = None;
     let mut board = Board6::new().with_komi(KOMI);
     let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
     let book = playtak_book();
-
-    let mut eval = crate::eval::NNUE6::default();
+    let mut eval = Weights6::default();
+    // let mut eval = crate::eval::NNUE6::default();
     // eval.add_noise();
     // let eval = Evaluator6 {};
     'outer: loop {
@@ -767,7 +767,6 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                         }
                     }
                 }
-                my_side = Some(board.side_to_move());
                 let use_time = 12_000; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, 0)
                     .take_table(&mut info)
@@ -776,7 +775,6 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                     .abort_depth(50);
                 let res = search(&mut board, &mut eval, &mut info);
                 if let Some(outcome) = res {
-                    last_score = outcome.score();
                     server_send
                         .send(outcome.best_move().expect("could not find best move!"))
                         .unwrap();

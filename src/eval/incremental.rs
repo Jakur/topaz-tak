@@ -1,12 +1,19 @@
+use crate::{board::Bitboard6, Bitboard, BitboardStorage, Piece};
 use crate::{board::TakBoard, Board6, Color};
+use bitintr::Pdep;
 use std::str::FromStr;
 
-const DIM1: usize = 14016 + 64;
+// const DIM1: usize = 14016 + 64;
+const DIM1: usize = 5464;
 const DIM2: usize = 128;
 const DIM3: usize = 64;
 
 const SCALE_INT: i16 = 500;
 const SCALE_FLOAT: f32 = SCALE_INT as f32;
+
+const FLAT_OFFSET: u16 = 512 * 8;
+const OFFSET: u16 = FLAT_OFFSET + 36 * 4;
+const UNDER_OFFSET: u16 = OFFSET + 64;
 
 pub struct Weights {
     outer: Box<[[i16; DIM2]]>,
@@ -85,7 +92,7 @@ impl Weights {
 }
 
 pub fn nn_repr(board: &Board6) -> Vec<u16> {
-    const OFFSET: usize = 12288;
+    const OFFSET: usize = 4240;
     let mut arr1 = make_array(board);
     debug_assert!(arr1.iter().all(|&x| x < (OFFSET + 64) as u16));
     arr1.extend(make_under_array(board).into_iter());
@@ -93,7 +100,6 @@ pub fn nn_repr(board: &Board6) -> Vec<u16> {
 }
 
 fn make_array(board: &Board6) -> Vec<u16> {
-    const OFFSET: usize = 12288;
     use crate::Bitboard;
     use bitintr::Pext;
     let mut bits = Vec::new();
@@ -114,45 +120,47 @@ fn make_array(board: &Board6) -> Vec<u16> {
             counter += 1;
         }
     }
-    const LITTLE_OFFSET: usize = 512 * 8;
     for x in (board.bits().white & board.bits().cap).index_iter() {
-        let val = LITTLE_OFFSET + x;
-        out.push(val as u16);
+        let val = FLAT_OFFSET + x as u16;
+        out.push(val);
     }
     for x in (board.bits().black & board.bits().cap).index_iter() {
-        let val = LITTLE_OFFSET + 36 + x;
-        out.push(val as u16);
+        let val = FLAT_OFFSET + 36 + x as u16;
+        out.push(val);
     }
     for x in (board.bits().white & board.bits().wall).index_iter() {
-        let val = LITTLE_OFFSET + 72 + x;
-        out.push(val as u16);
+        let val = FLAT_OFFSET + 72 + x as u16;
+        out.push(val);
     }
     for x in (board.bits().black & board.bits().wall).index_iter() {
-        let val = LITTLE_OFFSET + 108 + x;
-        out.push(val as u16);
+        let val = FLAT_OFFSET + 108 + x as u16;
+        out.push(val);
     }
 
     out.push(
-        (OFFSET + board.caps_reserve(Color::White) + board.pieces_reserve(Color::White)) as u16,
+        OFFSET
+            + board.caps_reserve(Color::White) as u16
+            + board.pieces_reserve(Color::White) as u16,
     );
     out.push(
-        (OFFSET + 32 + board.caps_reserve(Color::Black) + board.pieces_reserve(Color::Black))
-            as u16,
+        OFFSET
+            + 32
+            + board.caps_reserve(Color::Black) as u16
+            + board.pieces_reserve(Color::Black) as u16,
     );
     out
 }
 
 fn make_under_array(board: &Board6) -> Vec<u16> {
-    const UNDER_OFFSET: usize = 12288 + 64;
     let mut out = Vec::with_capacity(32);
     for (outer_idx, stack) in board.board().iter().enumerate() {
         let len = std::cmp::min(stack.len(), 17);
         for pos in 1..len {
             let p = stack.from_top(pos).unwrap();
             let c = (p.owner() == Color::White) as usize;
-            assert!(p.is_flat());
+            debug_assert!(p.is_flat());
             let idx = c + 2 * pos - 1 + outer_idx * 32;
-            out.push((UNDER_OFFSET + idx) as u16);
+            out.push(UNDER_OFFSET + idx as u16);
         }
     }
     out
@@ -306,10 +314,89 @@ impl Incremental {
     }
 }
 
+pub fn undo_nn_repr(nn: Vec<u16>) -> Board6 {
+    let mut flats = [30, 30];
+    let mut caps = [1, 1];
+    let mut stacks = vec![Vec::new(); 36];
+    let mut bits = vec![Bitboard6::ZERO; 2];
+    let mut st = nn.iter().take_while(|&&x| x < FLAT_OFFSET as u16);
+
+    for mask in [0xe0e0e00, 0x70707000, 0x70707000000000, 0xe0e0e00000000] {
+        for b in bits.iter_mut() {
+            let v = *st.next().unwrap() as u64 % 512;
+            *b |= Bitboard6::new(v.pdep(mask));
+        }
+    }
+    for (mut b, p) in bits
+        .into_iter()
+        .zip([Piece::WhiteFlat, Piece::BlackFlat].into_iter())
+    {
+        while b.nonzero() {
+            let idx = b.lowest_index();
+            stacks[idx].push(p);
+            b.pop_lowest();
+            flats[p.owner() as usize] -= 1;
+        }
+    }
+    for x in nn
+        .iter()
+        .copied()
+        .filter(|&x| x >= FLAT_OFFSET && x < OFFSET)
+    {
+        let index = ((x - FLAT_OFFSET) % 36) as usize;
+        if stacks[index].len() == 0 {
+            continue;
+        }
+        let piece = match (x - FLAT_OFFSET) / 36 {
+            0 => {
+                caps[0] -= 1;
+                Piece::WhiteCap
+            }
+            1 => {
+                caps[1] -= 1;
+                Piece::BlackCap
+            }
+            2 => {
+                flats[0] -= 1;
+                Piece::WhiteWall
+            }
+            _ => {
+                flats[1] -= 1;
+                Piece::BlackWall
+            }
+        };
+        stacks[index].push(piece);
+    }
+
+    for under in nn.iter().copied().filter(|&x| x >= UNDER_OFFSET) {
+        let x = under - UNDER_OFFSET - 1;
+        let p = if x % 2 == 1 {
+            flats[0] -= 1;
+            Piece::WhiteFlat
+        } else {
+            flats[1] -= 1;
+            Piece::BlackFlat
+        };
+        let outer = (x / 32) as usize;
+        // assert!(stacks[outer].len() != 0);
+        stacks[outer as usize].push(p);
+    }
+    for s in stacks.iter_mut() {
+        s.reverse();
+    }
+    let mut out = Board6::new();
+    let mut storage = BitboardStorage::<Bitboard6>::default();
+    for (idx, st) in stacks.into_iter().enumerate() {
+        for p in st.into_iter() {
+            out.board[idx].push(p, &mut storage);
+        }
+    }
+    out.reset_stacks();
+    out
+}
+
 #[cfg(test)]
 mod test {
-    use crate::{board::Bitboard6, Bitboard, BitboardStorage, Piece};
-
     use super::*;
 
     #[test]
@@ -369,12 +456,21 @@ mod test {
         assert_eq!(vec![40, 51, 52, 1200], hash_in);
     }
     #[test]
-    fn undo_nn_repr() {
-        use bitintr::Pdep;
-        let board = crate::Board6::try_from_tps(
-            "1,12,1,1,x2/x3,1,x2/x,2,2,1C,1,1/x2,1,12C,12,221/2,2,12,2,x,2/x3,1,x2 1 17",
-        )
-        .unwrap();
+    fn dummy() {
+        // let v = vec![
+        //     16, 512, 1032, 1604, 2305, 2560, 3078, 3652, 4110, 4403, 4817, 4819, 4851, 5010,
+        // ];
+        let s = "68 516 1025 1808 2112 2624 3073 3592 4594 4626";
+        let v = s.split_whitespace().map(|x| x.parse().unwrap()).collect();
+
+        let b = undo_nn_repr(v);
+        dbg!(b);
+        assert!(false);
+    }
+    #[test]
+    fn test_undo_nn_repr() {
+        let tps = "1,12,1,1,x2/x3,1,x2/x,2,2,1C,1,1/x2,1,12C,12,221/2,2,12,2,x,2/x3,1,x2 1 17";
+        let board = crate::Board6::try_from_tps(tps).unwrap();
         // let mut out = Vec::with_capacity(26);
         // for color in [board.bits().white, board.bits().black] {
         //     for piece in [board.bits().flat, board.bits().wall, board.bits().cap] {
@@ -389,10 +485,12 @@ mod test {
         //         counter += 1;
         //     }
         // }
+        let mut flats = [30, 30];
+        let mut caps = [1, 1];
         let mut stacks = vec![Vec::new(); 36];
-        let mut bits = vec![Bitboard6::ZERO; 6];
+        let mut bits = vec![Bitboard6::ZERO; 2];
         let nn = nn_repr(&board);
-        let mut st = nn.iter().take_while(|&&x| x < 12288);
+        let mut st = nn.iter().take_while(|&&x| x < FLAT_OFFSET as u16);
 
         for mask in [0xe0e0e00, 0x70707000, 0x70707000000000, 0xe0e0e00000000] {
             for b in bits.iter_mut() {
@@ -400,54 +498,69 @@ mod test {
                 *b |= Bitboard6::new(v.pdep(mask));
             }
         }
-        for (mut b, p) in bits.into_iter().zip(
-            [
-                Piece::WhiteFlat,
-                Piece::WhiteWall,
-                Piece::WhiteCap,
-                Piece::BlackFlat,
-                Piece::BlackWall,
-                Piece::BlackCap,
-            ]
-            .into_iter(),
-        ) {
+        for (mut b, p) in bits
+            .into_iter()
+            .zip([Piece::WhiteFlat, Piece::BlackFlat].into_iter())
+        {
             while b.nonzero() {
                 let idx = b.lowest_index();
                 stacks[idx].push(p);
                 b.pop_lowest();
+                flats[p.owner() as usize] -= 1;
             }
+        }
+        for x in nn
+            .iter()
+            .copied()
+            .filter(|&x| x >= FLAT_OFFSET && x < OFFSET)
+        {
+            let piece = match (x - FLAT_OFFSET) / 36 {
+                0 => {
+                    caps[0] -= 1;
+                    Piece::WhiteCap
+                }
+                1 => {
+                    caps[1] -= 1;
+                    Piece::BlackCap
+                }
+                2 => {
+                    flats[0] -= 1;
+                    Piece::WhiteWall
+                }
+                _ => {
+                    flats[1] -= 1;
+                    Piece::BlackWall
+                }
+            };
+            let index = (x - FLAT_OFFSET) % 36;
+            stacks[index as usize].push(piece);
         }
         // Todo reserves / understacks
         let res: Vec<_> = nn
             .iter()
-            .filter(|&&x| x >= 12288 && x < 12288 + 64)
+            .copied()
+            .filter(|&x| x >= OFFSET && x < UNDER_OFFSET)
             .collect();
         assert_eq!(res.len(), 2);
         dbg!(res[0]);
         dbg!(res[1]);
-        for under in nn.iter().copied().filter(|&x| x >= 12288 + 64) {
-            let x = under - (12288 + 64) - 1;
+        for under in nn.iter().copied().filter(|&x| x >= UNDER_OFFSET) {
+            let x = under - UNDER_OFFSET - 1;
             dbg!(x);
             let p = if x % 2 == 1 {
+                flats[0] -= 1;
                 Piece::WhiteFlat
             } else {
+                flats[1] -= 1;
                 Piece::BlackFlat
             };
             dbg!(p);
-            let outer = x / 32;
-            stacks[outer as usize].push(p);
-            // const UNDER_OFFSET: usize = 12288 + 64;
-            // let mut out = Vec::with_capacity(32);
-            // for (outer_idx, stack) in board.board().iter().enumerate() {
-            //     let len = std::cmp::min(stack.len(), 17);
-            //     for pos in 1..len {
-            //         let p = stack.from_top(pos).unwrap();
-            //         let c = (p.owner() == Color::White) as usize;
-            //         assert!(p.is_flat());
-            //         let idx = c + 2 * pos - 1 + outer_idx * 32;
-            //         out.push((UNDER_OFFSET + idx) as u16);
-            //     }
+            let outer = (x / 32) as usize;
+            assert!(stacks[outer].len() != 0);
+            // if stacks[outer].len() == 0 {
+            //     continue;
             // }
+            stacks[outer as usize].push(p);
         }
         for s in stacks.iter_mut() {
             s.reverse();
@@ -462,6 +575,9 @@ mod test {
         out.reset_stacks();
         dbg!(out.pieces_reserve(Color::White) + out.caps_reserve(Color::White));
         dbg!(out.pieces_reserve(Color::Black) + out.caps_reserve(Color::Black));
-        dbg!(out);
+        assert_eq!(
+            format!("{:?}", board).split_whitespace().nth(0),
+            format!("{:?}", out).split_whitespace().nth(0)
+        );
     }
 }

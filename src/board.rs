@@ -465,8 +465,13 @@ macro_rules! board_impl {
 
             fn reset_stacks(&mut self) {
                 // Fix stack index
+                let mut len = 0;
                 for (idx, stack) in self.board.iter_mut().enumerate() {
                     stack.set_index(idx);
+                    len += stack.len();
+                }
+                if len >= 2 && self.move_num < 2 {
+                    self.move_num = 2;
                 }
                 // Set zobrist
                 self.bits = BitboardStorage::build::<Self>(&self.board);
