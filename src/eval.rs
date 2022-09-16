@@ -6,7 +6,7 @@ use crate::Color;
 use crate::Position;
 
 pub use incremental::nn_repr;
-pub(crate) use incremental::Incremental;
+pub(crate) use incremental::{undo_nn_repr, Incremental};
 
 use std::fs::File;
 
@@ -143,40 +143,6 @@ pub struct Tinue6 {
 pub struct Tinue7 {
     pub attacker: Color,
 }
-
-macro_rules! tinue_eval {
-    ($board: ty, $weights: ty) => {
-        impl Evaluator for $weights {
-            type Game = $board;
-            #[inline(never)]
-            fn evaluate(&mut self, game: &Self::Game, _depth: usize) -> i32 {
-                let attacker = self.attacker;
-                let mut score = 100 - 5 * game.pieces_reserve(attacker) as i32;
-                score -= 10 * game.bits().blocker_pieces(!attacker).pop_count() as i32;
-                score += 2 * game
-                    .bits()
-                    .road_pieces(attacker)
-                    .critical_squares()
-                    .pop_count() as i32;
-                if game.side_to_move() == attacker {
-                    score
-                } else {
-                    -score
-                }
-            }
-            fn eval_stack(&self, _game: &Self::Game, _index: usize, _stack: &Stack) -> i32 {
-                unimplemented!()
-            }
-            fn eval_components(&self, _game: &Self::Game) -> EvalComponents {
-                unimplemented!()
-            }
-        }
-    };
-}
-
-tinue_eval![Board5, Tinue5];
-tinue_eval![Board6, Tinue6];
-tinue_eval![crate::Board7, Tinue7];
 
 macro_rules! eval_impl {
     ($board: ty, $weights: ty) => {

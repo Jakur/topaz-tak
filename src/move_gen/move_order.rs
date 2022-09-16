@@ -198,7 +198,8 @@ impl SmartMoveBuffer {
         info: &mut SearchInfo,
         thorough: bool,
     ) -> GameMove {
-        if NEURAL_SEARCH && thorough && self.queries <= 3 {
+        if NEURAL_SEARCH && thorough && self.queries <= 16 {
+            // board.side_to_move() == Color::White && self.queries <= 5 {
             self.queries += 1;
             if self.nn_out.len() == 0 {
                 self.nn_out = info.inc_weight.forward(board);
@@ -218,7 +219,7 @@ impl SmartMoveBuffer {
             self.moves.swap_remove(idx);
             return mv;
         }
-        if false {
+        if self.queries <= 16 {
             // self.queries <= 16
             self.queries += 1;
             let (idx, m) = self

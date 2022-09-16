@@ -52,6 +52,7 @@ pub trait TakBoard:
     fn empty_tiles(&self) -> BitIndexIterator<Self::Bits>;
     fn pieces_reserve(&self, player: Color) -> usize;
     fn caps_reserve(&self, player: Color) -> usize;
+    fn add_reserve(&mut self, player: Color, count: usize);
     fn road(&self, player: Color) -> bool;
     fn road_stack_throw(&self, road_pieces: <Self as TakBoard>::Bits, stack_move: GameMove)
         -> bool;
@@ -374,6 +375,9 @@ macro_rules! board_impl {
             }
             fn caps_reserve(&self, player: Color) -> usize {
                 self.caps_left[player as usize]
+            }
+            fn add_reserve(&mut self, player: Color, count: usize) {
+                self.flats_left[player as usize] += count;
             }
             fn road(&self, player: Color) -> bool {
                 self.bits.check_road(player)

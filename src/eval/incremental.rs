@@ -386,7 +386,7 @@ pub fn undo_nn_repr(nn: Vec<u16>) -> Board6 {
         .filter(|&x| x >= FLAT_OFFSET && x < OFFSET)
     {
         let index = ((x - FLAT_OFFSET) % 36) as usize;
-        if stacks[index].len() == 0 {
+        if stacks[index].len() != 0 {
             continue;
         }
         let piece = match (x - FLAT_OFFSET) / 36 {
@@ -501,7 +501,7 @@ mod test {
     }
     #[test]
     fn dummy() {
-        let tps = "x,x,x,2,x,2/x,x,x,2,x,x/x,x,1C,2,1S,x/x,1,1,1,2,x/x,x,2,2,1,1/x,x,2,1,x,x 1 9";
+        let tps = "x3,2,x,1/x,1,1,2,2,1/x,2,1,12C,1,1/x2,21C,1,2,x/x4,2,x/2,x5 2 11";
         let board = Board6::try_from_tps(tps).unwrap();
         let repr: Vec<_> = nn_repr(&board).into_iter().map(|x| x as usize).collect();
         dbg!(&repr);

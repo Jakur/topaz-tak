@@ -68,7 +68,7 @@ pub fn main() {
                 }
                 TakGame::Standard6(mut board) => {
                     let mut eval = Weights6::default();
-                    let mut board = board.with_komi(4);
+                    // let mut board = board.with_komi(4);
                     // let mut eval = eval::NNUE6::new();
                     search(&mut board, &mut eval, &mut info);
                 }
