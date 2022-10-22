@@ -11,7 +11,7 @@ lazy_static! {
     pub static ref TOP_MOVES: HashMap<GameMove, usize> = top_moves();
 }
 
-const NEURAL_SEARCH: bool = true;
+const NEURAL_SEARCH: bool = false;
 
 pub struct SmartMoveBuffer {
     moves: Vec<ScoredMove>,

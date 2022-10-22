@@ -23,10 +23,10 @@ pub struct Weights {
     black1: [[f32; DIM3]; DIM2],
     white_bias1: [f32; DIM3],
     black_bias1: [f32; DIM3],
-    white2: [[f32; DIM_MOVE]; DIM3],
-    black2: [[f32; DIM_MOVE]; DIM3],
-    white_bias2: [f32; DIM_MOVE],
-    black_bias2: [f32; DIM_MOVE],
+    white2: [f32; DIM3],
+    black2: [f32; DIM3],
+    white_bias2: f32,
+    black_bias2: f32,
 }
 
 impl Weights {
@@ -40,12 +40,12 @@ impl Weights {
             bias1: array_1d(lines.get(1)?),
             white1: array_2d(lines.get(2)?),
             white_bias1: array_1d(lines.get(3)?),
-            white2: array_2d(lines.get(4)?),
-            white_bias2: array_1d(lines.get(5)?),
+            white2: array_1d(lines.get(4)?),
+            white_bias2: array_1d::<1, _>(lines.get(5)?)[0],
             black1: array_2d(lines.get(6)?),
             black_bias1: array_1d(lines.get(7)?),
-            black2: array_2d(lines.get(8)?),
-            black_bias2: array_1d(lines.get(9)?),
+            black2: array_1d(lines.get(8)?),
+            black_bias2: array_1d::<1, _>(lines.get(9)?)[0],
         })
     }
     #[cfg(test)]
@@ -72,66 +72,67 @@ impl Weights {
         }
         out
     }
-    pub fn move_weights(&self, inc: &Incremental, is_white: bool) -> Vec<f32> {
+    #[cfg(feature = "rand")]
+    pub fn noisy_incremental_forward<R: rand::RngCore>(
+        &self,
+        inc: &Incremental,
+        is_white: bool,
+        rng: &mut R,
+    ) -> i32 {
+        use rand::Rng;
         let mut input = [0.0; DIM2];
         for i in 0..input.len() {
-            input[i] = (relu6_int(inc.storage[i]) as f32) / SCALE_FLOAT;
+            let sample = rng.sample::<f32, _>(rand_distr::StandardNormal) * SCALE_FLOAT / 10.0;
+            input[i] = (relu6_int(inc.storage[i] + sample as i16) as f32) / SCALE_FLOAT;
         }
-        let (inner1, bias2, inner2, bias3) = if is_white {
-            (
-                &self.white1,
-                &self.white_bias1,
-                &self.white2,
-                &self.white_bias2,
-            )
+        let (mut middle, inner1) = if is_white {
+            (self.white_bias1.clone(), &self.white1)
         } else {
-            (
-                &self.black1,
-                &self.black_bias1,
-                &self.black2,
-                &self.black_bias2,
-            )
+            (self.black_bias1.clone(), &self.black1)
         };
-        let mut middle = bias2.clone();
         for i in 0..DIM2 {
             for j in 0..DIM3 {
                 middle[j] += input[i] * inner1[i][j];
             }
         }
-        for m in middle.iter_mut() {
-            *m = relu6(*m);
+        let (mut out, inner2) = if is_white {
+            (self.white_bias2, &self.white2)
+        } else {
+            (self.black_bias2, &self.black2)
+        };
+
+        for i in 0..middle.len() {
+            out += relu6(middle[i]) * inner2[i];
         }
-        let mut out: Vec<_> = bias3.iter().copied().collect();
-        for i in 0..DIM3 {
-            for j in 0..DIM_MOVE {
-                out[j] += middle[i] * inner2[i][j];
+        ((out as f64).tanh() * SCALE_FLOAT as f64).trunc() as i32
+    }
+    pub fn incremental_forward(&self, inc: &Incremental, is_white: bool) -> i32 {
+        let mut input = [0.0; DIM2];
+        for i in 0..input.len() {
+            input[i] = (relu6_int(inc.storage[i]) as f32) / SCALE_FLOAT;
+        }
+        let (mut middle, inner1) = if is_white {
+            (self.white_bias1.clone(), &self.white1)
+        } else {
+            (self.black_bias1.clone(), &self.black1)
+        };
+        for i in 0..DIM2 {
+            for j in 0..DIM3 {
+                middle[j] += input[i] * inner1[i][j];
             }
         }
-        out
-    }
-    // pub fn incremental_forward(&self, inc: &Incremental, is_white: bool) -> i32 {
-    //     let mut input = [0.0; DIM2];
-    //     for i in 0..input.len() {
-    //         input[i] = (relu6_int(inc.storage[i]) as f32) / SCALE_FLOAT;
-    //     }
-    //     let mut middle = self.bias2.clone();
-    // for i in 0..DIM2 {
-    //     for j in 0..DIM3 {
-    //         middle[j] += input[i] * self.inner1[j][i];
-    //     }
-    // }
-    //     let (mut out, inner2) = if is_white {
-    //         (self.white_bias, &self.white)
-    //     } else {
-    //         (self.black_bias, &self.black)
-    //     };
+        let (mut out, inner2) = if is_white {
+            (self.white_bias2, &self.white2)
+        } else {
+            (self.black_bias2, &self.black2)
+        };
 
-    //     for i in 0..middle.len() {
-    //         out += relu6(middle[i]) * inner2[i];
-    //     }
-    //     // dbg!(out);
-    //     ((out as f64).tanh() * SCALE_FLOAT as f64).trunc() as i32
-    // }
+        for i in 0..middle.len() {
+            out += relu6(middle[i]) * inner2[i];
+        }
+        // dbg!(out);
+        ((out as f64).tanh() * SCALE_FLOAT as f64).trunc() as i32
+    }
 }
 
 pub fn nn_repr<T: TakBoard>(board: &T) -> Vec<u16> {
@@ -257,7 +258,6 @@ fn array_2d<const A: usize, const B: usize, T: Scalar>(line: &str) -> [[T; A]; B
 }
 
 fn array_1d<const A: usize, T: Scalar>(line: &str) -> [T; A] {
-    // dbg!(&line);
     let mut out = [T::ZERO; A];
     let mut count = 0;
     for (i, val) in line
@@ -505,9 +505,14 @@ mod test {
         let board = Board6::try_from_tps(tps).unwrap();
         let repr: Vec<_> = nn_repr(&board).into_iter().map(|x| x as usize).collect();
         dbg!(&repr);
-        let inc = crate::eval::NN6.build_incremental(&repr);
-        let v = crate::eval::NN6.move_weights(&inc, board.side_to_move() == Color::White);
-        dbg!(&v[64]);
+        let x = vec![
+            180, 512, 1024, 1558, 2064, 2985, 3083, 4036, 4105, 4146, 4184, 4185, 4194, 4201, 4252,
+            4286, 4593, 4753, 4756, 4758, 4760, 4762, 4764, 4849, 5330, 5331,
+        ];
+        dbg!(undo_nn_repr(x));
+        // let inc = crate::eval::NN6.build_incremental(&repr);
+        // let v = crate::eval::NN6.move_weights(&inc, board.side_to_move() == Color::White);
+        // dbg!(&v[64]);
     }
     #[test]
     fn test_undo_nn_repr() {

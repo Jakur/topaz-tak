@@ -37,6 +37,61 @@ pub trait Evaluator {
     fn eval_components(&self, game: &Self::Game) -> EvalComponents;
 }
 
+pub struct NoisyNNUE6 {
+    incremental_weights: incremental::Incremental,
+    old: Vec<u16>,
+    rng: rand_xoshiro::Xoroshiro128Plus,
+}
+
+impl Default for NoisyNNUE6 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NoisyNNUE6 {
+    pub fn new() -> Self {
+        use rand::SeedableRng;
+        let incremental_weights = NN6.build_incremental(&[]);
+        let old = Vec::new();
+        Self {
+            incremental_weights,
+            old,
+            rng: rand_xoshiro::Xoroshiro128Plus::from_entropy(),
+        }
+    }
+}
+
+impl Evaluator for NoisyNNUE6 {
+    type Game = Board6;
+
+    fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
+        const TEMPO_OFFSET: i32 = 150;
+        let mut new = nn_repr(game);
+        self.incremental_weights.update_diff(&self.old, &new, &NN6);
+        let score = NN6.noisy_incremental_forward(
+            &self.incremental_weights,
+            game.side_to_move() == Color::White,
+            &mut self.rng,
+        );
+        std::mem::swap(&mut new, &mut self.old);
+
+        if depth % 2 == 1 {
+            score + TEMPO_OFFSET
+        } else {
+            score
+        }
+    }
+
+    fn eval_stack(&self, _game: &Self::Game, _index: usize, _stack: &Stack) -> i32 {
+        unimplemented!()
+    }
+
+    fn eval_components(&self, _game: &Self::Game) -> EvalComponents {
+        unimplemented!()
+    }
+}
+
 pub struct NNUE6 {
     incremental_weights: incremental::Incremental,
     old: Vec<u16>,
@@ -69,34 +124,33 @@ impl Evaluator for NNUE6 {
         // {
         //     return self.classical.evaluate(game, depth);
         // }
-        // const TEMPO_OFFSET: i32 = 150;
-        // let mut new = nn_repr(game);
-        // self.incremental_weights.update_diff(&self.old, &new, &NN6);
-        // let score = NN6.incremental_forward(
+        const TEMPO_OFFSET: i32 = 150;
+        let mut new = nn_repr(game);
+        self.incremental_weights.update_diff(&self.old, &new, &NN6);
+        let score = NN6.incremental_forward(
+            &self.incremental_weights,
+            game.side_to_move() == Color::White,
+        );
+        std::mem::swap(&mut new, &mut self.old);
+        // let rev_score = NN6.incremental_forward(
         //     &self.incremental_weights,
-        //     game.side_to_move() == Color::White,
+        //     game.side_to_move() != Color::White,
         // );
-        // std::mem::swap(&mut new, &mut self.old);
-        // // let rev_score = NN6.incremental_forward(
-        // //     &self.incremental_weights,
-        // //     game.side_to_move() != Color::White,
-        // // );
-        // // let diff = score + rev_score;
-        // // let tempo = {
-        // //     if diff < 50 {
-        // //         TEMPO_OFFSET / 2
-        // //     } else if diff <= TEMPO_OFFSET {
-        // //         TEMPO_OFFSET
-        // //     } else {
-        // //         TEMPO_OFFSET + TEMPO_OFFSET / 2
-        // //     }
-        // // };
-        // if depth % 2 == 1 {
-        //     score + TEMPO_OFFSET
-        // } else {
-        //     score
-        // }
-        unimplemented!()
+        // let diff = score + rev_score;
+        // let tempo = {
+        //     if diff < 50 {
+        //         TEMPO_OFFSET / 2
+        //     } else if diff <= TEMPO_OFFSET {
+        //         TEMPO_OFFSET
+        //     } else {
+        //         TEMPO_OFFSET + TEMPO_OFFSET / 2
+        //     }
+        // };
+        if depth % 2 == 1 {
+            score + TEMPO_OFFSET
+        } else {
+            score
+        }
     }
 
     fn eval_stack(&self, _game: &Self::Game, _index: usize, _stack: &Stack) -> i32 {
@@ -880,7 +934,7 @@ impl Weights6 {
 
     #[cfg(feature = "random")]
     pub fn add_noise(&mut self) {
-        use rand_core::{RngCore, SeedableRng};
+        use rand::{RngCore, SeedableRng};
         let mut seed: [u8; 32] = [0; 32];
         getrandom::getrandom(&mut seed).unwrap();
         let mut rng = rand_xoshiro::Xoshiro256PlusPlus::from_seed(seed);

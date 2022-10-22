@@ -13,7 +13,7 @@ use std::thread;
 use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
-use topaz_tak::eval::{Evaluator, Tinue6, Weights5, Weights6};
+use topaz_tak::eval::{Evaluator, NoisyNNUE6 as NNUE6, Tinue6, Weights5, Weights6};
 use topaz_tak::search::book;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
@@ -67,9 +67,9 @@ pub fn main() {
                     search(&mut board, &mut eval, &mut info);
                 }
                 TakGame::Standard6(mut board) => {
-                    let mut eval = Weights6::default();
+                    // let mut eval = Weights6::default();
                     // let mut board = board.with_komi(4);
-                    // let mut eval = eval::NNUE6::new();
+                    let mut eval = eval::NNUE6::new();
                     search(&mut board, &mut eval, &mut info);
                 }
                 _ => todo!(),
@@ -694,7 +694,7 @@ fn tei_loop() {
                 thread::spawn(move || match size {
                     5 => play_game_tei::<Weights5>(recv, init).unwrap(),
                     // 6 => play_game_tei::<eval::NNUE6>(recv, init).unwrap(),
-                    6 => play_game_tei::<Weights6>(recv, init).unwrap(),
+                    6 => play_game_tei::<NNUE6>(recv, init).unwrap(),
                     _ => unimplemented!(),
                 });
             }
@@ -743,9 +743,10 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
     let mut move_cache = Vec::new();
     let mut board = Board6::new().with_komi(KOMI);
     let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
-    let book = playtak_book();
-    let mut eval = Weights6::default();
-    // let mut eval = crate::eval::NNUE6::default();
+    let mut book = playtak_book();
+    book = None;
+    // let mut eval = Weights6::default();
+    let mut eval = NNUE6::default();
     // eval.add_noise();
     // let eval = Evaluator6 {};
     'outer: loop {
@@ -827,11 +828,11 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
     // let mut opp = "Tiltak_Bot"; // Todo make this env variable
-    let mut opp = "Tiltak_Bot";
+    let mut opp = "Foo";
     let login_s = if let Some((user, pass)) = playtak_auth() {
         format!("Login {} {}\n", user, pass)
     } else {
-        "Login Guest".to_string()
+        "Login Guest\n".to_string()
     };
     std::thread::spawn(move || {
         let mut com = telnet::Telnet::connect(("playtak.com", 10_000), 2048).unwrap();
@@ -851,7 +852,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                         let s = std::str::from_utf8(&(*buffer)).unwrap();
                         print!("{}", s);
                         for line in s.lines() {
-                            if line.starts_with("Welcome!") {
+                            if line.starts_with("Login or Register") {
                                 println!("Logging in");
                                 com.write(login_s.as_bytes()).unwrap();
                             } else if line.starts_with("Game#") {
@@ -905,6 +906,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                 com.write(s.as_bytes()).unwrap();
                                 goal = None;
                             } else if !live_seek && counter >= 5 {
+                                dbg!("Seeking");
                                 let s = "Seek 6 900 30 A 4 30 1 0 0 \n";
                                 com.write(s.as_bytes()).unwrap();
                                 live_seek = true;
@@ -1028,7 +1030,7 @@ fn save_playtak_book(book: &book::Book) -> Result<()> {
 }
 
 fn gen_magics() {
-    use rand_core::SeedableRng;
+    use rand::SeedableRng;
     let mut seed: [u8; 32] = [0; 32];
     getrandom::getrandom(&mut seed).unwrap();
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::from_seed(seed);

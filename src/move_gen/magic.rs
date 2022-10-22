@@ -192,7 +192,7 @@ impl LookupTempKey {
 }
 
 #[cfg(feature = "random")]
-pub fn generate_move_magic6<R: rand_core::RngCore>(rng: &mut R) {
+pub fn generate_move_magic6<R: rand::RngCore>(rng: &mut R) {
     let mut builder = Jagged2DBuilder::default();
     for idx in 0..36 {
         let mut magic = 0;
@@ -228,7 +228,7 @@ pub fn generate_move_magic6<R: rand_core::RngCore>(rng: &mut R) {
 }
 
 #[cfg(feature = "random")]
-fn gen_magic<R: rand_core::RngCore>(rng: &mut R) -> u64 {
+fn gen_magic<R: rand::RngCore>(rng: &mut R) -> u64 {
     rng.next_u64() & rng.next_u64() & rng.next_u64()
 }
 

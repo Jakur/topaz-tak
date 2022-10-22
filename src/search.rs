@@ -83,10 +83,11 @@ impl Update {
     pub(crate) fn forward<T: TakBoard>(&mut self, game: &T) -> Vec<f32> {
         let mut new = crate::eval::nn_repr(game);
         self.incremental_weights.update_diff(&self.old, &new, &NN6);
-        let scores = NN6.move_weights(
-            &self.incremental_weights,
-            game.side_to_move() == Color::White,
-        );
+        let scores = todo!();
+        // let scores = NN6.move_weights(
+        //     &self.incremental_weights,
+        //     game.side_to_move() == Color::White,
+        // );
         std::mem::swap(&mut new, &mut self.old);
         scores
     }
