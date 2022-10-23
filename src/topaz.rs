@@ -441,6 +441,7 @@ fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>, svg: bool) -> Resu
     let seconds = time.elapsed().as_secs();
     println!("Done in {} seconds", seconds);
     if svg {
+        // Build temp file
         let file = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -456,6 +457,16 @@ fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>, svg: bool) -> Resu
                 search.is_attacker(),
             )
             .unwrap();
+        // Build svg
+        let reader = std::io::BufReader::new(std::fs::File::open("proof-data.txt").unwrap());
+        let writer = std::io::BufWriter::new(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open("tinue.svg")
+                .unwrap(),
+        );
+        inferno::flamegraph::handle_file(reader, writer).unwrap();
     } else {
         let mut interactive = crate::search::proof::InteractiveSearch::new(search);
         let mut first = true;
