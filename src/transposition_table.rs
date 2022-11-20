@@ -28,7 +28,7 @@ impl HashTable {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         for i in 0..self.size {
             for e_i in 0..TT_BUCKET_SIZE {
                 self.buckets[i].entries[e_i].clear();
@@ -53,7 +53,7 @@ impl HashTable {
     }
 
     #[inline]
-    pub fn put(&mut self, hash: u64, entry: HashEntry) {
+    pub fn put(&self, hash: u64, entry: HashEntry) {
         if TT_BUCKET_SIZE == 2 {
             self.put_2way(hash, entry);
         } else {
@@ -62,22 +62,22 @@ impl HashTable {
     }
 
     // put for 2 way hash table (bucket size == 2)
-    fn put_2way(&mut self, hash: u64, entry: HashEntry) {
-        let bucket = &mut self.buckets[hash as usize % self.size];
+    fn put_2way(&self, hash: u64, entry: HashEntry) {
+        let bucket = &self.buckets[hash as usize % self.size];
         let depth_entry: HashEntry = (&bucket.entries[0]).into();
         if entry.depth() > depth_entry.depth()
             || entry.depth() + entry.ply > depth_entry.depth() + depth_entry.ply + TT_DISCARD_AGE
         {
-            bucket.entries[0] = entry.into();
+            bucket.entries[0].replace(entry);
         } else {
-            bucket.entries[1] = entry.into();
+            bucket.entries[1].replace(entry);
         }
     }
 
     // put for arbitrary bucket size
-    fn put_any(&mut self, hash: u64, entry: HashEntry) {
+    fn put_any(&self, hash: u64, entry: HashEntry) {
         let slot: usize = hash as usize % self.size;
-        let bucket = &mut self.buckets[slot];
+        let bucket = &self.buckets[slot];
 
         let mut worst_idx = 0;
         let mut worst_score = 10000;
@@ -86,7 +86,7 @@ impl HashTable {
             // we never want 2 entries of same position!!!
             if cur_entry.check_hash(hash) {
                 if entry.depth() >= cur_entry.depth() {
-                    bucket.entries[i] = entry.into();
+                    bucket.entries[i].replace(entry);
                 }
                 return;
             }
@@ -96,7 +96,7 @@ impl HashTable {
                 worst_idx = i;
             }
         }
-        bucket.entries[worst_idx] = entry.into();
+        bucket.entries[worst_idx].replace(entry);
     }
 
     #[inline]
@@ -156,6 +156,12 @@ impl ConcurrentEntry {
     fn ply(&self) -> u32 {
         self.score_flags.load(Ordering::Relaxed) & 0xFF
     }
+    fn replace(&self, other: HashEntry) {
+        self.hash_and_move
+            .store(other.first_val(), Ordering::Relaxed);
+        self.score_flags
+            .store(other.second_val(), Ordering::Relaxed);
+    }
 }
 
 impl Clone for ConcurrentEntry {
@@ -204,7 +210,7 @@ impl From<&ConcurrentEntry> for HashEntry {
 
 // Right now this totals to 16 bytes.
 // This means not only less memory usage, but is also much faster because of
-// cache utilization. each slot (2 entries) is loaded with a single cache line.
+// cache utilization. each slot (4 entries) is loaded with a single cache line.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HashEntry {
     hash_hi: u32,            // 4 bytes (~3 low bytes are encoded in the HashTable idx)
@@ -267,6 +273,19 @@ impl HashEntry {
             return ScoreCutoff::Alpha(self.score_val);
         }
         return ScoreCutoff::Exact(self.score_val);
+    }
+
+    pub fn first_val(&self) -> u64 {
+        let mut first = (self.hash_hi as u64) << 32;
+        first |= self.game_move.raw() as u64;
+        first
+    }
+
+    pub fn second_val(&self) -> u32 {
+        let mut second = (self.score_val as u32) << 16;
+        second |= (self.depth_flags as u32) << 8;
+        second |= self.ply as u32;
+        second
     }
 
     #[inline]

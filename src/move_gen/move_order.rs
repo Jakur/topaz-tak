@@ -11,14 +11,11 @@ lazy_static! {
     pub static ref TOP_MOVES: HashMap<GameMove, usize> = top_moves();
 }
 
-const NEURAL_SEARCH: bool = false;
-
 pub struct SmartMoveBuffer {
     moves: Vec<ScoredMove>,
     stack_hist: Vec<i16>,
     queries: usize,
     flat_attempts: i16,
-    nn_out: Vec<f32>,
 }
 
 impl SmartMoveBuffer {
@@ -28,7 +25,6 @@ impl SmartMoveBuffer {
             stack_hist: vec![0; 36],
             queries: 0,
             flat_attempts: 0,
-            nn_out: Vec::new(),
         }
     }
     pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T) {
@@ -196,29 +192,8 @@ impl SmartMoveBuffer {
         &mut self,
         board: &T,
         info: &mut SearchInfo,
-        thorough: bool,
+        ply: usize,
     ) -> GameMove {
-        if NEURAL_SEARCH && thorough && self.queries <= 16 {
-            // board.side_to_move() == Color::White && self.queries <= 5 {
-            self.queries += 1;
-            if self.nn_out.len() == 0 {
-                self.nn_out = info.inc_weight.forward(board);
-            }
-            let (idx, m) = self
-                .moves
-                .iter()
-                .enumerate()
-                .max_by_key(|(_i, &m)| {
-                    TOP_MOVES
-                        .get(&m.mv.white().no_crush())
-                        .map(|x| (self.nn_out[*x] * 1_000.0) as i32)
-                        .unwrap_or(i32::MIN)
-                })
-                .unwrap();
-            let mv = m.mv;
-            self.moves.swap_remove(idx);
-            return mv;
-        }
         if self.queries <= 16 {
             // self.queries <= 16
             self.queries += 1;
@@ -227,7 +202,7 @@ impl SmartMoveBuffer {
                 .iter()
                 .enumerate()
                 .max_by_key(|(_i, &m)| {
-                    m.score //+ info.killer_moves[ply % info.max_depth].score(m.mv) as i16
+                    m.score + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
                         - self.penalty_hist_score(m.mv)
                 })
                 .unwrap();
@@ -477,7 +452,7 @@ mod test {
         moves.moves.sort_by_key(|x| -x.score);
         assert!(moves.moves[0].score >= moves.moves.last().unwrap().score);
         let mut info = SearchInfo::new(1, 0);
-        let order = (0..moves.moves.len()).map(|_| moves.get_best(&board, &mut info, false));
+        let order = (0..moves.moves.len()).map(|_| moves.get_best(&board, &mut info, 0));
         // let order: Vec<_> = moves.moves.into_iter().map(|x| *x.mv).collect();
         for m in order {
             println!("{}", m.to_ptn::<Board6>());

@@ -186,18 +186,6 @@ impl Evaluator6 {
 pub const WIN_SCORE: i32 = 10_000;
 pub const LOSE_SCORE: i32 = -1 * WIN_SCORE;
 
-pub struct Tinue5 {
-    pub attacker: Color,
-}
-
-pub struct Tinue6 {
-    pub attacker: Color,
-}
-
-pub struct Tinue7 {
-    pub attacker: Color,
-}
-
 macro_rules! eval_impl {
     ($board: ty, $weights: ty) => {
         impl Evaluator for $weights {
@@ -387,6 +375,15 @@ macro_rules! eval_impl {
                         if let Some(Piece::WhiteFlat) = stack.under_top() {
                             pw += 30;
                         }
+                        // match captive {
+                        //     0 => {}
+                        //     1 => pw -= 10,
+                        //     2 => pw -= 20,
+                        //     3 => pw -= 35,
+                        //     4 => pw -= 50,
+                        //     5 => pw -= 65,
+                        //     _ => pw -= 100,
+                        // }
                     }
                     Piece::BlackCap => {
                         safety += 64;
@@ -394,6 +391,15 @@ macro_rules! eval_impl {
                         if let Some(Piece::BlackFlat) = stack.under_top() {
                             pw += 30;
                         }
+                        // match captive {
+                        //     0 => {}
+                        //     1 => pw -= 10,
+                        //     2 => pw -= 20,
+                        //     3 => pw -= 35,
+                        //     4 => pw -= 50,
+                        //     5 => pw -= 65,
+                        //     _ => pw -= 100,
+                        // }
                     }
                 }
                 let neighbors = <Self::Game as TakBoard>::Bits::index_to_bit(idx).adjacent();

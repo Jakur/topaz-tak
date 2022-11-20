@@ -766,7 +766,7 @@ where
     let ply_depth = info.ply_depth(board);
     for c in 0..moves.len() {
         let count = if has_searched_pv { c + 1 } else { c };
-        let m = moves.get_best(board, info, is_pv);
+        let m = moves.get_best(board, info, ply_depth);
         // if ply_depth == 0 {
         //     // Root
         //     dbg!(depth);
@@ -988,9 +988,9 @@ fn gen_and_score<T>(
         }
         let mut check_moves = Vec::new();
         generate_aggressive_place_moves(board, &mut check_moves);
-        // let tak_threats = board.get_tak_threats(&mut check_moves, None);
+        let tak_threats = board.get_tak_threats(&mut check_moves, None);
         moves.gen_score_place_moves(board, &info.hist_moves);
-        // moves.score_tak_threats(&tak_threats);
+        moves.score_tak_threats(&tak_threats);
         if board.ply() >= 4 {
             moves.score_stack_moves(board);
         }

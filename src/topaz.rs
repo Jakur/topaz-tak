@@ -13,7 +13,7 @@ use std::thread;
 use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
-use topaz_tak::eval::{Evaluator, NoisyNNUE6 as NNUE6, Tinue6, Weights5, Weights6};
+use topaz_tak::eval::{Evaluator, NoisyNNUE6 as NNUE6, Weights5, Weights6};
 use topaz_tak::search::book;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
@@ -67,9 +67,9 @@ pub fn main() {
                     search(&mut board, &mut eval, &mut info);
                 }
                 TakGame::Standard6(mut board) => {
-                    // let mut eval = Weights6::default();
-                    // let mut board = board.with_komi(4);
-                    let mut eval = eval::NNUE6::new();
+                    let mut eval = Weights6::default();
+                    let mut board = board.with_komi(4);
+                    // let mut eval = eval::NNUE6::new();
                     search(&mut board, &mut eval, &mut info);
                 }
                 _ => todo!(),
@@ -705,7 +705,7 @@ fn tei_loop() {
                 thread::spawn(move || match size {
                     5 => play_game_tei::<Weights5>(recv, init).unwrap(),
                     // 6 => play_game_tei::<eval::NNUE6>(recv, init).unwrap(),
-                    6 => play_game_tei::<NNUE6>(recv, init).unwrap(),
+                    6 => play_game_tei::<Weights6>(recv, init).unwrap(),
                     _ => unimplemented!(),
                 });
             }
