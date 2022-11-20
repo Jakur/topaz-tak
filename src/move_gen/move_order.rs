@@ -188,11 +188,11 @@ impl SmartMoveBuffer {
             }
         }
     }
-    pub fn get_best<T: TakBoard>(
+    pub fn get_best(
         &mut self,
-        board: &T,
         info: &mut SearchInfo,
         ply: usize,
+        freed_square: Option<usize>,
     ) -> GameMove {
         if self.queries <= 16 {
             // self.queries <= 16
@@ -202,8 +202,15 @@ impl SmartMoveBuffer {
                 .iter()
                 .enumerate()
                 .max_by_key(|(_i, &m)| {
-                    m.score + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
-                        - self.penalty_hist_score(m.mv)
+                    if let Some(sq) = freed_square {
+                        let fill_void = (m.mv.src_index() == sq && m.mv.is_place_move()) as i16;
+                        m.score + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
+                            - self.penalty_hist_score(m.mv)
+                            + fill_void * 50
+                    } else {
+                        m.score + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
+                            - self.penalty_hist_score(m.mv)
+                    }
                 })
                 .unwrap();
             let m = *m;
@@ -452,7 +459,7 @@ mod test {
         moves.moves.sort_by_key(|x| -x.score);
         assert!(moves.moves[0].score >= moves.moves.last().unwrap().score);
         let mut info = SearchInfo::new(1, 0);
-        let order = (0..moves.moves.len()).map(|_| moves.get_best(&board, &mut info, 0));
+        let order = (0..moves.moves.len()).map(|_| moves.get_best(&mut info, 0, None));
         // let order: Vec<_> = moves.moves.into_iter().map(|x| *x.mv).collect();
         for m in order {
             println!("{}", m.to_ptn::<Board6>());

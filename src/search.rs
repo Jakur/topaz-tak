@@ -54,7 +54,6 @@ pub struct SearchInfo {
     pv_table: HashTable,
     pub killer_moves: Vec<KillerMoves>,
     pub hist_moves: PlaceHistory<36>, // Todo make this better generic
-    pub stack_win_kill: Vec<KillerMoves>,
     stopped: bool,
     input: Option<Receiver<TeiCommand>>,
     time_bank: TimeBank,
@@ -99,7 +98,6 @@ impl SearchInfo {
             max_depth,
             pv_table: HashTable::new(pv_size),
             killer_moves: vec![KillerMoves::new(); max_depth + 1],
-            stack_win_kill: vec![KillerMoves::new(); max_depth + 1],
             hist_moves: PlaceHistory::new(), // Todo init in search
             nodes: 0,
             stopped: false,
@@ -766,7 +764,12 @@ where
     let ply_depth = info.ply_depth(board);
     for c in 0..moves.len() {
         let count = if has_searched_pv { c + 1 } else { c };
-        let m = moves.get_best(board, info, ply_depth);
+        let freed = last_move
+            .filter(|x| {
+                x.game_move.is_stack_move() && board.board()[x.game_move.src_index()].is_empty()
+            })
+            .map(|x| x.game_move.src_index());
+        let m = moves.get_best(info, ply_depth, freed);
         // if ply_depth == 0 {
         //     // Root
         //     dbg!(depth);
