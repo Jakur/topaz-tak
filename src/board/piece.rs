@@ -1,6 +1,6 @@
 use crate::Color;
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Hash)]
 pub enum Piece {
     WhiteFlat = 1,
     WhiteWall = 2,

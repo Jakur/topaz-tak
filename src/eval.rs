@@ -71,10 +71,10 @@ impl Evaluator for NNUE6 {
         // {
         //     return self.classical.evaluate(game, depth);
         // }
-        const TEMPO_OFFSET: i32 = 100;
+        const TEMPO_OFFSET: i32 = 0;
         let mut new = nn_repr(game);
         self.incremental_weights.update_diff(&self.old, &new, &NN6);
-        let mut score = NN6.incremental_forward(
+        let score = NN6.incremental_forward(
             &self.incremental_weights,
             game.side_to_move() != Color::White,
         );

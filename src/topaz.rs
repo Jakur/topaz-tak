@@ -45,7 +45,7 @@ lazy_static! {
         ("endgame1", "1,2,1,1,1S,212212/112,22,x,1,1S,2/1,2,212C,2,1112S,x/x,2,1,1,12221C,2/1,1S,1S,12,x,22121S/1,12,1,2,x,2 1 46"),
         ("endgame2", "2,x,2,2,1,1/1,2,2,1,12,1/1,2112S,x,1,2,1/21,2,2221S,2,2112C,2/2,121,1,2S,11221C,1/12,222221S,12,1,1,1 1 43"),
         ("endgame3", "x2,21,122,1121S,112S/1S,x,1112,x,2S,x/112C,2S,x,1222221C,2,x/2,x2,1,2121S,x/112,1112111112S,x3,221S/2,2,x2,21,2 1 56"),
-        ].iter().map(|x| *x).collect();
+        ].into_iter().collect();
         x
     };
 }
@@ -753,15 +753,17 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
         match message {
             TeiCommand::Go(_) => {
                 if let Some(ref book) = book {
-                    let symmetries = board.symmetries();
-                    for (sym_idx, pos) in symmetries.into_iter().enumerate() {
-                        if let Some(mv_str) = book.get(&pos.hash()) {
-                            let mv = GameMove::try_from_ptn(mv_str.as_str(), &pos);
-                            if let Some(mv) = mv {
-                                let fixed_mv = mv.reverse_symmetry::<Board6>(sym_idx);
-                                if board.legal_move(fixed_mv) {
-                                    server_send.send(fixed_mv.to_ptn::<Board6>()).unwrap();
-                                    continue 'outer;
+                    if board.ply() <= 6 {
+                        let symmetries = board.symmetries();
+                        for (sym_idx, pos) in symmetries.into_iter().enumerate() {
+                            if let Some(mv_str) = book.get(&pos.hash()) {
+                                let mv = GameMove::try_from_ptn(mv_str.as_str(), &pos);
+                                if let Some(mv) = mv {
+                                    let fixed_mv = mv.reverse_symmetry::<Board6>(sym_idx);
+                                    if board.legal_move(fixed_mv) {
+                                        server_send.send(fixed_mv.to_ptn::<Board6>()).unwrap();
+                                        continue 'outer;
+                                    }
                                 }
                             }
                         }
@@ -826,8 +828,8 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 }
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
-    // let mut opp = "Tiltak_Bot"; // Todo make this env variable
-    let mut opp = "Tiltak_Bot";
+    let mut opp = "x57696c6c";
+    // let mut opp = "Tiltak_Bot";
     let login_s = if let Some((user, pass)) = playtak_auth() {
         format!("Login {} {}\n", user, pass)
     } else {

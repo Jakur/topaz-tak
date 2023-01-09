@@ -24,6 +24,23 @@ impl Stack {
     pub fn init(&mut self, index: usize) {
         self.index = index as u8;
     }
+    pub fn from_bits(high_bits: u64, length: u8, top_piece: Piece) -> Self {
+        let mut dummy: BitboardStorage<crate::board::Bitboard6> = BitboardStorage::default();
+        match length {
+            0 => Self::new(),
+            1 => {
+                let mut stack = Stack::new();
+                stack.push(top_piece, &mut dummy);
+                stack
+            }
+            _ => {
+                let mut stack = Stack::new();
+                stack.push(top_piece, &mut dummy);
+                stack.data |= high_bits << 1;
+                stack
+            }
+        }
+    }
     fn get_inner_piece(&self, index: usize) -> Piece {
         let mask = 1 << index;
         if self.data & mask == 0 {
