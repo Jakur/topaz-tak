@@ -67,9 +67,9 @@ pub fn main() {
                     search(&mut board, &mut eval, &mut info);
                 }
                 TakGame::Standard6(mut board) => {
-                    let mut eval = Weights6::default();
-                    let mut board = board.with_komi(4);
-                    // let mut eval = eval::NNUE6::new();
+                    // let mut eval = Weights6::default();
+                    let mut board = board.with_komi(0);
+                    let mut eval = eval::NNUE6::new();
                     search(&mut board, &mut eval, &mut info);
                 }
                 _ => todo!(),
@@ -739,13 +739,13 @@ impl GameInitializer {
 
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
     const MAX_DEPTH: usize = 32;
-    const KOMI: u8 = 4;
+    const KOMI: u8 = 0;
     let mut move_cache = Vec::new();
     let mut board = Board6::new().with_komi(KOMI);
     let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
     let book = playtak_book();
-    let mut eval = Weights6::default();
-    // let mut eval = crate::eval::NNUE6::default();
+    // let mut eval = Weights6::default();
+    let mut eval = crate::eval::NNUE6::default();
     // eval.add_noise();
     // let eval = Evaluator6 {};
     'outer: loop {
