@@ -40,6 +40,7 @@ pub struct NNUE6 {
     incremental_weights: incremental::Incremental,
     old: Vec<u16>,
     classical: Weights6,
+    pos_seed: u64,
 }
 
 impl Default for NNUE6 {
@@ -53,10 +54,13 @@ impl NNUE6 {
         let incremental_weights = NN6.build_incremental(&[]);
         let old = Vec::new();
         let classical = Weights6::default();
+        let mut seed: [u8; 8] = [0; 8];
+        getrandom::getrandom(&mut seed);
         Self {
             incremental_weights,
             old,
             classical,
+            pos_seed: u64::from_ne_bytes(seed),
         }
     }
 }
@@ -74,10 +78,16 @@ impl Evaluator for NNUE6 {
         const TEMPO_OFFSET: i32 = 0;
         let mut new = nn_repr(game);
         self.incremental_weights.update_diff(&self.old, &new, &NN6);
-        let score = NN6.incremental_forward(
+        // let rand_seed = Some(self.pos_seed ^ game.hash());
+        let rand_seed = None;
+        let mut score = NN6.incremental_forward(
             &self.incremental_weights,
             game.side_to_move() != Color::White,
+            rand_seed,
         );
+        if score > 400 || score < -400 {
+            score += self.classical.evaluate(game, depth) / 8;
+        }
         // score += self.classical.evaluate(game, depth) / 2;
         // let mut score = -NN6.incremental_forward(
         //     &self.incremental_weights,
@@ -546,12 +556,12 @@ fn attackable_cs<B: TakBoard>(color: Color, game: &B) -> i32 {
 
 eval_impl![Board6, Weights6];
 eval_impl![Board5, Weights5];
-#[cfg(test)]
+
 struct BitOutcome<B> {
     bits: B,
     steps: usize,
 }
-#[cfg(test)]
+
 impl<B> BitOutcome<B> {
     fn new(bits: B, steps: usize) -> Self {
         Self { bits, steps }
@@ -704,7 +714,6 @@ where
     }
 }
 
-#[cfg(test)]
 fn connected_components<B: Bitboard, F: Fn(B, B) -> B>(mut bits: B, flood_fn: F) -> BitOutcome<B> {
     let mut count = 0;
     let mut largest = B::ZERO;

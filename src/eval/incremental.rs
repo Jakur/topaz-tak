@@ -1,6 +1,8 @@
+use crate::eval::{attackable_cs, connected_components};
 use crate::{board::Bitboard6, Bitboard, BitboardStorage, Piece};
 use crate::{board::TakBoard, Board6, Color};
 use bitintr::Pdep;
+use rand_core::{RngCore, SeedableRng};
 use std::str::FromStr;
 
 // const DIM1: usize = 14016 + 64;
@@ -32,7 +34,6 @@ impl Weights {
         let mut s = String::new();
         r.read_to_string(&mut s).unwrap();
         let mut lines = s.lines();
-
         Some(Self {
             outer: array_2d_boxed::<DIM2, DIM1, i16>(lines.next()?),
             bias1: array_1d(lines.next()?),
@@ -67,10 +68,23 @@ impl Weights {
         }
         out
     }
-    pub fn incremental_forward(&self, inc: &Incremental, is_white: bool) -> i32 {
+    pub fn incremental_forward(
+        &self,
+        inc: &Incremental,
+        is_white: bool,
+        rand_seed: Option<u64>,
+    ) -> i32 {
         let mut input = [0.0; DIM2];
         for i in 0..input.len() {
             input[i] = (relu6_int(inc.storage[i]) as f32) / SCALE_FLOAT;
+        }
+        if let Some(seed) = rand_seed {
+            let mut rng = rand_xoshiro::Xoroshiro64Star::seed_from_u64(seed);
+            for x in input.iter_mut() {
+                if rng.next_u32() & 0x110_0000 == 0x110_0000 {
+                    *x = 0.0;
+                }
+            }
         }
         let mut middle = self.bias2.clone();
         for i in 0..DIM2 {
@@ -102,24 +116,24 @@ pub fn nn_repr(board: &Board6) -> Vec<u16> {
 
 fn make_array(board: &Board6) -> Vec<u16> {
     use bitintr::Pext;
-    let mut bits = Vec::new();
     let mut out = Vec::with_capacity(26);
-    for color in [board.bits().white, board.bits().black] {
-        for piece in [board.bits().flat, board.bits().wall, board.bits().cap] {
-            bits.push(color & piece);
-        }
-    }
-    let mut counter = 0;
-    for mask in [0xe0e0e00, 0x70707000, 0x70707000000000, 0xe0e0e00000000] {
-        for b in [
-            board.bits().white & board.bits().flat,
-            board.bits().black & board.bits().flat,
-        ] {
-            let val = b.raw_bits().pext(mask);
-            out.push(counter * 512 + val as u16);
-            counter += 1;
-        }
-    }
+    // let mut bits = Vec::new();
+    // for color in [board.bits().white, board.bits().black] {
+    //     for piece in [board.bits().flat, board.bits().wall, board.bits().cap] {
+    //         bits.push(color & piece);
+    //     }
+    // }
+    // let mut counter = 0;
+    // for mask in [0xe0e0e00, 0x70707000, 0x70707000000000, 0xe0e0e00000000] {
+    //     for b in [
+    //         board.bits().white & board.bits().flat,
+    //         board.bits().black & board.bits().flat,
+    //     ] {
+    //         let val = b.raw_bits().pext(mask);
+    //         out.push(counter * 512 + val as u16);
+    //         counter += 1;
+    //     }
+    // }
     // for x in (board.bits().white & board.bits().cap).index_iter() {
     //     let val = FLAT_OFFSET + x as u16;
     //     out.push(val);
@@ -136,18 +150,35 @@ fn make_array(board: &Board6) -> Vec<u16> {
     //     let val = FLAT_OFFSET + 108 + x as u16;
     //     out.push(val);
     // }
-
-    out.push(
-        FLAT_OFFSET
-            + board.caps_reserve(Color::White) as u16
-            + board.pieces_reserve(Color::White) as u16,
+    let white_res =
+        board.caps_reserve(Color::White) as u16 + board.pieces_reserve(Color::White) as u16;
+    let black_res =
+        board.caps_reserve(Color::Black) as u16 + board.pieces_reserve(Color::Black) as u16;
+    out.push(white_res);
+    out.push(32 + black_res);
+    // Reserve advantage?
+    let white_res_adv = (white_res as i16 - black_res as i16).clamp(-8, 8) + 8;
+    out.push(64 + white_res_adv as u16);
+    // Flat Advantage
+    let white_flat_adv = board.flat_diff(Color::White).clamp(-6, 6) + 6;
+    out.push(82 + white_flat_adv as u16);
+    // Empty squares
+    let empty = std::cmp::min(board.bits().empty().pop_count(), 8);
+    out.push(96 + empty as u16);
+    let comp_white = std::cmp::min(
+        8,
+        connected_components(board.bits.road_pieces(Color::White), Bitboard6::flood).steps,
     );
-    out.push(
-        FLAT_OFFSET
-            + 32
-            + board.caps_reserve(Color::Black) as u16
-            + board.pieces_reserve(Color::Black) as u16,
+    let comp_black = std::cmp::min(
+        8,
+        connected_components(board.bits.road_pieces(Color::Black), Bitboard6::flood).steps,
     );
+    out.push(132 + comp_white as u16);
+    out.push(142 + comp_black as u16);
+    let attack_white = std::cmp::min(attackable_cs(Color::White, board), 4);
+    let attack_black = std::cmp::min(attackable_cs(Color::Black, board), 4);
+    out.push(152 + attack_white as u16);
+    out.push(158 + attack_black as u16);
     out
 }
 

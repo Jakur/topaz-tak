@@ -13,7 +13,7 @@ use std::thread;
 use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
-use topaz_tak::eval::{Evaluator, Tinue6, Weights5, Weights6};
+use topaz_tak::eval::{Evaluator, Tinue6, Weights5, Weights6, NNUE6};
 use topaz_tak::search::book;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::*;
@@ -149,7 +149,8 @@ pub fn main() {
                         moves.push(mv);
                     }
                     TakGame::Standard6(ref mut board) => {
-                        let mut eval = Weights6::default();
+                        // let mut eval = Weights6::default();
+                        let mut eval = NNUE6::default();
                         let outcome = search(board, &mut eval, &mut info).unwrap();
                         println!("{}", outcome.best_move().unwrap());
                         let mv = outcome.next().unwrap();
@@ -693,8 +694,8 @@ fn tei_loop() {
                 let init = init.clone();
                 thread::spawn(move || match size {
                     5 => play_game_tei::<Weights5>(recv, init).unwrap(),
-                    // 6 => play_game_tei::<eval::NNUE6>(recv, init).unwrap(),
-                    6 => play_game_tei::<Weights6>(recv, init).unwrap(),
+                    6 => play_game_tei::<eval::NNUE6>(recv, init).unwrap(),
+                    // 6 => play_game_tei::<Weights6>(recv, init).unwrap(),
                     _ => unimplemented!(),
                 });
             }
@@ -737,9 +738,12 @@ impl GameInitializer {
     }
 }
 
+const PLAYTAK_KOMI: u8 = 0;
+
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
     const MAX_DEPTH: usize = 32;
-    const KOMI: u8 = 0;
+    const KOMI: u8 = PLAYTAK_KOMI;
+    const MAX_OPENING_LENGTH: usize = 4;
     let mut move_cache = Vec::new();
     let mut board = Board6::new().with_komi(KOMI);
     let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
@@ -753,7 +757,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
         match message {
             TeiCommand::Go(_) => {
                 if let Some(ref book) = book {
-                    if board.ply() <= 6 {
+                    if board.ply() <= MAX_OPENING_LENGTH {
                         let symmetries = board.symmetries();
                         for (sym_idx, pos) in symmetries.into_iter().enumerate() {
                             if let Some(mv_str) = book.get(&pos.hash()) {
@@ -828,8 +832,8 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 }
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
-    let mut opp = "x57696c6c";
-    // let mut opp = "Tiltak_Bot";
+    // let mut opp = "WilemBot";
+    let mut opp = "Guest1260";
     let login_s = if let Some((user, pass)) = playtak_auth() {
         format!("Login {} {}\n", user, pass)
     } else {
@@ -907,7 +911,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                 com.write(s.as_bytes()).unwrap();
                                 goal = None;
                             } else if !live_seek && counter >= 5 {
-                                let s = "Seek 6 900 30 A 4 30 1 0 0 \n";
+                                let s = format!("Seek 6 900 30 A {} 30 1 0 0 \n", PLAYTAK_KOMI);
                                 com.write(s.as_bytes()).unwrap();
                                 live_seek = true;
                             }
