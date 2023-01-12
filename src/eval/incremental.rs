@@ -1,4 +1,5 @@
 use crate::eval::{attackable_cs, connected_components};
+use crate::Position;
 use crate::{board::Bitboard6, Bitboard, BitboardStorage, Piece};
 use crate::{board::TakBoard, Board6, Color};
 use bitintr::Pdep;
@@ -68,12 +69,7 @@ impl Weights {
         }
         out
     }
-    pub fn incremental_forward(
-        &self,
-        inc: &Incremental,
-        is_white: bool,
-        rand_seed: Option<u64>,
-    ) -> i32 {
+    pub fn incremental_forward(&self, inc: &Incremental, rand_seed: Option<u64>) -> i32 {
         let mut input = [0.0; DIM2];
         for i in 0..input.len() {
             input[i] = (relu6_int(inc.storage[i]) as f32) / SCALE_FLOAT;
@@ -92,11 +88,12 @@ impl Weights {
                 middle[j] += input[i] * self.inner1[j][i];
             }
         }
-        let (mut out, inner2) = if is_white {
-            (self.white_bias, &self.white)
-        } else {
-            (self.black_bias, &self.black)
-        };
+        let (mut out, inner2) = (self.white_bias, &self.white);
+        // let (mut out, inner2) = if is_white {
+        //     (self.white_bias, &self.white)
+        // } else {
+        //     (self.black_bias, &self.black)
+        // };
 
         for i in 0..middle.len() {
             out += relu6(middle[i]) * inner2[i];
@@ -150,42 +147,51 @@ fn make_array(board: &Board6) -> Vec<u16> {
     //     let val = FLAT_OFFSET + 108 + x as u16;
     //     out.push(val);
     // }
-    let white_res =
-        board.caps_reserve(Color::White) as u16 + board.pieces_reserve(Color::White) as u16;
-    let black_res =
-        board.caps_reserve(Color::Black) as u16 + board.pieces_reserve(Color::Black) as u16;
-    out.push(white_res);
-    out.push(32 + black_res);
+    let friendly = board.side_to_move();
+    let opp = !friendly;
+    let white_res = board.caps_reserve(friendly) as u16 + board.pieces_reserve(friendly) as u16;
+    let black_res = board.caps_reserve(opp) as u16 + board.pieces_reserve(opp) as u16;
     // Reserve advantage?
     let white_res_adv = (white_res as i16 - black_res as i16).clamp(-8, 8) + 8;
     out.push(64 + white_res_adv as u16);
     // Flat Advantage
-    let white_flat_adv = board.flat_diff(Color::White).clamp(-6, 6) + 6;
+    let white_flat_adv = board.flat_diff(friendly).clamp(-6, 6) + 6;
     out.push(82 + white_flat_adv as u16);
     // Empty squares
     let empty = std::cmp::min(board.bits().empty().pop_count(), 8);
     out.push(96 + empty as u16);
     let comp_white = std::cmp::min(
         8,
-        connected_components(board.bits.road_pieces(Color::White), Bitboard6::flood).steps,
+        connected_components(board.bits.road_pieces(friendly), Bitboard6::flood).steps,
     );
     let comp_black = std::cmp::min(
         8,
-        connected_components(board.bits.road_pieces(Color::Black), Bitboard6::flood).steps,
+        connected_components(board.bits.road_pieces(opp), Bitboard6::flood).steps,
     );
     out.push(132 + comp_white as u16);
     out.push(142 + comp_black as u16);
-    let attack_white = std::cmp::min(attackable_cs(Color::White, board), 4);
-    let attack_black = std::cmp::min(attackable_cs(Color::Black, board), 4);
+    let attack_white = std::cmp::min(attackable_cs(friendly, board), 4);
+    let attack_black = std::cmp::min(attackable_cs(opp, board), 4);
     out.push(152 + attack_white as u16);
     out.push(158 + attack_black as u16);
+    // Side to move
+    out.push(166 + (friendly == Color::Black) as u16);
     out
 }
 
 fn make_under_array(board: &Board6) -> Vec<u16> {
     let mut out = Vec::with_capacity(36);
     for (outer_idx, stack) in board.board().iter().enumerate() {
-        let stack_piece = stack.top().map(|x| x as usize).unwrap_or(0);
+        let stack_piece = stack
+            .top()
+            .map(|x| {
+                if board.side_to_move() == Color::White {
+                    x as usize
+                } else {
+                    x.swap_color() as usize
+                }
+            })
+            .unwrap_or(0);
         let (cap, friendly) = stack.captive_friendly();
         let cap_friendly_offset = std::cmp::min(cap, 6) * 7 + std::cmp::min(friendly, 6);
         let idx = stack_piece * 49 + cap_friendly_offset as usize;

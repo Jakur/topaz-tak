@@ -37,8 +37,10 @@ pub trait Evaluator {
 }
 
 pub struct NNUE6 {
-    incremental_weights: incremental::Incremental,
-    old: Vec<u16>,
+    incremental_white: incremental::Incremental,
+    incremental_black: incremental::Incremental,
+    old_white: Vec<u16>,
+    old_black: Vec<u16>,
     classical: Weights6,
     pos_seed: u64,
 }
@@ -51,14 +53,14 @@ impl Default for NNUE6 {
 
 impl NNUE6 {
     pub fn new() -> Self {
-        let incremental_weights = NN6.build_incremental(&[]);
-        let old = Vec::new();
         let classical = Weights6::default();
         let mut seed: [u8; 8] = [0; 8];
         getrandom::getrandom(&mut seed);
         Self {
-            incremental_weights,
-            old,
+            incremental_white: NN6.build_incremental(&[]),
+            incremental_black: NN6.build_incremental(&[]),
+            old_white: Vec::new(),
+            old_black: Vec::new(),
             classical,
             pos_seed: u64::from_ne_bytes(seed),
         }
@@ -69,48 +71,31 @@ impl Evaluator for NNUE6 {
     type Game = Board6;
 
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
-        // if game.ply().saturating_sub(depth) < 10
-        // // || game.pieces_reserve(Color::White) <= 5
-        // // || game.pieces_reserve(Color::Black) <= 5
-        // {
-        //     return self.classical.evaluate(game, depth);
-        // }
-        const TEMPO_OFFSET: i32 = 0;
+        const TEMPO_OFFSET: i32 = 100;
         let mut new = nn_repr(game);
-        self.incremental_weights.update_diff(&self.old, &new, &NN6);
-        // let rand_seed = Some(self.pos_seed ^ game.hash());
-        let rand_seed = None;
-        let mut score = NN6.incremental_forward(
-            &self.incremental_weights,
-            game.side_to_move() != Color::White,
-            rand_seed,
+        let mut score = if let Color::White = game.side_to_move() {
+            self.incremental_white
+                .update_diff(&self.old_white, &new, &NN6);
+            // let rand_seed = Some(self.pos_seed ^ game.hash());
+            let rand_seed = None;
+            std::mem::swap(&mut new, &mut self.old_white);
+            NN6.incremental_forward(&self.incremental_white, rand_seed)
+        } else {
+            self.incremental_black
+                .update_diff(&self.old_black, &new, &NN6);
+            // let rand_seed = Some(self.pos_seed ^ game.hash());
+            let rand_seed = None;
+            std::mem::swap(&mut new, &mut self.old_black);
+            NN6.incremental_forward(&self.incremental_black, rand_seed)
+        };
+        let least_pieces = std::cmp::min(
+            game.pieces_reserve(Color::Black),
+            game.pieces_reserve(Color::White),
         );
-        if score > 400 || score < -400 {
-            score += self.classical.evaluate(game, depth) / 8;
+        if score > 400 || score < -400 || (game.komi() != 0 && least_pieces <= 8) {
+            score += self.classical.evaluate(game, depth) / 2;
         }
-        // score += self.classical.evaluate(game, depth) / 2;
-        // let mut score = -NN6.incremental_forward(
-        //     &self.incremental_weights,
-        //     game.side_to_move() == Color::White,
-        // );
-        // if game.side_to_move() == Color::Black {
-        //     score = 500 - score;
-        // }
-        std::mem::swap(&mut new, &mut self.old);
-        // let rev_score = NN6.incremental_forward(
-        //     &self.incremental_weights,
-        //     game.side_to_move() != Color::White,
-        // );
-        // let diff = score + rev_score;
-        // let tempo = {
-        //     if diff < 50 {
-        //         TEMPO_OFFSET / 2
-        //     } else if diff <= TEMPO_OFFSET {
-        //         TEMPO_OFFSET
-        //     } else {
-        //         TEMPO_OFFSET + TEMPO_OFFSET / 2
-        //     }
-        // };
+
         if depth % 2 == 1 {
             score + TEMPO_OFFSET
         } else {

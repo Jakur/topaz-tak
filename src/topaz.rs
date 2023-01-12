@@ -738,12 +738,12 @@ impl GameInitializer {
     }
 }
 
-const PLAYTAK_KOMI: u8 = 0;
+const PLAYTAK_KOMI: u8 = 4;
 
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
     const MAX_DEPTH: usize = 32;
     const KOMI: u8 = PLAYTAK_KOMI;
-    const MAX_OPENING_LENGTH: usize = 4;
+    const MAX_OPENING_LENGTH: usize = 0;
     let mut move_cache = Vec::new();
     let mut board = Board6::new().with_komi(KOMI);
     let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
@@ -832,8 +832,8 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 }
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
-    // let mut opp = "WilemBot";
-    let mut opp = "Guest1260";
+    // let mut opp = "TakticianBot";
+    let mut opp = "WilemBot";
     let login_s = if let Some((user, pass)) = playtak_auth() {
         format!("Login {} {}\n", user, pass)
     } else {
