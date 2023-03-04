@@ -387,12 +387,62 @@ where
     }
     /// Crudely returns the principal variation by looking at the last refuted line
     pub fn principal_variation(&mut self) -> Vec<GameMove> {
+        // Todo defender or attacker agnostic
+        let root = self.bounds_table.get(&self.board.hash()).unwrap();
+        let attacker_wins = {
+            // Give attacker benefit of the doubt for these purposes
+            if root.delta != 0 {
+                self.is_attacker()
+            } else {
+                !self.is_attacker()
+            }
+        };
         let mut hist = Vec::new();
         let mut pv = Vec::new();
-        while let Some(&game_move) = self.replies.get(&self.board.hash()) {
-            pv.push(game_move);
-            let rev = self.board.do_move(game_move);
-            hist.push(rev);
+        loop {
+            match (self.is_attacker(), attacker_wins) {
+                (true, true) | (false, false) => {
+                    // We are on the winning side, pick the best valid move
+                    let mut moves = Vec::new();
+                    if let Some(mv) = self.board.can_make_road(&mut moves, None) {
+                        pv.add_move(mv);
+                        break;
+                    }
+                    moves.clear();
+                    generate_all_moves(&self.board, &mut moves);
+                    let search = if self.is_attacker() {
+                        self.board.get_tak_threats(&moves, None)
+                    } else {
+                        moves
+                    };
+                    let min = search.into_iter().min_by_key(|&mv| {
+                        let rev = self.board.do_move(mv);
+                        let lookup = self
+                            .bounds_table
+                            .get(&self.board.hash())
+                            .map(|x| x.delta)
+                            .unwrap_or(INFINITY);
+                        self.board.reverse_move(rev);
+                        lookup
+                    });
+                    if let Some(mv) = min {
+                        hist.push(self.board.do_move(mv));
+                        pv.push(mv);
+                    } else {
+                        break;
+                    }
+                }
+                (true, false) | (false, true) => {
+                    // We are on the losing side, follow last analyzed line
+                    if let Some(&game_move) = self.replies.get(&self.board.hash()) {
+                        pv.push(game_move);
+                        let rev = self.board.do_move(game_move);
+                        hist.push(rev);
+                    } else {
+                        break;
+                    }
+                }
+            }
         }
         for rev_move in hist.into_iter().rev() {
             self.board.reverse_move(rev_move);
