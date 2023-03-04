@@ -307,7 +307,7 @@ pub struct TinueSearch<T> {
     rev_moves: Vec<RevGameMove>,
     zobrist_hist: Vec<u64>,
     attacker: Color,
-    nodes: usize,
+    pub nodes: usize,
     top_moves: Vec<TopMoves>,
     tinue_attempts: HashMap<u64, AttackerOutcome>,
     pub replies: HashMap<u64, GameMove>,

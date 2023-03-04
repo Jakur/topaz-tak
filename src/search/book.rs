@@ -18,14 +18,13 @@ impl Book {
         Ok(())
     }
     pub fn get<T: TakBoard + Clone>(&self, board: &T) -> Option<i32> {
-        if board.ply() <= 2 {
+        if board.ply() <= 3 {
             return None;
         }
-        let zobrist = hashes(board);
-        for hash in zobrist {
+        for hash in board.symmetries().into_iter().map(|x| x.hash()) {
             if let Some(val) = self.map.get(&hash) {
-                let record = -val.record(self.mode); // Reverse, because we are thinking one ply ahead
-                let offset = (board.ply() - 3) * 10;
+                let record = -1 * val.record(self.mode); // This seems to be backwards
+                let offset = (board.ply() - 3) * 15;
                 return Some(offset as i32 * record);
             }
         }
@@ -33,41 +32,33 @@ impl Book {
     }
     pub fn update<T: TakBoard>(&mut self, mut board: T, winner: GameResult, moves: Vec<GameMove>) {
         for (idx, mv) in (0..=10).zip(moves.into_iter()) {
-            board.do_move(mv);
-            if idx > 0 {
-                let entry = self
-                    .map
-                    .entry(board.hash())
-                    .or_insert(BookEval::new(0, 0, 0));
-                let winner = match winner {
-                    GameResult::WhiteWin => Some(Color::White),
-                    GameResult::BlackWin => Some(Color::Black),
-                    GameResult::Draw => None,
-                };
-                if let Some(winner) = winner {
-                    // Normal, not reversed ?
-                    if winner == board.side_to_move() {
-                        entry.add_win();
+            let rotations = board.symmetries();
+            for r_board in rotations.into_iter() {
+                if idx > 0 {
+                    let entry = self
+                        .map
+                        .entry(r_board.hash())
+                        .or_insert(BookEval::new(0, 0, 0));
+                    let winner = match winner {
+                        GameResult::WhiteWin => Some(Color::White),
+                        GameResult::BlackWin => Some(Color::Black),
+                        GameResult::Draw => None,
+                    };
+                    if let Some(winner) = winner {
+                        // Normal, not reversed ?
+                        if winner == r_board.side_to_move() {
+                            entry.add_win();
+                        } else {
+                            entry.add_loss();
+                        }
                     } else {
-                        entry.add_loss();
+                        entry.add_draw();
                     }
-                } else {
-                    entry.add_draw();
                 }
             }
+            board.do_move(mv);
         }
     }
-}
-
-fn hashes<T: TakBoard>(board: &T) -> [u64; 4] {
-    let mut rotated = (*board).clone();
-    debug_assert_eq!(rotated.zobrist(), board.zobrist());
-    let mut out = [board.zobrist(), 0, 0, 0];
-    for idx in 1..=3 {
-        rotated = rotated.rotate();
-        out[idx] = rotated.zobrist();
-    }
-    out
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -95,8 +86,9 @@ impl BookEval {
     }
     pub fn record(&self, mode: BookMode) -> i32 {
         match mode {
-            BookMode::Learn => self.win - self.loss - self.draw,
-            BookMode::Explore | BookMode::Best => self.win - self.loss,
+            BookMode::Learn => self.win + self.draw - self.loss,
+            BookMode::Best => self.win - self.loss,
+            BookMode::Explore => self.win + self.draw + self.loss,
         }
     }
 }

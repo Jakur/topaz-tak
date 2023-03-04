@@ -9,10 +9,10 @@ pub struct SmartMoveBuffer {
 }
 
 impl SmartMoveBuffer {
-    pub fn new() -> Self {
+    pub fn new(buffer_size: usize) -> Self {
         Self {
             moves: Vec::new(),
-            stack_hist: vec![0; 36],
+            stack_hist: vec![0; buffer_size],
             queries: 0,
             flat_attempts: 0,
         }
@@ -84,7 +84,7 @@ impl SmartMoveBuffer {
             // }
         }
     }
-    pub fn gen_score_place_moves<T: TakBoard>(&mut self, board: &T, place_hist: &PlaceHistory<36>) {
+    pub fn gen_score_place_moves<T: TakBoard>(&mut self, board: &T, place_hist: &PlaceHistory<49>) {
         let side = board.side_to_move();
         for idx in board.empty_tiles() {
             let mut flat_score = 3 + place_hist.flat_score(idx);
@@ -398,7 +398,7 @@ mod test {
     fn big_stack_order() {
         let tps = "21C,222222,2,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 2 31";
         let board = Board6::try_from_tps(tps).unwrap();
-        let mut moves = SmartMoveBuffer::new();
+        let mut moves = SmartMoveBuffer::new(36);
         generate_all_moves(&board, &mut moves);
         moves.score_stack_moves(&board);
         moves.moves.sort_by_key(|x| -x.score);

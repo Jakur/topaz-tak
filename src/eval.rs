@@ -71,7 +71,7 @@ impl Evaluator for NNUE6 {
     type Game = Board6;
 
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
-        const TEMPO_OFFSET: i32 = 100;
+        const TEMPO_OFFSET: i32 = 0;
         let mut new = nn_repr(game);
         let mut score = if let Color::White = game.side_to_move() {
             self.incremental_white
@@ -93,7 +93,7 @@ impl Evaluator for NNUE6 {
             game.pieces_reserve(Color::White),
         );
         if score > 400 || score < -400 || (game.komi() != 0 && least_pieces <= 8) {
-            score += self.classical.evaluate(game, depth) / 2;
+            score += self.classical.evaluate(game, depth) / 4;
         }
 
         if depth % 2 == 1 {
@@ -177,10 +177,6 @@ macro_rules! tinue_eval {
         }
     };
 }
-
-tinue_eval![Board5, Tinue5];
-tinue_eval![Board6, Tinue6];
-tinue_eval![crate::Board7, Tinue7];
 
 macro_rules! eval_impl {
     ($board: ty, $weights: ty) => {
@@ -539,6 +535,7 @@ fn attackable_cs<B: TakBoard>(color: Color, game: &B) -> i32 {
     count
 }
 
+eval_impl![crate::Board7, Weights7];
 eval_impl![Board6, Weights6];
 eval_impl![Board5, Weights5];
 
@@ -977,6 +974,60 @@ impl Default for Weights6 {
     }
 }
 
+pub struct Weights7 {
+    location: [i32; 49],
+    connectivity: i32,
+    tempo_offset: i32,
+    piece: [i32; 3],
+    pub stack_eval: StackEval,
+    // stack_top: [i32; 6],
+    flat_road: [i32; 4],
+    cs_threat: i32,
+}
+
+impl Weights7 {
+    fn new(
+        location: [i32; 49],
+        connectivity: i32,
+        tempo_offset: i32,
+        piece: [i32; 3],
+        stack_eval: StackEval,
+        flat_road: [i32; 4],
+        cs_threat: i32,
+    ) -> Self {
+        Self {
+            location,
+            connectivity,
+            tempo_offset,
+            piece,
+            stack_eval,
+            flat_road,
+            cs_threat,
+        }
+    }
+    fn piece_weight(&self, p: Piece) -> i32 {
+        match p {
+            Piece::WhiteFlat | Piece::BlackFlat => self.piece[0],
+            Piece::WhiteWall | Piece::BlackWall => self.piece[1],
+            Piece::WhiteCap | Piece::BlackCap => self.piece[2],
+        }
+    }
+}
+
+impl Default for Weights7 {
+    fn default() -> Self {
+        Weights7 {
+            location: LOCATION_WEIGHT7,
+            connectivity: 14,
+            tempo_offset: 150,
+            piece: [122, 57, 113],
+            stack_eval: StackEval::build_simple([-61, 85, -29, 99, -20, 116]),
+            flat_road: [40, 22, 13, 8],
+            cs_threat: 64,
+        }
+    }
+}
+
 pub struct EvalComponents {
     data: [i32; 27],
 }
@@ -1038,22 +1089,16 @@ impl EvalComponents {
     }
 }
 
-// corner, offcorner, edge, edge, offcorner, corner,
-// offcorner, kosumi, ctouch, ctouch, kosumi, corner,
-// edge, ctouch, center, center, ctouch, edge,
-// edge, ctouch, center, center, ctouch, edge,
-// offcorner, kosumi, ctouch, ctouch, kosumi, corner,
-// corner, offcorner, edge, edge, offcorner, corner,
-
 #[allow(clippy::zero_prefixed_literal)]
 #[rustfmt::skip]
-const LOCATION_WEIGHT: [i32; 36] = [
-    00, 05, 05, 05, 05, 00,
-    05, 10, 15, 15, 10, 05,
-    05, 15, 20, 20, 15, 05,
-    05, 15, 20, 20, 15, 05,
-    05, 10, 15, 15, 10, 05,
-    00, 05, 05, 05, 05, 00,
+const LOCATION_WEIGHT7: [i32; 49] = [
+    00, 05, 05, 05, 05, 05, 00,
+    05, 10, 15, 15, 15, 10, 05,
+    05, 15, 20, 20, 20, 15, 05,
+    05, 15, 20, 20, 20, 15, 05,
+    05, 15, 20, 20, 20, 15, 05,
+    05, 10, 15, 15, 15, 10, 05,
+    00, 05, 05, 05, 05, 05, 00,
 ];
 
 #[allow(clippy::zero_prefixed_literal)]

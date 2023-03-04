@@ -7,7 +7,8 @@ use getopts::Options;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::env;
-use std::io::{self, BufRead, BufWriter};
+use std::fs::OpenOptions;
+use std::io::{self, BufRead, BufWriter, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
@@ -59,20 +60,94 @@ pub fn main() {
         } else if arg1 == "white" {
             play_game_cmd(true);
         } else if arg1 == "analyze" {
-            let game = build_tps(&args[2..]).unwrap();
-            let mut info = SearchInfo::new(20, 2 << 20);
-            match game {
-                TakGame::Standard5(mut board) => {
-                    let mut eval = Weights5::default();
-                    search(&mut board, &mut eval, &mut info);
+            let game = build_tps(&args[2..]);
+            if let Ok(game) = game {
+                let mut info = SearchInfo::new(20, 2 << 20);
+                match game {
+                    TakGame::Standard5(mut board) => {
+                        let mut eval = Weights5::default();
+                        search(&mut board, &mut eval, &mut info);
+                    }
+                    TakGame::Standard6(mut board) => {
+                        // let mut eval = Weights6::default();
+                        let mut eval = eval::NNUE6::new();
+                        let mut board = board.with_komi(4);
+                        dbg!(&board);
+                        search(&mut board, &mut eval, &mut info);
+                    }
+                    _ => todo!(),
                 }
-                TakGame::Standard6(mut board) => {
-                    // let mut eval = Weights6::default();
-                    let mut board = board.with_komi(0);
-                    let mut eval = eval::NNUE6::new();
-                    search(&mut board, &mut eval, &mut info);
+            } else {
+                // Try analyze ptn file
+                const MILLIS: u64 = 12_000;
+                let path = args[2..].join("");
+                let data = std::fs::read_to_string(path).expect("Is a file");
+                let mut out = OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .open("analysis.ptn")
+                    .unwrap();
+                let mut board = Board6::new().with_komi(4);
+                let mut active_player = Color::White;
+                let mut info = SearchInfo::new(20, 2 << 20).time_bank(TimeBank::flat(MILLIS));
+                let mut eval = eval::NNUE6::new();
+                let mvs: Vec<_> = data
+                    .split_whitespace()
+                    .filter_map(|x| {
+                        let mv = GameMove::try_from_ptn_m(x, 6, active_player);
+                        if mv.is_some() {
+                            active_player = !active_player;
+                        }
+                        mv
+                    })
+                    .collect();
+                let mut evals = Vec::new();
+                let mut variation_buf = Vec::new();
+                for (idx, mv) in mvs.into_iter().enumerate() {
+                    let outcome = search(&mut board, &mut eval, &mut info).unwrap();
+                    let mut win_pct = outcome.score() as f32 / 500.0;
+                    if board.side_to_move() == Color::Black {
+                        win_pct *= -1.0;
+                    }
+                    evals.push(win_pct.clamp(-1.0, 1.0));
+                    let best_move = outcome.best_move().unwrap();
+                    let data = outcome.pretty_string();
+                    let pv = data.split("pv ").nth(1).unwrap();
+                    let num_str = if let Color::White = board.side_to_move() {
+                        format!("{}. ", board.move_num().to_string())
+                    } else {
+                        format!("{}. -- ", board.move_num().to_string())
+                    };
+                    if best_move != mv.to_ptn::<Board6>() {
+                        writeln!(&mut variation_buf, "{{{}_{}}}", idx, best_move).unwrap();
+                        writeln!(&mut variation_buf, "{} {}\n", num_str, pv).unwrap();
+                    }
+                    board.do_move(mv);
+                    info = SearchInfo::new(20, 0)
+                        .take_table(&mut info)
+                        .time_bank(TimeBank::flat(MILLIS))
+                        .quiet(true);
+                    // dbg!(&board);
                 }
-                _ => todo!(),
+                evals.push(*evals.last().unwrap());
+                let mut evals = evals.into_iter().skip(1);
+                let mut white_move = true;
+                let mut split: Vec<_> = data.split_whitespace().map(|x| x.to_string()).collect();
+                for s in split.iter_mut() {
+                    if GameMove::try_from_ptn_m(s, 6, Color::White).is_some() {
+                        let eval = evals.next().unwrap();
+                        let f = if !white_move {
+                            format!("{{evaluation: {:+.3}}}\n", eval)
+                        } else {
+                            format!("{{evaluation: {:+.3}}}", eval)
+                        };
+                        white_move = !white_move;
+                        s.push_str(&f);
+                    }
+                }
+                let joined = split.join(" ");
+                write!(&mut out, "{}\n\n", joined).unwrap();
+                write!(&mut out, "{}", std::str::from_utf8(&variation_buf).unwrap()).unwrap();
             }
             return;
         } else if arg1 == "magic" {
@@ -94,28 +169,38 @@ pub fn main() {
             return;
         } else if arg1 == "book" {
             let book = Arc::new(Mutex::new(book::Book::new(
-                search::book::BookMode::Learn,
+                search::book::BookMode::Explore,
                 HashMap::new(),
             )));
             let count = std::thread::available_parallelism().unwrap().get();
             assert!(count >= 1_usize);
-            let openings = vec![&["a1", "f6"], &["a1", "a6"]];
+            let openings = vec![&["a1", "f6"], &["a1", "a6"], &["a1", "b1"]];
             let mut handles = vec![];
             for (t_id, start) in openings.into_iter().enumerate() {
                 let book = Arc::clone(&book);
                 println!("Thread: {}", t_id);
                 let handle = std::thread::spawn(move || {
-                    for i in 0..15 {
+                    let mut file = BufWriter::new(
+                        OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .open(&format!("book_games{}.txt", t_id))
+                            .unwrap(),
+                    );
+                    for i in 0..100 {
                         let data = { book.lock().unwrap().clone() };
                         let (moves, game_res) = play_book_game(start, data);
-                        println!("T{} Game {}", i, t_id);
+                        if i % 50 == 0 {
+                            println!("T{} Game {}", t_id, i);
+                        }
                         let combo: Vec<_> = moves
                             .iter()
                             .copied()
                             .map(|m| m.to_ptn::<Board6>())
                             .collect();
                         let s = combo.join(" ");
-                        println!("{}", s);
+                        writeln!(&mut file, "{}", s).unwrap();
+                        // println!("{}", s);
                         book.lock()
                             .unwrap()
                             .update(Board6::new().with_komi(4), game_res, moves);
@@ -319,7 +404,8 @@ pub fn main() {
 }
 
 fn play_book_game(st: &[&str], book: book::Book) -> (Vec<GameMove>, GameResult) {
-    let mut eval = Weights6::default();
+    const BOOK_DEPTH: usize = 6;
+    let mut eval = NNUE6::default();
     let mut moves = Vec::new();
     let mut board = Board6::new().with_komi(4);
     for mv in st {
@@ -327,17 +413,13 @@ fn play_book_game(st: &[&str], book: book::Book) -> (Vec<GameMove>, GameResult) 
         moves.push(mv);
         board.do_move(mv);
     }
-    let mut info = SearchInfo::new(20, 2 << 20)
-        .time_bank(TimeBank::flat(12_000))
-        .book(book)
-        .quiet(true);
+    let mut info = SearchInfo::new(BOOK_DEPTH, 2 << 20).book(book).quiet(true);
     while board.game_result().is_none() {
         let outcome = search(&mut board, &mut eval, &mut info).unwrap();
         // println!("{}", outcome.best_move().unwrap());
         let mv = outcome.next().unwrap();
         board.do_move(mv);
-        info = SearchInfo::new(20, 0)
-            .time_bank(TimeBank::flat(12_000))
+        info = SearchInfo::new(BOOK_DEPTH, 0)
             .take_table(&mut info)
             .take_book(&mut info)
             .quiet(true);
@@ -833,7 +915,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
     // let mut opp = "TakticianBot";
-    let mut opp = "WilemBot";
+    let mut opp = "Guest1741";
     let login_s = if let Some((user, pass)) = playtak_auth() {
         format!("Login {} {}\n", user, pass)
     } else {

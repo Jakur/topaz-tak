@@ -1,22 +1,20 @@
 use crate::eval::{attackable_cs, connected_components};
 use crate::Position;
-use crate::{board::Bitboard6, Bitboard, BitboardStorage, Piece};
+use crate::{board::Bitboard6, Bitboard};
 use crate::{board::TakBoard, Board6, Color};
-use bitintr::Pdep;
 use rand_core::{RngCore, SeedableRng};
 use std::str::FromStr;
 
-// const DIM1: usize = 14016 + 64;
-const DIM1: usize = 4160 + 78 * 36;
+// const DIM1: usize = 4160 + 78 * 36;
+const DIM1: usize = 2976;
 const DIM2: usize = 128;
 const DIM3: usize = 64;
 
 const SCALE_INT: i16 = 500;
 const SCALE_FLOAT: f32 = SCALE_INT as f32;
 
-const FLAT_OFFSET: u16 = 512 * 8;
 // const OFFSET: u16 = FLAT_OFFSET + 36 * 4;
-const UNDER_OFFSET: u16 = FLAT_OFFSET + 64;
+const UNDER_OFFSET: u16 = 168;
 const STACK_LOOKUP: [u16; 7 * 7 * 7] = include!("stack_lookup.table");
 
 pub struct Weights {
@@ -24,10 +22,8 @@ pub struct Weights {
     bias1: [i16; DIM2],
     inner1: [[f32; DIM2]; DIM3], // Todo see if more precision is needed
     bias2: [f32; DIM3],
-    white: [f32; DIM3],
-    black: [f32; DIM3],
-    white_bias: f32,
-    black_bias: f32,
+    inner2: [f32; DIM3],
+    bias3: f32,
 }
 
 impl Weights {
@@ -40,10 +36,8 @@ impl Weights {
             bias1: array_1d(lines.next()?),
             inner1: array_2d(lines.next()?),
             bias2: array_1d(lines.next()?),
-            white: array_1d(lines.next()?),
-            black: array_1d(lines.next()?),
-            white_bias: lines.next().map(|x| x.parse().ok())??,
-            black_bias: lines.next().map(|x| x.parse().ok())??,
+            inner2: array_1d(lines.next()?),
+            bias3: lines.next().map(|x| x.parse().ok())??,
         })
     }
     #[cfg(test)]
@@ -54,10 +48,8 @@ impl Weights {
             bias1: [1; DIM2],
             inner1: [[1.0; DIM2]; DIM3], // Todo see if more precision is needed
             bias2: [1.0; DIM3],
-            white: [1.0; DIM3],
-            black: [1.0; DIM3],
-            white_bias: 1.0,
-            black_bias: 1.0,
+            inner2: [1.0; DIM3],
+            bias3: 1.0,
         }
     }
     pub fn build_incremental(&self, nonzero_input: &[usize]) -> Incremental {
@@ -88,17 +80,11 @@ impl Weights {
                 middle[j] += input[i] * self.inner1[j][i];
             }
         }
-        let (mut out, inner2) = (self.white_bias, &self.white);
-        // let (mut out, inner2) = if is_white {
-        //     (self.white_bias, &self.white)
-        // } else {
-        //     (self.black_bias, &self.black)
-        // };
+        let mut out = self.bias3;
 
         for i in 0..middle.len() {
-            out += relu6(middle[i]) * inner2[i];
+            out += relu6(middle[i]) * self.inner2[i];
         }
-        // dbg!(out);
         ((out as f64).tanh() * SCALE_FLOAT as f64).trunc() as i32
     }
 }
@@ -113,7 +99,7 @@ pub fn nn_repr(board: &Board6) -> Vec<u16> {
 
 fn make_array(board: &Board6) -> Vec<u16> {
     use bitintr::Pext;
-    let mut out = Vec::with_capacity(26);
+    let mut out = Vec::with_capacity(8);
     // let mut bits = Vec::new();
     // for color in [board.bits().white, board.bits().black] {
     //     for piece in [board.bits().flat, board.bits().wall, board.bits().cap] {
