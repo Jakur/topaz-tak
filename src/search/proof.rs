@@ -399,7 +399,8 @@ where
         };
         let mut hist = Vec::new();
         let mut pv = Vec::new();
-        loop {
+        // Timeout after 100 ply in case of cycles
+        for _ in 0..100 {
             match (self.is_attacker(), attacker_wins) {
                 (true, true) | (false, false) => {
                     // We are on the winning side, pick the best valid move
