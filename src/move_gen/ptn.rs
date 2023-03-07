@@ -152,6 +152,9 @@ impl GameMove {
         };
         let row = size - row.to_digit(10)? as usize;
         let square = row * size + col;
+        if square >= size * size {
+            return None;
+        }
 
         if let Some(dir) = iter.next() {
             // Stack Move
