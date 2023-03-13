@@ -14,9 +14,10 @@ use std::thread;
 use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
-use topaz_tak::eval::{Evaluator, Tinue6, Weights5, Weights6, NNUE6};
+use topaz_tak::eval::{Evaluator, Weights5, Weights6, NNUE6};
 use topaz_tak::search::book;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
+use topaz_tak::transposition_table::HashTable;
 use topaz_tak::*;
 
 lazy_static! {
@@ -61,8 +62,9 @@ pub fn main() {
             play_game_cmd(true);
         } else if arg1 == "analyze" {
             let game = build_tps(&args[2..]);
+            let table = HashTable::new(2 << 20);
             if let Ok(game) = game {
-                let mut info = SearchInfo::new(20, 2 << 20);
+                let mut info = SearchInfo::new(20, &table);
                 match game {
                     TakGame::Standard5(mut board) => {
                         let mut eval = Weights5::default();
@@ -73,7 +75,7 @@ pub fn main() {
                         let mut eval = eval::NNUE6::new();
                         let mut board = board.with_komi(4);
                         dbg!(&board);
-                        search(&mut board, &mut eval, &mut info);
+                        topaz_tak::search::multi_search(&mut board, &mut eval, &mut info, 4);
                     }
                     _ => todo!(),
                 }
@@ -89,7 +91,7 @@ pub fn main() {
                     .unwrap();
                 let mut board = Board6::new().with_komi(4);
                 let mut active_player = Color::White;
-                let mut info = SearchInfo::new(20, 2 << 20).time_bank(TimeBank::flat(MILLIS));
+                let mut info = SearchInfo::new(20, &table).time_bank(TimeBank::flat(MILLIS));
                 let mut eval = eval::NNUE6::new();
                 let mvs: Vec<_> = data
                     .split_whitespace()
@@ -123,8 +125,7 @@ pub fn main() {
                         writeln!(&mut variation_buf, "{} {}\n", num_str, pv).unwrap();
                     }
                     board.do_move(mv);
-                    info = SearchInfo::new(20, 0)
-                        .take_table(&mut info)
+                    info = SearchInfo::new(20, &table)
                         .time_bank(TimeBank::flat(MILLIS))
                         .quiet(true);
                     // dbg!(&board);
@@ -218,7 +219,8 @@ pub fn main() {
         } else if arg1 == "selfplay" {
             let mut moves = Vec::new();
             let mut game = build_tps(&args[2..]).unwrap();
-            let mut info = SearchInfo::new(20, 2 << 20).time_bank(TimeBank::flat(12_000));
+            let table = HashTable::new(2 << 20);
+            let mut info = SearchInfo::new(20, &table).time_bank(TimeBank::flat(12_000));
             while game.game_result().is_none() {
                 match game {
                     TakGame::Standard5(ref mut board) => {
@@ -227,9 +229,8 @@ pub fn main() {
                         println!("{}", outcome.best_move().unwrap());
                         let mv = outcome.next().unwrap();
                         board.do_move(mv);
-                        info = SearchInfo::new(20, 0)
+                        info = SearchInfo::new(20, &table)
                             .time_bank(TimeBank::flat(12_000))
-                            .take_table(&mut info)
                             .quiet(true);
                         moves.push(mv);
                     }
@@ -240,9 +241,8 @@ pub fn main() {
                         println!("{}", outcome.best_move().unwrap());
                         let mv = outcome.next().unwrap();
                         board.do_move(mv);
-                        info = SearchInfo::new(20, 0)
+                        info = SearchInfo::new(20, &table)
                             .time_bank(TimeBank::flat(12_000))
-                            .take_table(&mut info)
                             .quiet(true);
                         moves.push(mv);
                     }
@@ -413,14 +413,14 @@ fn play_book_game(st: &[&str], book: book::Book) -> (Vec<GameMove>, GameResult) 
         moves.push(mv);
         board.do_move(mv);
     }
-    let mut info = SearchInfo::new(BOOK_DEPTH, 2 << 20).book(book).quiet(true);
+    let table = HashTable::new(2 << 20);
+    let mut info = SearchInfo::new(BOOK_DEPTH, &table).book(book).quiet(true);
     while board.game_result().is_none() {
         let outcome = search(&mut board, &mut eval, &mut info).unwrap();
         // println!("{}", outcome.best_move().unwrap());
         let mv = outcome.next().unwrap();
         board.do_move(mv);
-        info = SearchInfo::new(BOOK_DEPTH, 0)
-            .take_table(&mut info)
+        info = SearchInfo::new(BOOK_DEPTH, &table)
             .take_book(&mut info)
             .quiet(true);
         moves.push(mv);
@@ -455,7 +455,6 @@ fn saved_tps(name: &str) -> Option<&str> {
 }
 
 fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> {
-    use std::io::Write;
     let mut vec = Vec::new();
     let old = {
         if let Ok(read_data) = std::fs::read_to_string("node_counts.csv") {
@@ -475,6 +474,7 @@ fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> 
             None
         }
     };
+    let table = HashTable::new(2 << 20);
     for (name, depth) in names {
         let tps = if let Some(tps) = saved_tps(name) {
             tps
@@ -483,7 +483,7 @@ fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> 
         };
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut eval = Weights6::default();
-        let mut info = SearchInfo::new(*depth, 2 << 20);
+        let mut info = SearchInfo::new(*depth, &table);
         search(&mut board, &mut eval, &mut info);
         dbg!(info.stats);
         // for idx in 0..36 {
@@ -496,6 +496,7 @@ fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> 
             let diff = (info.nodes as f64 - *old_nodes as f64) / *old_nodes as f64;
             println!("{}: {}", name, diff);
         }
+        table.clear();
     }
     if save {
         let mut f = std::fs::File::create("node_counts.csv")?;
@@ -600,10 +601,11 @@ fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>, svg: bool) -> Resu
 fn play_game_cmd(mut computer_turn: bool) {
     let mut board = Board6::new();
     let mut eval = Weights6::default();
+    let table = HashTable::new(2 << 22);
     while let None = board.game_result() {
         println!("{:?}", &board);
         if computer_turn {
-            let mut info = SearchInfo::new(6, 5000);
+            let mut info = SearchInfo::new(6, &table);
             search(&mut board, &mut eval, &mut info);
             let pv_move = info.pv_move(&board).unwrap();
             println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
@@ -666,12 +668,13 @@ impl TimeLeft {
     }
 }
 
-fn play_game_tei<E: Evaluator + Default>(
+fn play_game_tei<E: Evaluator + Default + Send>(
     receiver: Receiver<TeiCommand>,
     init: GameInitializer,
 ) -> Result<()> {
     let (mut board, mut eval) = init.get_board::<E>();
-    let mut info = SearchInfo::new(init.max_depth, init.hash_size);
+    let table = HashTable::new(init.hash_size);
+    let mut info = SearchInfo::new(init.max_depth, &table);
     // let mut eval = Box::new(crate::eval::Weights5::default());
 
     loop {
@@ -683,14 +686,13 @@ fn play_game_tei<E: Evaluator + Default>(
                 let time_left = TimeLeft::new(&s);
                 let (clock_time, clock_inc) = time_left.has_time(board.side_to_move());
                 let use_time = TimeBank::init(flats_left as u64, clock_time, clock_inc);
-                info = SearchInfo::new(init.max_depth, 0)
-                    .take_table(&mut info)
+                info = SearchInfo::new(init.max_depth, &table)
                     .time_bank(use_time)
                     .abort_depth(8);
                 if board.ply() == 8 || board.ply() == 9 {
                     eval = E::default();
                 }
-                let res = search(&mut board, &mut eval, &mut info);
+                let res = topaz_tak::search::search(&mut board, &mut eval, &mut info);
                 if let Some(outcome) = res {
                     println!("info {}", outcome);
                     println!(
@@ -773,7 +775,7 @@ fn tei_loop() {
                 .parse()
                 .expect("Failed to parse size!");
             if let Some(recv) = receiver.take() {
-                let init = init.clone();
+                let init = init.small_clone();
                 thread::spawn(move || match size {
                     5 => play_game_tei::<Weights5>(recv, init).unwrap(),
                     6 => play_game_tei::<eval::NNUE6>(recv, init).unwrap(),
@@ -797,29 +799,6 @@ fn tei_loop() {
     }
 }
 
-#[derive(Clone)]
-struct GameInitializer {
-    hash_size: usize,
-    max_depth: usize,
-    komi: u8,
-    add_noise: bool,
-}
-
-impl GameInitializer {
-    fn new(hash_size: usize, max_depth: usize, komi: u8, add_noise: bool) -> Self {
-        Self {
-            hash_size,
-            max_depth,
-            komi,
-            add_noise,
-        }
-    }
-    fn get_board<E: Evaluator + Default>(&self) -> (E::Game, E) {
-        (E::Game::start_position().with_komi(self.komi), E::default())
-        // crate::board::Board5::new().with_komi(self.komi)
-    }
-}
-
 const PLAYTAK_KOMI: u8 = 4;
 
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
@@ -828,7 +807,8 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
     const MAX_OPENING_LENGTH: usize = 0;
     let mut move_cache = Vec::new();
     let mut board = Board6::new().with_komi(KOMI);
-    let mut info = SearchInfo::new(MAX_DEPTH, 2 << 22);
+    let table = HashTable::new(2 << 22);
+    let mut info = SearchInfo::new(MAX_DEPTH, &table);
     let book = playtak_book();
     // let mut eval = Weights6::default();
     let mut eval = crate::eval::NNUE6::default();
@@ -856,8 +836,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                     }
                 }
                 let use_time = 12_000; // Todo better time management
-                info = SearchInfo::new(MAX_DEPTH, 0)
-                    .take_table(&mut info)
+                info = SearchInfo::new(MAX_DEPTH, &table)
                     .take_book(&mut info)
                     .time_bank(TimeBank::flat(use_time))
                     .abort_depth(50);
@@ -1095,7 +1074,6 @@ fn playtak_book() -> Option<HashMap<u64, String>> {
 fn save_playtak_book(book: &book::Book) -> Result<()> {
     use anyhow::anyhow;
     use miniserde::json;
-    use std::io::Write;
     dotenv::dotenv()?;
     let mut pt_book = None;
     for (key, value) in env::vars() {

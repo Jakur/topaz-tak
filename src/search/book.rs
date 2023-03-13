@@ -138,8 +138,9 @@ mod test {
         dbg!(board.ply());
         assert_eq!(zo_0, board.zobrist());
         let mut eval = Weights5::default();
+        let table = HashTable::new(2 << 12);
         // let mut moves = Vec::new();
-        let mut info = SearchInfo::new(4, 2 << 14)
+        let mut info = SearchInfo::new(4, &table)
             .time_bank(TimeBank::flat(1_000))
             .book(book.clone());
         let outcome = search(&mut board, &mut eval, &mut info).unwrap();

@@ -9,12 +9,14 @@ pub use incremental::nn_repr;
 
 use std::fs::File;
 
-lazy_static::lazy_static!(
-    pub static ref NN6: incremental::Weights = {
-        let f_name = nn_file().expect("Could not read NN variable from env");
-        incremental::Weights::from_file(File::open(f_name).unwrap()).unwrap()
-    };
-);
+static NN6: once_cell::sync::OnceCell<incremental::Weights> = once_cell::sync::OnceCell::new();
+
+// lazy_static::lazy_static!(
+//     pub static ref NN6: incremental::Weights = {
+//         let f_name = nn_file().expect("Could not read NN variable from env");
+//         incremental::Weights::from_file(File::open(f_name).unwrap()).unwrap()
+//     };
+// );
 
 fn nn_file() -> Option<String> {
     let _ = dotenv::dotenv();
@@ -30,7 +32,7 @@ fn nn_file() -> Option<String> {
 mod incremental;
 
 pub trait Evaluator {
-    type Game: TakBoard;
+    type Game: TakBoard + Send;
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32;
     fn eval_stack(&self, game: &Self::Game, index: usize, stack: &Stack) -> i32;
     fn eval_components(&self, game: &Self::Game) -> EvalComponents;
@@ -53,12 +55,16 @@ impl Default for NNUE6 {
 
 impl NNUE6 {
     pub fn new() -> Self {
+        let nn = NN6.get_or_init(|| {
+            let f_name = nn_file().expect("Could not read NN variable from env");
+            incremental::Weights::from_file(File::open(f_name).unwrap()).unwrap()
+        });
         let classical = Weights6::default();
         let mut seed: [u8; 8] = [0; 8];
         getrandom::getrandom(&mut seed);
         Self {
-            incremental_white: NN6.build_incremental(&[]),
-            incremental_black: NN6.build_incremental(&[]),
+            incremental_white: nn.build_incremental(&[]),
+            incremental_black: nn.build_incremental(&[]),
             old_white: Vec::new(),
             old_black: Vec::new(),
             classical,
@@ -73,20 +79,21 @@ impl Evaluator for NNUE6 {
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
         const TEMPO_OFFSET: i32 = 0;
         let mut new = nn_repr(game);
+        let nn = NN6.get().unwrap(); // Could probably unchecked due to init in new
         let mut score = if let Color::White = game.side_to_move() {
             self.incremental_white
-                .update_diff(&self.old_white, &new, &NN6);
+                .update_diff(&self.old_white, &new, nn);
             // let rand_seed = Some(self.pos_seed ^ game.hash());
             let rand_seed = None;
             std::mem::swap(&mut new, &mut self.old_white);
-            NN6.incremental_forward(&self.incremental_white, rand_seed)
+            nn.incremental_forward(&self.incremental_white, rand_seed)
         } else {
             self.incremental_black
-                .update_diff(&self.old_black, &new, &NN6);
+                .update_diff(&self.old_black, &new, nn);
             // let rand_seed = Some(self.pos_seed ^ game.hash());
             let rand_seed = None;
             std::mem::swap(&mut new, &mut self.old_black);
-            NN6.incremental_forward(&self.incremental_black, rand_seed)
+            nn.incremental_forward(&self.incremental_black, rand_seed)
         };
         let least_pieces = std::cmp::min(
             game.pieces_reserve(Color::Black),

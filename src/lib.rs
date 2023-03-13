@@ -2,8 +2,8 @@
 
 use anyhow::{anyhow, ensure, Result};
 pub use board::{Bitboard, BitboardStorage, Piece, Stack, TakBoard};
-// pub use board_game_traits::{Color, GameResult};
 pub use move_gen::{generate_all_moves, GameMove, RevGameMove};
+use transposition_table::HashTable;
 
 pub mod board;
 pub mod eval;
@@ -12,6 +12,70 @@ pub mod search;
 pub mod transposition_table;
 
 use crate::board::{Board5, Board6, Board7};
+
+pub struct GameInitializer {
+    pub hash_size: usize,
+    pub max_depth: usize,
+    pub komi: u8,
+    pub add_noise: bool,
+    pub num_threads: usize,
+    pub use_nn: bool,
+    table: Option<HashTable>,
+}
+
+impl GameInitializer {
+    pub fn new(hash_size: usize, max_depth: usize, komi: u8, add_noise: bool) -> Self {
+        Self {
+            hash_size,
+            max_depth,
+            komi,
+            add_noise,
+            num_threads: 1,
+            use_nn: false,
+            table: None,
+        }
+    }
+    pub fn get_board<E: eval::Evaluator + Default>(&self) -> (E::Game, E) {
+        (E::Game::start_position().with_komi(self.komi), E::default())
+    }
+    pub fn small_clone(&self) -> Self {
+        Self {
+            table: None,
+            ..*self
+        }
+    }
+    pub fn various_search(&mut self, g: TakGame) {
+        match g {
+            TakGame::Standard5(board) => {
+                if self.num_threads == 1 {
+                    if self.use_nn {
+                        unimplemented!()
+                    } else {
+                        todo!()
+                    }
+                } else {
+                    todo!()
+                }
+            }
+            TakGame::Standard6(board) => todo!(),
+            TakGame::Standard7(board) => todo!(),
+        }
+    }
+}
+
+impl std::default::Default for GameInitializer {
+    fn default() -> Self {
+        Self {
+            hash_size: 2 << 22,
+            max_depth: 128,
+            komi: 0,
+            use_nn: false,
+            num_threads: 1,
+            add_noise: false,
+            table: None,
+        }
+    }
+}
 
 /// Represents a player's color.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -35,8 +99,8 @@ impl std::ops::Not for Color {
 impl std::fmt::Display for Color {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         fmt.write_str(match *self {
-            Color::White => ("White"),
-            Color::Black => ("Black"),
+            Color::White => "White",
+            Color::Black => "Black",
         })
     }
 }

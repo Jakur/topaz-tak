@@ -48,10 +48,10 @@ const IID_MIN_DEPTH: usize = 5;
 const IID_REDUCTION: usize = 3;
 const IID_DIVISION: usize = 2;
 
-pub struct SearchInfo {
+pub struct SearchInfo<'a> {
     pub max_depth: usize,
     pub nodes: usize,
-    pv_table: HashTable,
+    pv_table: &'a HashTable,
     pub killer_moves: Vec<KillerMoves>,
     pub hist_moves: PlaceHistory<49>, // Todo make this better generic
     pub stack_win_kill: Vec<KillerMoves>,
@@ -66,11 +66,11 @@ pub struct SearchInfo {
     book: Option<book::Book>,
 }
 
-impl SearchInfo {
-    pub fn new(max_depth: usize, pv_size: usize) -> Self {
+impl<'a> SearchInfo<'a> {
+    pub fn new(max_depth: usize, pv_table: &'a HashTable) -> Self {
         Self {
             max_depth,
-            pv_table: HashTable::new(pv_size),
+            pv_table,
             killer_moves: vec![KillerMoves::new(); max_depth + 1],
             stack_win_kill: vec![KillerMoves::new(); max_depth + 1],
             hist_moves: PlaceHistory::new(), // Todo init in search
@@ -101,10 +101,6 @@ impl SearchInfo {
     }
     pub fn book(mut self, book: book::Book) -> Self {
         self.book = Some(book);
-        self
-    }
-    pub fn take_table(mut self, other: &mut Self) -> Self {
-        std::mem::swap(&mut self.pv_table, &mut other.pv_table);
         self
     }
     pub fn set_start_ply(&mut self, start_ply: usize) {
@@ -299,6 +295,146 @@ where
     }
 }
 
+pub fn multi_search<T, E>(
+    board: &mut T,
+    eval: &mut E,
+    info: &mut SearchInfo,
+    num_threads: usize,
+) -> Option<SearchOutcome<T>>
+where
+    T: TakBoard + Send,
+    E: Evaluator<Game = T> + Default + Send,
+{
+    if num_threads <= 1 {
+        return search(board, eval, info);
+    }
+    assert!(ASPIRATION_ENABLED);
+    let mut outcome = None;
+    info.set_start_ply(board.ply());
+    let mut alpha = -1_000_000;
+    let mut beta = 1_000_000;
+
+    // Search Depth 1
+    let mut best_score = alpha_beta(
+        board,
+        eval,
+        info,
+        SearchData::new(alpha, beta, 1, true, None, 0, TakHistory(0), true, true),
+    );
+    alpha = best_score - ASPIRATION_WINDOW;
+    beta = best_score + ASPIRATION_WINDOW;
+
+    for depth in 2..=info.max_depth {
+        // Abort if we are unlikely to finish the search at this depth
+        if depth >= info.early_abort_depth {
+            let elapsed = info.start_time.elapsed().as_millis();
+            if elapsed > info.time_bank.goal_time as u128 / 2 {
+                break;
+            }
+        }
+        std::thread::scope(|s| {
+            let (thread_send, thread_rc) = crossbeam_channel::bounded(num_threads);
+            if depth >= 4 {
+                for thread_id in 1..num_threads {
+                    {
+                        let mut board_clone = board.clone();
+                        let mut eval_clone = E::default();
+                        let data = SearchData::new(
+                            alpha,
+                            beta,
+                            depth + thread_id - 1,
+                            true,
+                            None,
+                            0,
+                            TakHistory(0),
+                            true,
+                            true,
+                        );
+                        let table = info.pv_table;
+                        let rc = thread_rc.clone();
+                        s.spawn(move || {
+                            let mut thread_info = SearchInfo::new(128, table).input_stream(rc);
+                            let _ = alpha_beta(
+                                &mut board_clone,
+                                &mut eval_clone,
+                                &mut thread_info,
+                                data,
+                            );
+                        });
+                    }
+                }
+            }
+            best_score = alpha_beta(
+                board,
+                eval,
+                info,
+                SearchData::new(alpha, beta, depth, true, None, 0, TakHistory(0), true, true),
+            );
+            if (best_score <= alpha) || (best_score >= beta) {
+                best_score = alpha_beta(
+                    board,
+                    eval,
+                    info,
+                    SearchData::new(
+                        -1_000_000,
+                        1_000_000,
+                        depth,
+                        true,
+                        None,
+                        0,
+                        TakHistory(0),
+                        true,
+                        true,
+                    ),
+                )
+            }
+            alpha = best_score - ASPIRATION_WINDOW;
+            beta = best_score + ASPIRATION_WINDOW;
+            for _ in 0..num_threads {
+                thread_send.send(TeiCommand::Stop).unwrap();
+            }
+        });
+        // node_counts.push(info.nodes);
+        let pv_moves = info.full_pv(board);
+        // If we had an incomplete depth search, use the previous depth's vals
+        if info.stopped {
+            if !info.quiet {
+                print!(
+                    "Aborted Depth: {} Score: {} Nodes: {} PV: ",
+                    depth, best_score, info.nodes
+                );
+            }
+            break;
+        }
+        if !info.quiet {
+            print!(
+                "info depth {} score cp {} nodes {} hashfull {} pv ",
+                depth,
+                best_score,
+                info.nodes,
+                info.pv_table.occupancy()
+            );
+        }
+        outcome = Some(SearchOutcome::new(
+            best_score,
+            pv_moves.clone(),
+            depth,
+            info,
+        ));
+        if !info.quiet {
+            for ptn in pv_moves.iter().map(|m| m.to_ptn::<T>()) {
+                print!("{} ", ptn);
+            }
+            println!();
+        }
+        // Stop wasting time
+        if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
+            return outcome;
+        }
+    }
+    outcome
+}
+
 pub fn search<T, E>(board: &mut T, eval: &mut E, info: &mut SearchInfo) -> Option<SearchOutcome<T>>
 where
     T: TakBoard,
@@ -405,6 +541,7 @@ impl TakHistory {
     }
 }
 
+#[derive(Clone)]
 struct SearchData {
     alpha: i32,
     beta: i32,
@@ -465,7 +602,7 @@ where
         is_root,
     } = data;
     info.nodes += 1;
-    const FREQ: usize = (1 << 12) - 1; // Per 16k nodes
+    const FREQ: usize = (1 << 12) - 1; // Per 4k nodes
     if (info.nodes & FREQ) == FREQ {
         info.check_stop();
     }
@@ -1171,13 +1308,15 @@ mod test {
     #[test]
     fn small_alpha_beta() {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
+        let table = HashTable::new(50000);
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let mut info = SearchInfo::new(4, 50000);
+        let mut info = SearchInfo::new(4, &table);
+        table.clear();
         let mut eval = Weights6::default();
         search(&mut board, &mut eval, &mut info);
         let tps5 = "x4,1/x3,1,x/x,1,2C,1,2/x,2,1C,2,x/2,x4 1 6";
         let mut board = Board5::try_from_tps(tps5).unwrap();
-        let mut info = SearchInfo::new(3, 50000);
+        let mut info = SearchInfo::new(3, &table);
         let mut eval = Weights5::default();
         search(&mut board, &mut eval, &mut info);
     }
@@ -1185,8 +1324,9 @@ mod test {
     fn unk_puzzle() {
         let tps = "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27";
         let mut board = Board6::try_from_tps(tps).unwrap();
+        let table = HashTable::new(100_000);
         let mut eval = Weights6::default();
-        let mut info = SearchInfo::new(5, 100000);
+        let mut info = SearchInfo::new(5, &table);
         search(&mut board, &mut eval, &mut info);
     }
     #[test]
@@ -1195,7 +1335,8 @@ mod test {
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut eval = Weights6::default();
         eval.evaluate(&board, 2);
-        let mut info = SearchInfo::new(5, 1 << 14);
+        let table = HashTable::new(1 << 14);
+        let mut info = SearchInfo::new(5, &table);
         search(&mut board, &mut eval, &mut info);
     }
 }
