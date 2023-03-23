@@ -159,6 +159,9 @@ impl GameMove {
         if let Some(dir) = iter.next() {
             // Stack Move
             let pieces = pieces.unwrap_or(1) as u32;
+            if pieces > size as u32 {
+                return None;
+            }
             let dir = match dir {
                 '+' => 0,
                 '>' => 1,
@@ -173,18 +176,22 @@ impl GameMove {
                 .chain_crush(crush)
                 .set_index(square as u32);
             let mut counter = 0;
+            let mut total_pieces = 0;
             while let Some(ch) = iter.next() {
                 if let Some(num) = ch.to_digit(16) {
                     mv = mv.set_next_tile(num);
                     // let value = (num as u64) << (4 * counter);
                     // slide_bits |= value;
                     counter += 1;
+                    total_pieces += num;
                 } else {
                     break;
                 }
             }
             if counter == 0 {
                 mv = mv.set_next_tile(mv.number());
+            } else if total_pieces != pieces {
+                return None;
             }
             Some(mv)
         } else {

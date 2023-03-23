@@ -38,6 +38,12 @@ impl GameInitializer {
     pub fn get_board<E: eval::Evaluator + Default>(&self) -> (E::Game, E) {
         (E::Game::start_position().with_komi(self.komi), E::default())
     }
+    pub fn get_board_tps<E: eval::Evaluator + Default>(&self, tps: &str) -> (E::Game, E) {
+        (
+            E::Game::try_from_tps(tps).unwrap().with_komi(self.komi),
+            E::default(),
+        )
+    }
     pub fn small_clone(&self) -> Self {
         Self {
             table: None,

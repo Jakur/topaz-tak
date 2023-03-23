@@ -75,6 +75,7 @@ pub fn main() {
                         let mut eval = eval::NNUE6::new();
                         let mut board = board.with_komi(4);
                         dbg!(&board);
+                        dbg!(board.hash());
                         topaz_tak::search::multi_search(&mut board, &mut eval, &mut info, 4);
                     }
                     _ => todo!(),
@@ -707,7 +708,13 @@ fn play_game_tei<E: Evaluator + Default + Send>(
                 }
             }
             TeiCommand::Position(s) => {
-                board = init.get_board::<E>().0;
+                board = if s.split_whitespace().nth(1) == Some("tps") {
+                    let tps_data: Vec<&str> = s.split_whitespace().skip(2).take(3).collect();
+                    let tps_string = tps_data.join(" ");
+                    init.get_board_tps::<E>(&tps_string).0
+                } else {
+                    init.get_board::<E>().0
+                };
                 for m in s.split_whitespace() {
                     if let Some(m) = GameMove::try_from_ptn(m, &board) {
                         board.do_move(m);
@@ -807,7 +814,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
     const MAX_OPENING_LENGTH: usize = 0;
     let mut move_cache = Vec::new();
     let mut board = Board6::new().with_komi(KOMI);
-    let table = HashTable::new(2 << 22);
+    let table = HashTable::new(2 << 24);
     let mut info = SearchInfo::new(MAX_DEPTH, &table);
     let book = playtak_book();
     // let mut eval = Weights6::default();
@@ -835,12 +842,12 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                         }
                     }
                 }
-                let use_time = 12_000; // Todo better time management
+                let use_time = 15_000; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, &table)
                     .take_book(&mut info)
                     .time_bank(TimeBank::flat(use_time))
                     .abort_depth(50);
-                let res = search(&mut board, &mut eval, &mut info);
+                let res = topaz_tak::search::multi_search(&mut board, &mut eval, &mut info, 4);
                 if let Some(outcome) = res {
                     server_send
                         .send(outcome.best_move().expect("could not find best move!"))
@@ -893,12 +900,12 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 }
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
-    // let mut opp = "TakticianBot";
-    let mut opp = "Guest1741";
+    let mut opp = "WilemBot";
+    // let mut opp = "WilemBot";
     let login_s = if let Some((user, pass)) = playtak_auth() {
         format!("Login {} {}\n", user, pass)
     } else {
-        "Login Guest".to_string()
+        "Login Guest\n".to_string()
     };
     std::thread::spawn(move || {
         let mut com = telnet::Telnet::connect(("playtak.com", 10_000), 2048).unwrap();
@@ -918,7 +925,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                         let s = std::str::from_utf8(&(*buffer)).unwrap();
                         print!("{}", s);
                         for line in s.lines() {
-                            if line.starts_with("Welcome!") {
+                            if line.starts_with("Login or") {
                                 println!("Logging in");
                                 com.write(login_s.as_bytes()).unwrap();
                             } else if line.starts_with("Game#") {
@@ -973,6 +980,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                 goal = None;
                             } else if !live_seek && counter >= 5 {
                                 let s = format!("Seek 6 900 30 A {} 30 1 0 0 \n", PLAYTAK_KOMI);
+                                println!("Sending seek!");
                                 com.write(s.as_bytes()).unwrap();
                                 live_seek = true;
                             }

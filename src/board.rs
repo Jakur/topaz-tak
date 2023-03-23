@@ -69,6 +69,7 @@ pub trait TakBoard:
     fn symmetries(&self) -> Vec<Self>;
     /// Reset all stack indices and the zobrist hash of the position
     fn reset_stacks(&mut self);
+    fn try_from_tps(tps: &str) -> Result<Self>;
 }
 
 macro_rules! board_impl {
@@ -102,73 +103,6 @@ macro_rules! board_impl {
                 } else {
                     GameResult::Draw
                 }
-            }
-            pub fn try_from_tps(tps: &str) -> Result<Self> {
-                let mut komi = 0;
-                let tps = match tps.split_once("!") {
-                    Some((tps, rest)) => {
-                        let mut split = rest.split(&['!', ' ']);
-                        if split.by_ref().find(|x| *x == "komi").is_some() {
-                            komi = split
-                                .next()
-                                .map(|x| x.parse())
-                                .ok_or_else(|| anyhow!("Could not parse komi properly"))??;
-                        }
-                        tps
-                    }
-                    _ => tps,
-                };
-                let data: Vec<_> = tps.split_whitespace().collect();
-                ensure!(data.len() == 3, "Malformed tps string!");
-                let rows: Vec<_> = data[0].split("/").collect();
-                ensure!(rows.len() == Self::SIZE, "Wrong board size for tps");
-                let mut board = Self::new();
-                for (r_idx, row) in rows.into_iter().enumerate() {
-                    let mut col = 0;
-                    let tiles = row.split(",");
-                    for tile in tiles {
-                        if tile.starts_with("x") {
-                            if let Some(c) = tile.chars().nth(1) {
-                                col += c
-                                    .to_digit(10)
-                                    .ok_or_else(|| anyhow!("Failed to parse digit"))?;
-                            } else {
-                                col += 1;
-                            }
-                        } else {
-                            let stack = parse_tps_stack(tile)?;
-                            ensure!(
-                                col < Self::SIZE as u32,
-                                "Too many columns for this board size"
-                            );
-                            for piece in stack.into_iter() {
-                                board.board[r_idx * Self::SIZE + col as usize]
-                                    .push(piece, &mut board.bits);
-                            }
-                            col += 1;
-                        }
-                    }
-                }
-                for stack in board.board.iter() {
-                    for piece in stack.iter() {
-                        match piece {
-                            Piece::WhiteCap => board.caps_left[0] -= 1,
-                            Piece::BlackCap => board.caps_left[1] -= 1,
-                            Piece::WhiteFlat | Piece::WhiteWall => board.flats_left[0] -= 1,
-                            Piece::BlackFlat | Piece::BlackWall => board.flats_left[1] -= 1,
-                        }
-                    }
-                }
-                let active_player = match data[1] {
-                    "1" => Color::White,
-                    "2" => Color::Black,
-                    _ => bail!("Unknown active player id"),
-                };
-                board.active_player = active_player;
-                board.move_num = data[2].parse()?;
-                let zobrist_hash = zobrist::TABLE.manual_build_hash(&board);
-                board.bits.set_zobrist(zobrist_hash);
-                Ok(board.with_komi(komi))
             }
             fn transform_board<T>(&self, f: T) -> Self
             where
@@ -477,6 +411,74 @@ macro_rules! board_impl {
                 self.bits = BitboardStorage::build::<Self>(&self.board);
                 self.bits
                     .set_zobrist(zobrist::TABLE.manual_build_hash(self));
+            }
+
+            fn try_from_tps(tps: &str) -> Result<Self> {
+                let mut komi = 0;
+                let tps = match tps.split_once("!") {
+                    Some((tps, rest)) => {
+                        let mut split = rest.split(&['!', ' ']);
+                        if split.by_ref().find(|x| *x == "komi").is_some() {
+                            komi = split
+                                .next()
+                                .map(|x| x.parse())
+                                .ok_or_else(|| anyhow!("Could not parse komi properly"))??;
+                        }
+                        tps
+                    }
+                    _ => tps,
+                };
+                let data: Vec<_> = tps.split_whitespace().collect();
+                ensure!(data.len() == 3, "Malformed tps string!");
+                let rows: Vec<_> = data[0].split("/").collect();
+                ensure!(rows.len() == Self::SIZE, "Wrong board size for tps");
+                let mut board = Self::new();
+                for (r_idx, row) in rows.into_iter().enumerate() {
+                    let mut col = 0;
+                    let tiles = row.split(",");
+                    for tile in tiles {
+                        if tile.starts_with("x") {
+                            if let Some(c) = tile.chars().nth(1) {
+                                col += c
+                                    .to_digit(10)
+                                    .ok_or_else(|| anyhow!("Failed to parse digit"))?;
+                            } else {
+                                col += 1;
+                            }
+                        } else {
+                            let stack = parse_tps_stack(tile)?;
+                            ensure!(
+                                col < Self::SIZE as u32,
+                                "Too many columns for this board size"
+                            );
+                            for piece in stack.into_iter() {
+                                board.board[r_idx * Self::SIZE + col as usize]
+                                    .push(piece, &mut board.bits);
+                            }
+                            col += 1;
+                        }
+                    }
+                }
+                for stack in board.board.iter() {
+                    for piece in stack.iter() {
+                        match piece {
+                            Piece::WhiteCap => board.caps_left[0] -= 1,
+                            Piece::BlackCap => board.caps_left[1] -= 1,
+                            Piece::WhiteFlat | Piece::WhiteWall => board.flats_left[0] -= 1,
+                            Piece::BlackFlat | Piece::BlackWall => board.flats_left[1] -= 1,
+                        }
+                    }
+                }
+                let active_player = match data[1] {
+                    "1" => Color::White,
+                    "2" => Color::Black,
+                    _ => bail!("Unknown active player id"),
+                };
+                board.active_player = active_player;
+                board.move_num = data[2].parse()?;
+                let zobrist_hash = zobrist::TABLE.manual_build_hash(&board);
+                board.bits.set_zobrist(zobrist_hash);
+                Ok(board.with_komi(komi))
             }
         }
         impl Position for $t {
