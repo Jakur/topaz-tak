@@ -32,6 +32,8 @@ const LMR_REDUCE_ROOT: bool = true; // probably shouldn't
 const PV_SEARCH_ENABLED: bool = true; // no speedup, worse playing strength
 const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF
 
+const REVERSE_FUTILITY_MARGIN: i32 = 170;
+
 // aspiration window parameters
 // CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
 const ASPIRATION_ENABLED: bool = true; // Requires stable search, it's close
@@ -664,6 +666,13 @@ where
         //     return board.evaluate();
         // }
         // road_check.clear();
+    } else if depth == 1 && !is_pv && !tak_history.check(depth + 1) {
+        // Reverse futility pruning
+        let ply_depth = info.ply_depth(board);
+        let eval = evaluator.evaluate(board, ply_depth);
+        if eval - REVERSE_FUTILITY_MARGIN >= beta {
+            return beta;
+        }
     }
     // Investigate prevalence of null moves in the pv table. It seems to be very rare.
     let mut pv_entry: Option<HashEntry> = None;
@@ -793,9 +802,10 @@ where
 
     if board.ply() >= 6 && depth > GEN_THOROUGH_ORDER_DEPTH {
         if let Some(mv) = board.can_make_road(&mut stack_moves, None) {
-            let data = &[mv];
-            moves.add_move(mv);
-            moves.score_wins(data);
+            // let data = &[mv];
+            moves.add_scored(mv, 1000);
+            // moves.add_move(mv);
+            // moves.score_wins(data);
         }
     }
 

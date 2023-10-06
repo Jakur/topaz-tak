@@ -77,9 +77,9 @@ impl MoveBufferHyper {
 
 pub struct TestMoveBuffer {
     moves: Vec<ScoredMove>,
-    stack_hist: Vec<i16>,
+    // stack_hist: Vec<i16>,
     queries: usize,
-    flat_attempts: i16,
+    // flat_attempts: i16,
     hyper: MoveBufferHyper,
 }
 
@@ -87,9 +87,9 @@ impl TestMoveBuffer {
     pub fn new(buffer_size: usize, hyper: MoveBufferHyper) -> Self {
         Self {
             moves: Vec::new(),
-            stack_hist: vec![0; buffer_size],
+            // stack_hist: vec![0; buffer_size],
             queries: 0,
-            flat_attempts: 0,
+            // flat_attempts: 0,
             hyper,
         }
     }
@@ -281,15 +281,15 @@ impl TestMoveBuffer {
             x.mv
         }
     }
-    fn penalty_hist_score(&self, mv: GameMove) -> i16 {
-        if mv.is_stack_move() {
-            self.stack_hist[mv.src_index()]
-        } else if mv.place_piece().is_flat() {
-            self.flat_attempts * 2
-        } else {
-            0
-        }
-    }
+    // fn penalty_hist_score(&self, mv: GameMove) -> i16 {
+    //     if mv.is_stack_move() {
+    //         self.stack_hist[mv.src_index()]
+    //     } else if mv.place_piece().is_flat() {
+    //         self.flat_attempts * 2
+    //     } else {
+    //         0
+    //     }
+    // }
     pub fn len(&self) -> usize {
         self.moves.len()
     }
@@ -297,18 +297,18 @@ impl TestMoveBuffer {
 
 pub struct SmartMoveBuffer {
     moves: Vec<ScoredMove>,
-    stack_hist: Vec<i16>,
+    // stack_hist: Vec<i16>,
     queries: usize,
-    flat_attempts: i16,
+    // flat_attempts: i16,
 }
 
 impl SmartMoveBuffer {
     pub fn new(buffer_size: usize) -> Self {
         Self {
             moves: Vec::new(),
-            stack_hist: vec![0; buffer_size],
+            // stack_hist: vec![0; buffer_size],
             queries: 0,
-            flat_attempts: 0,
+            // flat_attempts: 0,
         }
     }
     pub fn drop_below_score(&mut self, threshold: i16) {
@@ -502,15 +502,15 @@ impl SmartMoveBuffer {
             x.mv
         }
     }
-    fn penalty_hist_score(&self, mv: GameMove) -> i16 {
-        if mv.is_stack_move() {
-            self.stack_hist[mv.src_index()]
-        } else if mv.place_piece().is_flat() {
-            self.flat_attempts * 2
-        } else {
-            0
-        }
-    }
+    // fn penalty_hist_score(&self, mv: GameMove) -> i16 {
+    //     if mv.is_stack_move() {
+    //         self.stack_hist[mv.src_index()]
+    //     } else if mv.place_piece().is_flat() {
+    //         self.flat_attempts * 2
+    //     } else {
+    //         0
+    //     }
+    // }
     pub fn len(&self) -> usize {
         self.moves.len()
     }
@@ -542,8 +542,8 @@ impl MoveBuffer for SmartMoveBuffer {
         }
     }
 
-    fn add_limit(&mut self, _limit: MoveLimits) {
-        // self.limits.push(limit);
+    fn add_scored(&mut self, mv: GameMove, score: i16) {
+        self.moves.push(ScoredMove::new(mv, score))
     }
 }
 
@@ -561,8 +561,8 @@ impl MoveBuffer for TestMoveBuffer {
         }
     }
 
-    fn add_limit(&mut self, _limit: MoveLimits) {
-        // self.limits.push(limit);
+    fn add_scored(&mut self, mv: GameMove, score: i16) {
+        self.moves.push(ScoredMove::new(mv, score))
     }
 }
 

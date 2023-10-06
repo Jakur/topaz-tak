@@ -12,7 +12,7 @@ pub mod ptn;
 
 pub trait MoveBuffer {
     fn add_move(&mut self, mv: GameMove);
-    fn add_limit(&mut self, limit: MoveLimits);
+    fn add_scored(&mut self, mv: GameMove, score: i16);
 }
 
 impl MoveBuffer for Vec<GameMove> {
@@ -20,7 +20,9 @@ impl MoveBuffer for Vec<GameMove> {
         self.push(mv);
     }
 
-    fn add_limit(&mut self, _limit: MoveLimits) {}
+    fn add_scored(&mut self, mv: GameMove, _score: i16) {
+        self.push(mv);
+    }
 }
 
 /// Generates all legal moves in a position, filling the provided buffer
@@ -112,7 +114,7 @@ pub fn generate_masked_stack_moves<T: TakBoard, B: MoveBuffer>(
             }
             directional_stack_moves(moves, dir_move, max_steps, max_pieces);
         }
-        moves.add_limit(limits);
+        // moves.add_limit(limits);
     }
 }
 
