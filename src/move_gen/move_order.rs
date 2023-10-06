@@ -1,6 +1,300 @@
 use super::*;
 use crate::search::SearchInfo;
 
+// [6, 5, 2, 7, 3, 3, 2, -2, 10, 1, -1, 0, -2, -1, -2, 4, -2, 1]
+#[derive(Debug, Clone)]
+pub struct MoveBufferHyper {
+    covered_self: i16,
+    covered_other: i16,
+    top_cover_self: i16,
+    top_cover_other: i16,
+    retain_control: i16,
+    lose_control: i16,
+    use_cap: i16,
+    crush: i16,
+    flat_score: i16,
+    wall_score: i16,
+    cap_score: i16,
+    wall_near_stack: i16,
+    cap_near_stack: i16,
+    flat_enemy: i16,
+    wall_enemy: i16,
+    cap_enemy: i16,
+    lonely_cap: i16,
+    lonely_flat: i16,
+}
+
+impl MoveBufferHyper {
+    pub fn new_from_slice(arr: &[i16]) -> Self {
+        assert_eq!(arr.len(), 18);
+        Self::new(
+            arr[0], arr[1], arr[2], arr[3], arr[4], arr[5], arr[6], arr[7], arr[8], arr[9],
+            arr[10], arr[11], arr[12], arr[13], arr[14], arr[15], arr[16], arr[17],
+        )
+    }
+    fn new(
+        covered_self: i16,
+        covered_other: i16,
+        top_cover_self: i16,
+        top_cover_other: i16,
+        retain_control: i16,
+        lose_control: i16,
+        use_cap: i16,
+        crush: i16,
+        flat_score: i16,
+        wall_score: i16,
+        cap_score: i16,
+        wall_near_stack: i16,
+        cap_near_stack: i16,
+        flat_enemy: i16,
+        wall_enemy: i16,
+        cap_enemy: i16,
+        lonely_cap: i16,
+        lonely_flat: i16,
+    ) -> Self {
+        Self {
+            covered_self,
+            covered_other,
+            top_cover_self,
+            top_cover_other,
+            retain_control,
+            lose_control,
+            use_cap,
+            crush,
+            flat_score,
+            wall_score,
+            cap_score,
+            wall_near_stack,
+            cap_near_stack,
+            flat_enemy,
+            wall_enemy,
+            cap_enemy,
+            lonely_cap,
+            lonely_flat,
+        }
+    }
+}
+
+pub struct TestMoveBuffer {
+    moves: Vec<ScoredMove>,
+    stack_hist: Vec<i16>,
+    queries: usize,
+    flat_attempts: i16,
+    hyper: MoveBufferHyper,
+}
+
+impl TestMoveBuffer {
+    pub fn new(buffer_size: usize, hyper: MoveBufferHyper) -> Self {
+        Self {
+            moves: Vec::new(),
+            stack_hist: vec![0; buffer_size],
+            queries: 0,
+            flat_attempts: 0,
+            hyper,
+        }
+    }
+    pub fn drop_below_score(&mut self, threshold: i16) {
+        self.moves.retain(|x| x.score >= threshold);
+    }
+    pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T) {
+        let active_side = board.side_to_move();
+        let mut stack_idx = usize::MAX;
+        // Moves should be grouped by src index due to generator impl
+        let mut stack_data = [Piece::WhiteFlat; 8]; // Todo T::SIZE + 1 when rust figures out this valid
+        for x in self.moves.iter_mut().filter(|x| x.mv.is_stack_move()) {
+            let mut score = 0;
+            let src_idx = x.mv.src_index();
+            if src_idx != stack_idx {
+                stack_idx = src_idx;
+                // Update stack data
+                // let number = x.mv.number() as usize;
+                let stack = board.index(src_idx);
+                let limit = std::cmp::min(stack.len(), T::SIZE);
+                for i in 0..limit {
+                    stack_data[limit - i] = stack.from_top(i).unwrap();
+                }
+                if let Some(piece) = stack.from_top(limit) {
+                    stack_data[0] = piece;
+                }
+            }
+            let mut offset = 0;
+            for step in x.mv.quantity_iter(T::SIZE) {
+                debug_assert!(step.quantity > 0);
+                offset += step.quantity as usize;
+                let covered = board.index(step.index).top();
+                let covering = stack_data[offset];
+                if let Some(piece) = covered {
+                    if piece.owner() == active_side {
+                        score -= self.hyper.covered_self;
+                    } else {
+                        score += self.hyper.covered_other;
+                    }
+                }
+                if covering.owner() == active_side {
+                    score += self.hyper.top_cover_self;
+                } else {
+                    score -= self.hyper.top_cover_other;
+                }
+            }
+            let src_stack = board.index(src_idx);
+            if let Some(piece) = src_stack.from_top(x.mv.number() as usize) {
+                if piece.owner() == active_side {
+                    score += self.hyper.retain_control;
+                } else {
+                    score -= self.hyper.lose_control;
+                }
+            }
+            if let Some(piece) = src_stack.top() {
+                if piece.is_cap() {
+                    score += self.hyper.use_cap;
+                    if x.mv.crush() {
+                        score += self.hyper.crush;
+                    }
+                }
+            }
+            x.score += score;
+            // if &x.mv.to_ptn::<T>() == DEBUG {
+            //     dbg!(x.score);
+            // }
+        }
+    }
+    pub fn gen_score_place_moves<T: TakBoard>(&mut self, board: &T, place_hist: &PlaceHistory<49>) {
+        let side = board.side_to_move();
+        for idx in board.empty_tiles() {
+            let mut flat_score = self.hyper.flat_score + place_hist.flat_score(idx);
+            let mut wall_score = self.hyper.wall_score + place_hist.wall_score(idx, side);
+            let mut cap_score = self.hyper.cap_score + place_hist.cap_score(idx);
+            let neighbors = T::Bits::index_to_bit(idx).adjacent();
+            let enemies = neighbors & board.bits().all_pieces(!side);
+            for n_idx in BitIndexIterator::new(enemies) {
+                let n_stack = board.index(n_idx);
+                // if n_stack.len() > 3
+                //     && n_stack.last() != Some(&Piece::WhiteCap)
+                //     && n_stack.last() != Some(&Piece::BlackCap)
+                // {
+                //     wall_score += 3;
+                //     cap_score += 5;
+                if n_stack.len() > 1 {
+                    wall_score += self.hyper.wall_near_stack;
+                    cap_score += self.hyper.cap_near_stack;
+                }
+            }
+            if enemies.pop_count() >= 3 {
+                flat_score -= self.hyper.flat_enemy;
+                cap_score += self.hyper.cap_enemy;
+                wall_score += self.hyper.wall_enemy;
+            }
+            let friends = neighbors & board.bits().all_pieces(side);
+            if friends.is_zero() {
+                cap_score -= self.hyper.lonely_cap;
+                flat_score -= self.hyper.lonely_flat;
+            }
+            // match friends.pop_count() {
+            //     0 => {
+            //         flat_score -= 1;
+            //         cap_score -= 2;
+            //     }
+            //     1 | 2 => {
+            //         flat_score += 1;
+            //         cap_score += 2;
+            //     }
+            //     3 => {
+            //         flat_score += 1;
+            //     }
+            //     _ => {
+            //         wall_score -= 1;
+            //         cap_score -= 1;
+            //     }
+            // }
+            if board.caps_reserve(board.side_to_move()) > 0 && board.ply() >= 4 {
+                self.moves.push(ScoredMove::new(
+                    GameMove::from_placement(Piece::cap(side), idx),
+                    cap_score,
+                ));
+            }
+            if board.pieces_reserve(board.side_to_move()) > 0 {
+                if board.ply() >= 4 {
+                    self.moves.push(ScoredMove::new(
+                        GameMove::from_placement(Piece::wall(side), idx),
+                        wall_score,
+                    ));
+                }
+                self.moves.push(ScoredMove::new(
+                    GameMove::from_placement(Piece::flat(side), idx),
+                    flat_score,
+                ));
+            }
+        }
+        // let neighbors = T::Bits::index_to_bit(idx).adjacent();
+        // todo!()
+    }
+    pub fn remove(&mut self, mv: GameMove) {
+        if let Some(pos) = self.moves.iter().position(|m| m.mv == mv) {
+            self.moves.remove(pos);
+        }
+    }
+    pub fn score_pv_move(&mut self, pv_move: GameMove) {
+        if let Some(found) = self.moves.iter_mut().find(|m| m.mv == pv_move) {
+            found.score += 250;
+        }
+    }
+    pub fn score_tak_threats(&mut self, tak_threats: &[GameMove]) {
+        for m in self.moves.iter_mut() {
+            if tak_threats.contains(&m.mv) {
+                m.score += 50;
+            }
+        }
+    }
+    pub fn score_wins(&mut self, winning_moves: &[GameMove]) {
+        for m in self.moves.iter_mut() {
+            if winning_moves.contains(&m.mv) {
+                m.score += 1000
+            }
+        }
+    }
+    pub fn get_best<T: TakBoard>(&mut self, last_move: Option<RevGameMove>, board: &T) -> GameMove {
+        if self.queries <= 16 {
+            self.queries += 1;
+            let (idx, m) = self
+                .moves
+                .iter()
+                .enumerate()
+                .max_by_key(|(_i, &m)| {
+                    m.score // + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
+                            // - self.penalty_hist_score(m.mv)
+                })
+                .unwrap();
+            let m = *m;
+            // if m.mv.is_stack_move() {
+            //     let hist_score = &mut self.stack_hist[m.mv.src_index()];
+            //     if *hist_score < 10 {
+            //         *hist_score += 1;
+            //     }
+            // } else if m.mv.place_piece().is_flat() {
+            //     self.flat_attempts += 1;
+            // }
+            self.moves.swap_remove(idx);
+            m.mv
+        } else {
+            // Probably an all node, so search order doesn't really matter
+            let x = self.moves.pop().unwrap();
+            x.mv
+        }
+    }
+    fn penalty_hist_score(&self, mv: GameMove) -> i16 {
+        if mv.is_stack_move() {
+            self.stack_hist[mv.src_index()]
+        } else if mv.place_piece().is_flat() {
+            self.flat_attempts * 2
+        } else {
+            0
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.moves.len()
+    }
+}
+
 pub struct SmartMoveBuffer {
     moves: Vec<ScoredMove>,
     stack_hist: Vec<i16>,
@@ -16,6 +310,9 @@ impl SmartMoveBuffer {
             queries: 0,
             flat_attempts: 0,
         }
+    }
+    pub fn drop_below_score(&mut self, threshold: i16) {
+        self.moves.retain(|x| x.score >= threshold);
     }
     pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T) {
         let active_side = board.side_to_move();
@@ -39,10 +336,7 @@ impl SmartMoveBuffer {
                     stack_data[0] = piece;
                 }
             }
-            // if &x.mv.to_ptn::<T>() == "6b6>1113" {
-            //     panic!()
-            //     // println!("{}", "HELLO \n \n \n \n ");
-            // }
+            // [2, 3, 2, 6, 2, 3, 2, 0, 10, 1, 0, 2, 0, -1, 3, 0, 0, 2]
             let mut offset = 0;
             for step in x.mv.quantity_iter(T::SIZE) {
                 debug_assert!(step.quantity > 0);
@@ -86,6 +380,7 @@ impl SmartMoveBuffer {
     }
     pub fn gen_score_place_moves<T: TakBoard>(&mut self, board: &T, place_hist: &PlaceHistory<49>) {
         let side = board.side_to_move();
+        // [2, 3, 2, 6, 2, 3, 2, 0, 10, 1, 0, 2, 0, -1, 3, 0, 0, 2]
         for idx in board.empty_tiles() {
             let mut flat_score = 3 + place_hist.flat_score(idx);
             let mut wall_score = 1 + place_hist.wall_score(idx, side);
@@ -111,7 +406,7 @@ impl SmartMoveBuffer {
                 wall_score += 1;
             }
             let friends = neighbors & board.bits().all_pieces(side);
-            if friends.pop_count() == 0 {
+            if friends.is_zero() {
                 cap_score -= 2;
                 flat_score -= 1;
             }
@@ -178,7 +473,7 @@ impl SmartMoveBuffer {
             }
         }
     }
-    pub fn get_best(&mut self, ply: usize, info: &SearchInfo) -> GameMove {
+    pub fn get_best<T: TakBoard>(&mut self, last_move: Option<RevGameMove>, board: &T) -> GameMove {
         if self.queries <= 16 {
             self.queries += 1;
             let (idx, m) = self
@@ -186,19 +481,19 @@ impl SmartMoveBuffer {
                 .iter()
                 .enumerate()
                 .max_by_key(|(_i, &m)| {
-                    m.score //+ info.killer_moves[ply % info.max_depth].score(m.mv) as i16
-                        - self.penalty_hist_score(m.mv)
+                    m.score // + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
+                            // - self.penalty_hist_score(m.mv)
                 })
                 .unwrap();
             let m = *m;
-            if m.mv.is_stack_move() {
-                let hist_score = &mut self.stack_hist[m.mv.src_index()];
-                if *hist_score < 10 {
-                    *hist_score += 1;
-                }
-            } else if m.mv.place_piece().is_flat() {
-                self.flat_attempts += 1;
-            }
+            // if m.mv.is_stack_move() {
+            //     let hist_score = &mut self.stack_hist[m.mv.src_index()];
+            //     if *hist_score < 10 {
+            //         *hist_score += 1;
+            //     }
+            // } else if m.mv.place_piece().is_flat() {
+            //     self.flat_attempts += 1;
+            // }
             self.moves.swap_remove(idx);
             m.mv
         } else {
@@ -234,6 +529,25 @@ impl ScoredMove {
 }
 
 impl MoveBuffer for SmartMoveBuffer {
+    fn add_move(&mut self, mv: GameMove) {
+        // (bits + self.number() + 10 * self.is_stack_move() as u64)
+        if mv.is_place_move() {
+            if mv.place_piece().is_wall() {
+                self.moves.push(ScoredMove::new(mv, 2));
+            } else {
+                self.moves.push(ScoredMove::new(mv, 3));
+            }
+        } else {
+            self.moves.push(ScoredMove::new(mv, 0));
+        }
+    }
+
+    fn add_limit(&mut self, _limit: MoveLimits) {
+        // self.limits.push(limit);
+    }
+}
+
+impl MoveBuffer for TestMoveBuffer {
     fn add_move(&mut self, mv: GameMove) {
         // (bits + self.number() + 10 * self.is_stack_move() as u64)
         if mv.is_place_move() {
@@ -293,15 +607,16 @@ pub struct PlaceHistory<const SIZE: usize> {
 
 impl<const SIZE: usize> PlaceHistory<SIZE> {
     pub fn new() -> Self {
+        let sz = SIZE as u32;
         Self {
-            all_flat: [0; SIZE],
-            white_wall: [0; SIZE],
-            black_wall: [0; SIZE],
-            all_cap: [0; SIZE],
-            flat_total: 0,
-            cap_total: 0,
-            white_wall_total: 0,
-            black_wall_total: 0,
+            all_flat: [1; SIZE],
+            white_wall: [1; SIZE],
+            black_wall: [1; SIZE],
+            all_cap: [1; SIZE],
+            flat_total: sz,
+            cap_total: sz,
+            white_wall_total: sz,
+            black_wall_total: sz,
         }
     }
     pub fn update(&mut self, depth: usize, mv: GameMove) {
@@ -328,18 +643,18 @@ impl<const SIZE: usize> PlaceHistory<SIZE> {
     }
     pub fn flat_score(&self, idx: usize) -> i16 {
         let raw_score = self.all_flat[idx];
-        base_2_log(raw_score).saturating_sub(base_2_log(self.flat_total) / 2)
+        (raw_score.ilog2() as i16).saturating_sub((self.flat_total.ilog2() as i16) / 2)
     }
     pub fn cap_score(&self, idx: usize) -> i16 {
         let raw_score = self.all_cap[idx];
-        base_2_log(raw_score).saturating_sub(base_2_log(self.cap_total) / 2)
+        (raw_score.ilog2() as i16).saturating_sub((self.cap_total.ilog2() as i16) / 2)
     }
     pub fn wall_score(&self, idx: usize, color: Color) -> i16 {
         let (raw_score, total) = match color {
             Color::White => (self.white_wall[idx], self.white_wall_total),
             Color::Black => (self.black_wall[idx], self.black_wall_total),
         };
-        base_2_log(raw_score).saturating_sub(base_2_log(total) / 2)
+        (raw_score.ilog2() as i16).saturating_sub((total.ilog2() as i16) / 2)
     }
     pub fn score_place_move(&mut self, mv: GameMove) -> i16 {
         let idx = mv.src_index();
@@ -351,8 +666,7 @@ impl<const SIZE: usize> PlaceHistory<SIZE> {
                 Piece::BlackWall => self.black_wall[idx],
             }
         };
-        // Hacky base 2 log
-        base_2_log(raw_score)
+        raw_score.ilog2() as i16
     }
     pub fn debug(&self) {
         dbg!(&self.all_flat);
@@ -360,10 +674,6 @@ impl<const SIZE: usize> PlaceHistory<SIZE> {
         dbg!(&self.black_wall);
         dbg!(&self.all_cap);
     }
-}
-
-fn base_2_log(val: u32) -> i16 {
-    (32 - val.leading_zeros()) as i16
 }
 
 #[derive(Clone)]
@@ -393,7 +703,7 @@ impl HistoryMoves {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{transposition_table::HashTable, Board6};
+    use crate::Board6;
     #[test]
     fn big_stack_order() {
         let tps = "21C,222222,2,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 2 31";
@@ -403,9 +713,7 @@ mod test {
         moves.score_stack_moves(&board);
         moves.moves.sort_by_key(|x| -x.score);
         assert!(moves.moves[0].score >= moves.moves.last().unwrap().score);
-        let table = HashTable::new(1000);
-        let info = SearchInfo::new(1, &table);
-        let order = (0..moves.moves.len()).map(|_| moves.get_best(0, &info));
+        let order = (0..moves.moves.len()).map(|_| moves.get_best(None, &board));
         // let order: Vec<_> = moves.moves.into_iter().map(|x| *x.mv).collect();
         for m in order {
             println!("{}", m.to_ptn::<Board6>());

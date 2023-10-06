@@ -68,11 +68,12 @@ pub struct SearchInfo<'a> {
 
 impl<'a> SearchInfo<'a> {
     pub fn new(max_depth: usize, pv_table: &'a HashTable) -> Self {
+        let depth_size = (max_depth + 1).next_power_of_two();
         Self {
             max_depth,
             pv_table,
-            killer_moves: vec![KillerMoves::new(); max_depth + 1],
-            stack_win_kill: vec![KillerMoves::new(); max_depth + 1],
+            killer_moves: vec![KillerMoves::new(); depth_size],
+            stack_win_kill: vec![KillerMoves::new(); depth_size],
             hist_moves: PlaceHistory::new(), // Todo init in search
             nodes: 0,
             stopped: false,
@@ -653,6 +654,7 @@ where
         //     return evaluator.evaluate(board, ply_depth);
         // }
         let ply_depth = info.ply_depth(board);
+        // return q_search(board, evaluator, info, alpha, beta, last_move, 4);
         return evaluator.evaluate(board, ply_depth);
         // let mut road_check = Vec::new();
         // road_move = board.can_make_road(&mut road_check);
@@ -836,7 +838,9 @@ where
                         info.stats.add_cut(0);
                         if m.is_stack_move() {
                             let ply_depth = info.ply_depth(board);
-                            info.killer_moves[ply_depth].add(m);
+                            if ply_depth < info.killer_moves.len() {
+                                info.killer_moves[ply_depth].add(m);
+                            }
                         } else {
                             info.hist_moves.update(depth, m);
                         }
@@ -875,7 +879,7 @@ where
     let ply_depth = info.ply_depth(board);
     for c in 0..moves.len() {
         let count = if has_searched_pv { c + 1 } else { c };
-        let m = moves.get_best(ply_depth, info);
+        let m = moves.get_best(last_move, board);
 
         let rev_move = board.do_move(m);
         let next_extensions = extensions;
@@ -1022,7 +1026,9 @@ where
                 info.stats.add_cut(count);
                 if m.is_stack_move() {
                     let ply_depth = info.ply_depth(board);
-                    info.killer_moves[ply_depth].add(m);
+                    if ply_depth < info.killer_moves.len() {
+                        info.killer_moves[ply_depth].add(m);
+                    }
                 } else {
                     info.hist_moves.update(depth, m);
                 }
@@ -1113,107 +1119,117 @@ fn gen_and_score<T>(
     // }
 }
 
-// fn q_search<T, E>(
-//     board: &mut T,
-//     evaluator: &mut E,
-//     info: &mut SearchInfo,
-//     mut alpha: i32,
-//     beta: i32,
-//     prev_move: RevGameMove,
-// ) -> i32
-// where
-//     T: TakBoard,
-//     E: Evaluator<Game = T>,
-// {
-//     use crate::board::{BitIndexIterator, Bitboard};
-//     // Todo avoid double check game over on first entering q-search?
-//     // Todo limit q-search depth in case of extreme capture war?
-//     match board.game_result() {
-//         Some(GameResult::WhiteWin) => {
-//             if let Color::White = board.side_to_move() {
-//                 return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
-//             }
-//             return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32;
-//         }
-//         Some(GameResult::BlackWin) => {
-//             if let Color::White = board.side_to_move() {
-//                 return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32;
-//             }
-//             return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
-//         }
-//         Some(GameResult::Draw) => return 0,
-//         None => {}
-//     }
-//     let ply_depth = info.ply_depth(board);
-//     if !prev_move.game_move.is_stack_move() {
-//         return evaluator.evaluate(board, ply_depth);
-//     }
-//     let mut temp = Vec::new();
-//     let mut moves = SmartMoveBuffer::new();
-//     let src_idx = prev_move.game_move.src_index();
-//     let side = board.side_to_move();
-//     if board.board()[src_idx].is_empty() {
-//         if board.pieces_reserve(side) > 0 {
-//             moves.add_move(GameMove::from_placement(crate::Piece::wall(side), src_idx));
-//             moves.add_move(GameMove::from_placement(crate::Piece::flat(side), src_idx));
-//         }
-//         if board.caps_reserve(side) > 0 {
-//             moves.add_move(GameMove::from_placement(crate::Piece::cap(side), src_idx));
-//         }
-//     }
-//     let target = prev_move.dest_sq;
-//     let top = board.board()[target].top().unwrap();
-//     if !(top.is_cap() || top.owner() == side) {
-//         let stack_mask = T::Bits::index_to_bit(target).adjacent() & board.bits().all_pieces(side);
-//         generate_masked_stack_moves(board, &mut temp, BitIndexIterator::new(stack_mask));
-//         for mv in temp {
-//             if mv.dest_sq(T::SIZE) == target {
-//                 moves.add_move(mv);
-//             }
-//         }
-//     }
-//     // use crate::board::Bitboard;
-//     // let mut moves = Vec::new();
-//     // if board.can_make_road(&mut moves, None).is_some() {
-//     //     return WIN_SCORE - 1 - board.ply() as i32 + info.start_ply as i32;
-//     // }
-//     // let opp_critical = board.bits().road_pieces(!board.side_to_move()) & board.bits().empty();
-//     // // Opponent has two winning placements, we must move a stack
-//     // let cs_count = opp_critical.pop_count();
-//     // if cs_count == 0 {
-//     //     // Are we attacking, if so maybe look further?
-//     //     let ply_depth = info.ply_depth(board);
-//     //     return evaluator.evaluate(board, ply_depth);
-//     // }
-//     // let mut moves = SmartMoveBuffer::new();
-//     // if cs_count == 1 {
-//     //     let sq = opp_critical.lowest_index();
-//     //     let side = board.side_to_move();
-//     //     moves.add_move(GameMove::from_placement(crate::Piece::wall(side), sq));
-//     //     moves.add_move(GameMove::from_placement(crate::Piece::flat(side), sq));
-//     //     if board.caps_reserve(side) > 0 {
-//     //         moves.add_move(GameMove::from_placement(crate::Piece::cap(side), sq));
-//     //     }
-//     // }
-//     // generate_all_stack_moves(board, &mut moves);
-//     // moves.score_stack_moves(board);
-//     if moves.len() == 0 {
-//         return evaluator.evaluate(board, ply_depth);
-//     }
-//     for _ in 0..moves.len() {
-//         let mv = moves.get_best(ply_depth, info);
-//         let rev = board.do_move(mv);
-//         let score = -q_search(board, evaluator, info, -beta, -alpha, rev);
-//         board.reverse_move(rev);
-//         if score >= beta {
-//             return beta;
-//         }
-//         if score > alpha {
-//             alpha = score;
-//         }
-//     }
-//     alpha
-// }
+fn q_search<T, E>(
+    board: &mut T,
+    evaluator: &mut E,
+    info: &mut SearchInfo,
+    mut alpha: i32,
+    beta: i32,
+    prev_move: Option<RevGameMove>,
+    depth_left: usize,
+) -> i32
+where
+    T: TakBoard,
+    E: Evaluator<Game = T>,
+{
+    // Todo avoid double check game over on first entering q-search?
+    // Todo limit q-search depth in case of extreme capture war?
+    match board.game_result() {
+        Some(GameResult::WhiteWin) => {
+            if let Color::White = board.side_to_move() {
+                return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
+            }
+            return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32;
+        }
+        Some(GameResult::BlackWin) => {
+            if let Color::White = board.side_to_move() {
+                return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32;
+            }
+            return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
+        }
+        Some(GameResult::Draw) => return 0,
+        None => {}
+    }
+    let ply_depth = info.ply_depth(board);
+    if depth_left == 0 {
+        return evaluator.evaluate(board, ply_depth);
+    }
+    let mut moves = SmartMoveBuffer::new(64);
+    // let src_idx = prev_move.game_move.src_index();
+    // let side = board.side_to_move();
+    // if board.board()[src_idx].is_empty() {
+    //     if board.pieces_reserve(side) > 0 {
+    //         moves.add_move(GameMove::from_placement(crate::Piece::wall(side), src_idx));
+    //         moves.add_move(GameMove::from_placement(crate::Piece::flat(side), src_idx));
+    //     }
+    //     if board.caps_reserve(side) > 0 {
+    //         moves.add_move(GameMove::from_placement(crate::Piece::cap(side), src_idx));
+    //     }
+    // }
+    generate_all_stack_moves(board, &mut moves);
+    moves.score_stack_moves(board);
+    // let target = prev_move.dest_sq;
+    // let top = board.board()[target].top().unwrap();
+    // if !(top.is_cap() || top.owner() == side) {
+    //     let stack_mask = T::Bits::index_to_bit(target).adjacent() & board.bits().all_pieces(side);
+    //     generate_masked_stack_moves(board, &mut temp, BitIndexIterator::new(stack_mask));
+    //     for mv in temp {
+    //         if mv.dest_sq(T::SIZE) == target {
+    //             moves.add_move(mv);
+    //         }
+    //     }
+    // }
+    // use crate::board::Bitboard;
+    // let mut moves = Vec::new();
+    // if board.can_make_road(&mut moves, None).is_some() {
+    //     return WIN_SCORE - 1 - board.ply() as i32 + info.start_ply as i32;
+    // }
+    // let opp_critical = board.bits().road_pieces(!board.side_to_move()) & board.bits().empty();
+    // // Opponent has two winning placements, we must move a stack
+    // let cs_count = opp_critical.pop_count();
+    // if cs_count == 0 {
+    //     // Are we attacking, if so maybe look further?
+    //     let ply_depth = info.ply_depth(board);
+    //     return evaluator.evaluate(board, ply_depth);
+    // }
+    // let mut moves = SmartMoveBuffer::new();
+    // if cs_count == 1 {
+    //     let sq = opp_critical.lowest_index();
+    //     let side = board.side_to_move();
+    //     moves.add_move(GameMove::from_placement(crate::Piece::wall(side), sq));
+    //     moves.add_move(GameMove::from_placement(crate::Piece::flat(side), sq));
+    //     if board.caps_reserve(side) > 0 {
+    //         moves.add_move(GameMove::from_placement(crate::Piece::cap(side), sq));
+    //     }
+    // }
+    // generate_all_stack_moves(board, &mut moves);
+    // moves.score_stack_moves(board);
+    moves.drop_below_score(6);
+    if moves.len() == 0 {
+        return evaluator.evaluate(board, ply_depth);
+    }
+    for _ in 0..moves.len() {
+        let mv = moves.get_best(prev_move, board);
+        let rev = board.do_move(mv);
+        let score = -q_search(
+            board,
+            evaluator,
+            info,
+            -beta,
+            -alpha,
+            Some(rev),
+            depth_left - 1,
+        );
+        board.reverse_move(rev);
+        if score >= beta {
+            return beta;
+        }
+        if score > alpha {
+            alpha = score;
+        }
+    }
+    alpha
+}
 
 /// A naive minimax function without pruning used for debugging and benchmarking
 #[cfg(test)]

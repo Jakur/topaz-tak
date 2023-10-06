@@ -180,6 +180,8 @@ pub trait Bitboard:
     /// This unsets the bit in the bitboard and returns a new bitboard where only
     /// that single bit is set. 
     fn pop_lowest(&mut self) -> Self;
+    /// Returns true if none of the bits in the bitboard are set.
+    fn is_zero(&self) -> bool;
     /// Returns true if any of the bits in the bitboard are set.
     fn nonzero(&self) -> bool;
     /// Returns the number of ones set in the bitboard
@@ -648,6 +650,9 @@ macro_rules! bitboard_impl {
                     self.0 ^= value;
                     Self::new(value)
                 }
+            }
+            fn is_zero(&self) -> bool {
+                self.0 == 0
             }
             fn nonzero(&self) -> bool {
                 self.0 != 0

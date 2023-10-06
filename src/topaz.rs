@@ -54,7 +54,7 @@ lazy_static! {
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
-
+    eval::global_init_weights("/home/justin/Code/rust/topaz-eval/explore/vals_mix.txt");
     if let Some(arg1) = args.get(1) {
         if arg1 == "black" {
             play_game_cmd(false);
@@ -70,7 +70,7 @@ pub fn main() {
                         let mut eval = Weights5::default();
                         search(&mut board, &mut eval, &mut info);
                     }
-                    TakGame::Standard6(mut board) => {
+                    TakGame::Standard6(board) => {
                         // let mut eval = Weights6::default();
                         let mut eval = eval::NNUE6::new();
                         let mut board = board.with_komi(4);
@@ -237,8 +237,9 @@ pub fn main() {
                     }
                     TakGame::Standard6(ref mut board) => {
                         // let mut eval = Weights6::default();
+                        let mut eval_board = board.clone().with_komi(4);
                         let mut eval = NNUE6::default();
-                        let outcome = search(board, &mut eval, &mut info).unwrap();
+                        let outcome = search(&mut eval_board, &mut eval, &mut info).unwrap();
                         println!("{}", outcome.best_move().unwrap());
                         let mv = outcome.next().unwrap();
                         board.do_move(mv);
@@ -747,6 +748,7 @@ fn identify() {
     println!("id name Topaz");
     println!("id author Justin Kur");
     println!("option name HalfKomi type spin default 0 min 0 max 12");
+    println!("option name NN type string");
     println!("teiok");
 }
 
@@ -798,6 +800,8 @@ fn tei_loop() {
             if name == "HalfKomi" {
                 init.komi = value.parse().unwrap();
                 println!("Setting komi to {}", init.komi);
+            } else if name == "NN" {
+                eval::global_init_weights(value);
             }
         } else {
             println!("Unknown Tei Command: {}", buffer);
@@ -817,8 +821,8 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
     let table = HashTable::new(2 << 24);
     let mut info = SearchInfo::new(MAX_DEPTH, &table);
     let book = playtak_book();
-    // let mut eval = Weights6::default();
-    let mut eval = crate::eval::NNUE6::default();
+    let mut eval = Weights6::default();
+    // let mut eval = crate::eval::NNUE6::default();
     // eval.add_noise();
     // let eval = Evaluator6 {};
     'outer: loop {
@@ -842,7 +846,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                         }
                     }
                 }
-                let use_time = 15_000; // Todo better time management
+                let use_time = 10_000; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, &table)
                     .take_book(&mut info)
                     .time_bank(TimeBank::flat(use_time))
@@ -900,7 +904,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 }
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
-    let mut opp = "WilemBot";
+    let mut opp = "TheGreatTaksby";
     // let mut opp = "WilemBot";
     let login_s = if let Some((user, pass)) = playtak_auth() {
         format!("Login {} {}\n", user, pass)
@@ -1077,28 +1081,6 @@ fn playtak_book() -> Option<HashMap<u64, String>> {
     } else {
         None
     }
-}
-
-fn save_playtak_book(book: &book::Book) -> Result<()> {
-    use anyhow::anyhow;
-    use miniserde::json;
-    dotenv::dotenv()?;
-    let mut pt_book = None;
-    for (key, value) in env::vars() {
-        if key == "PLAYTAK_BOOK" {
-            pt_book = Some(value);
-        }
-    }
-    let pt_book = pt_book.ok_or_else(|| anyhow!("Could not find book path to write to"))?;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&pt_book)?;
-    let write_string = json::to_string(book);
-    write!(&mut file, "{}", write_string)?;
-    file.flush()?;
-    Ok(())
 }
 
 fn gen_magics() {

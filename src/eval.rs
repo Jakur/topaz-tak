@@ -11,12 +11,13 @@ use std::fs::File;
 
 static NN6: once_cell::sync::OnceCell<incremental::Weights> = once_cell::sync::OnceCell::new();
 
-// lazy_static::lazy_static!(
-//     pub static ref NN6: incremental::Weights = {
-//         let f_name = nn_file().expect("Could not read NN variable from env");
-//         incremental::Weights::from_file(File::open(f_name).unwrap()).unwrap()
-//     };
-// );
+pub fn global_init_weights(f_name: &str) {
+    println!("Setting global weights!");
+    let weights = incremental::Weights::from_file(File::open(f_name).unwrap()).unwrap();
+    NN6.set(weights)
+        .ok()
+        .expect("Unable to override existing NN6 Weights!");
+}
 
 fn nn_file() -> Option<String> {
     let _ = dotenv::dotenv();
@@ -44,7 +45,6 @@ pub struct NNUE6 {
     old_white: Vec<u16>,
     old_black: Vec<u16>,
     classical: Weights6,
-    pos_seed: u64,
 }
 
 impl Default for NNUE6 {
@@ -60,15 +60,12 @@ impl NNUE6 {
             incremental::Weights::from_file(File::open(f_name).unwrap()).unwrap()
         });
         let classical = Weights6::default();
-        let mut seed: [u8; 8] = [0; 8];
-        getrandom::getrandom(&mut seed);
         Self {
             incremental_white: nn.build_incremental(&[]),
             incremental_black: nn.build_incremental(&[]),
             old_white: Vec::new(),
             old_black: Vec::new(),
             classical,
-            pos_seed: u64::from_ne_bytes(seed),
         }
     }
 }
@@ -142,48 +139,6 @@ impl Evaluator6 {
 
 pub const WIN_SCORE: i32 = 10_000;
 pub const LOSE_SCORE: i32 = -1 * WIN_SCORE;
-
-pub struct Tinue5 {
-    pub attacker: Color,
-}
-
-pub struct Tinue6 {
-    pub attacker: Color,
-}
-
-pub struct Tinue7 {
-    pub attacker: Color,
-}
-
-macro_rules! tinue_eval {
-    ($board: ty, $weights: ty) => {
-        impl Evaluator for $weights {
-            type Game = $board;
-            #[inline(never)]
-            fn evaluate(&mut self, game: &Self::Game, _depth: usize) -> i32 {
-                let attacker = self.attacker;
-                let mut score = 100 - 5 * game.pieces_reserve(attacker) as i32;
-                score -= 10 * game.bits().blocker_pieces(!attacker).pop_count() as i32;
-                score += 2 * game
-                    .bits()
-                    .road_pieces(attacker)
-                    .critical_squares()
-                    .pop_count() as i32;
-                if game.side_to_move() == attacker {
-                    score
-                } else {
-                    -score
-                }
-            }
-            fn eval_stack(&self, _game: &Self::Game, _index: usize, _stack: &Stack) -> i32 {
-                unimplemented!()
-            }
-            fn eval_components(&self, _game: &Self::Game) -> EvalComponents {
-                unimplemented!()
-            }
-        }
-    };
-}
 
 macro_rules! eval_impl {
     ($board: ty, $weights: ty) => {
