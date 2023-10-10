@@ -5,8 +5,8 @@ use crate::{board::TakBoard, Board6, Color};
 use rand_core::{RngCore, SeedableRng};
 use std::str::FromStr;
 
-// const DIM1: usize = 4160 + 78 * 36;
-const DIM1: usize = 2976;
+// const DIM1: usize = 2976;
+const DIM1: usize = 11168;
 const DIM2: usize = 128;
 const DIM3: usize = 64;
 
@@ -14,8 +14,9 @@ const SCALE_INT: i16 = 500;
 const SCALE_FLOAT: f32 = SCALE_INT as f32;
 
 // const OFFSET: u16 = FLAT_OFFSET + 36 * 4;
-const UNDER_OFFSET: u16 = 168;
+const UNDER_OFFSET: u16 = 168 + 512 * 16;
 const STACK_LOOKUP: [u16; 7 * 7 * 7] = include!("stack_lookup.table");
+const CONV_COMPRESS: [u16; 3usize.pow(9)] = include!("conv.table");
 
 pub struct Weights {
     outer: Box<[[i16; DIM2]]>,
@@ -90,16 +91,49 @@ impl Weights {
 }
 
 pub fn nn_repr(board: &Board6) -> Vec<u16> {
-    const OFFSET: usize = 4240;
+    // const OFFSET: usize = 4240;
     let mut arr1 = make_array(board);
-    debug_assert!(arr1.iter().all(|&x| x < (OFFSET + 64) as u16));
+    // debug_assert!(arr1.iter().all(|&x| x < (OFFSET + 64) as u16));
     arr1.extend(make_under_array(board).into_iter());
     arr1
 }
 
+struct ConvLookup {
+    lookup_friendly: [u16; 512],
+    lookup_enemy: [u16; 512],
+}
+
+const fn build_conv_lookup() -> ConvLookup {
+    let mut lookup_friendly = [0; 512];
+    let mut lookup_enemy = [0; 512];
+    let mut i = 1u32;
+    while i < 512 {
+        let mut idx1 = 0;
+        let mut idx2 = 0;
+        let mut temp = i;
+        // Essentially converting to base 3
+        while temp != 0 {
+            let lowest: u32 = 1 << temp.trailing_zeros();
+            // let lowest = temp.blsi();
+            // assert_eq!(est, lowest);
+            let offset = 3u32.pow(lowest.ilog2());
+            idx1 += offset;
+            idx2 += 2 * offset;
+            temp &= !lowest;
+        }
+        lookup_friendly[i as usize] = idx1 as u16;
+        lookup_enemy[i as usize] = idx2 as u16;
+        i += 1;
+    }
+    ConvLookup {
+        lookup_friendly,
+        lookup_enemy,
+    }
+}
+
 fn make_array(board: &Board6) -> Vec<u16> {
     use bitintr::Pext;
-    let mut out = Vec::with_capacity(8);
+    let mut out = Vec::with_capacity(8 + 16);
     // let mut bits = Vec::new();
     // for color in [board.bits().white, board.bits().black] {
     //     for piece in [board.bits().flat, board.bits().wall, board.bits().cap] {
@@ -162,6 +196,38 @@ fn make_array(board: &Board6) -> Vec<u16> {
     out.push(158 + attack_black as u16);
     // Side to move
     out.push(166 + (friendly == Color::Black) as u16);
+    const MASKS: [u64; 16] = [
+        235802112,
+        471604224,
+        943208448,
+        1886416896,
+        60365340672,
+        120730681344,
+        241461362688,
+        482922725376,
+        15453527212032,
+        30907054424064,
+        61814108848128,
+        123628217696256,
+        3956102966280192,
+        7912205932560384,
+        15824411865120768,
+        31648823730241536,
+    ];
+    const CONV_OFFSET: u16 = 168;
+    const CONV_LOOKUP: ConvLookup = build_conv_lookup();
+    for (mask_idx, mask) in MASKS.iter().copied().enumerate() {
+        let white = board.bits().white;
+        let black = board.bits().black;
+        let mut white = white.raw_bits().pext(mask) as usize;
+        let mut black = black.raw_bits().pext(mask) as usize;
+
+        if board.side_to_move() != Color::White {
+            std::mem::swap(&mut white, &mut black);
+        }
+        let index = CONV_LOOKUP.lookup_friendly[white] + CONV_LOOKUP.lookup_enemy[black];
+        out.push(CONV_OFFSET + (mask_idx as u16) * 512 + CONV_COMPRESS[index as usize])
+    }
     out
 }
 

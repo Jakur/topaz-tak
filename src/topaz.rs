@@ -54,7 +54,7 @@ lazy_static! {
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
-    // eval::global_init_weights("/home/justin/Code/rust/topaz-eval/explore/vals_mix.txt");
+    eval::global_init_weights("/home/justin/Code/rust/topaz-eval/explore/vals_new6.txt");
     if let Some(arg1) = args.get(1) {
         if arg1 == "black" {
             play_game_cmd(false);
