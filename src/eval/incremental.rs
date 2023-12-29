@@ -6,15 +6,18 @@ use rand_core::{RngCore, SeedableRng};
 use std::str::FromStr;
 
 // const DIM1: usize = 2976;
-const DIM1: usize = 11168;
+pub(crate) const DIM1: usize = 5488;
 const DIM2: usize = 128;
 const DIM3: usize = 64;
+// const DIM2: usize = 16;
+// const DIM3: usize = 16;
 
 const SCALE_INT: i16 = 500;
 const SCALE_FLOAT: f32 = SCALE_INT as f32;
 
 // const OFFSET: u16 = FLAT_OFFSET + 36 * 4;
-const UNDER_OFFSET: u16 = 168 + 512 * 16;
+// const UNDER_OFFSET: u16 = 2648;
+const UNDER_OFFSET: u16 = 2680;
 const STACK_LOOKUP: [u16; 7 * 7 * 7] = include!("stack_lookup.table");
 const CONV_COMPRESS: [u16; 3usize.pow(9)] = include!("conv.table");
 
@@ -133,7 +136,7 @@ const fn build_conv_lookup() -> ConvLookup {
 
 fn make_array(board: &Board6) -> Vec<u16> {
     use bitintr::Pext;
-    let mut out = Vec::with_capacity(8 + 16);
+    let mut out = Vec::with_capacity(36 + 10);
     // let mut bits = Vec::new();
     // for color in [board.bits().white, board.bits().black] {
     //     for piece in [board.bits().flat, board.bits().wall, board.bits().cap] {
@@ -169,70 +172,85 @@ fn make_array(board: &Board6) -> Vec<u16> {
     // }
     let friendly = board.side_to_move();
     let opp = !friendly;
-    let white_res = board.caps_reserve(friendly) as u16 + board.pieces_reserve(friendly) as u16;
-    let black_res = board.caps_reserve(opp) as u16 + board.pieces_reserve(opp) as u16;
+    let friendly_res = board.caps_reserve(friendly) as u16 + board.pieces_reserve(friendly) as u16;
+    let enemy_res = board.caps_reserve(opp) as u16 + board.pieces_reserve(opp) as u16;
     // Reserve advantage?
-    let white_res_adv = (white_res as i16 - black_res as i16).clamp(-8, 8) + 8;
-    out.push(64 + white_res_adv as u16);
+    let res_adv = (enemy_res as i16 - friendly_res as i16).clamp(-4, 4) + 4;
     // Flat Advantage
-    let white_flat_adv = board.flat_diff(friendly).clamp(-6, 6) + 6;
-    out.push(82 + white_flat_adv as u16);
+    let flat_adv = board.flat_diff(friendly).clamp(-4, 4) + 4;
+    let res_flat_idx = friendly_res * 81 + (res_adv as u16) * 9 + (flat_adv as u16);
+    out.push(res_flat_idx);
+    // Offset 2592
     // Empty squares
-    let empty = std::cmp::min(board.bits().empty().pop_count(), 8);
-    out.push(96 + empty as u16);
-    let comp_white = std::cmp::min(
-        8,
-        connected_components(board.bits.road_pieces(friendly), Bitboard6::flood).steps,
-    );
-    let comp_black = std::cmp::min(
-        8,
-        connected_components(board.bits.road_pieces(opp), Bitboard6::flood).steps,
-    );
-    out.push(132 + comp_white as u16);
-    out.push(142 + comp_black as u16);
+    let empty_bits = board.bits().empty();
+    let empty = std::cmp::min(empty_bits.pop_count(), 15);
+    out.push(2592 + empty as u16);
+    // let (road_est1, comp) = super::one_gap_road(board.bits.road_pieces(friendly));
+    let (road_est2, comp) =
+        super::flat_placement_road_h(board.bits.road_pieces(friendly), empty_bits);
+    let comp_friendly = std::cmp::min(7, comp);
+    // let (road_est3, comp) = super::one_gap_road(board.bits.road_pieces(opp));
+    let (road_est4, comp) = super::flat_placement_road_h(board.bits.road_pieces(opp), empty_bits);
+    let comp_black = std::cmp::min(7, comp);
+    out.push(2608 + comp_friendly as u16);
+    out.push(2616 + comp_black as u16);
     let attack_white = std::cmp::min(attackable_cs(friendly, board), 4);
     let attack_black = std::cmp::min(attackable_cs(opp, board), 4);
-    out.push(152 + attack_white as u16);
-    out.push(158 + attack_black as u16);
+    out.push(2624 + attack_white as u16);
+    out.push(2632 + attack_black as u16);
     // Side to move
-    out.push(166 + (friendly == Color::Black) as u16);
-    const MASKS: [u64; 16] = [
-        235802112,
-        471604224,
-        943208448,
-        1886416896,
-        60365340672,
-        120730681344,
-        241461362688,
-        482922725376,
-        15453527212032,
-        30907054424064,
-        61814108848128,
-        123628217696256,
-        3956102966280192,
-        7912205932560384,
-        15824411865120768,
-        31648823730241536,
-    ];
-    const CONV_OFFSET: u16 = 168;
-    const CONV_LOOKUP: ConvLookup = build_conv_lookup();
-    for (mask_idx, mask) in MASKS.iter().copied().enumerate() {
-        let white = board.bits().white;
-        let black = board.bits().black;
-        let mut white = white.raw_bits().pext(mask) as usize;
-        let mut black = black.raw_bits().pext(mask) as usize;
-
-        if board.side_to_move() != Color::White {
-            std::mem::swap(&mut white, &mut black);
-        }
-        let index = CONV_LOOKUP.lookup_friendly[white] + CONV_LOOKUP.lookup_enemy[black];
-        out.push(CONV_OFFSET + (mask_idx as u16) * 512 + CONV_COMPRESS[index as usize])
-    }
+    out.push(2640 + (friendly == Color::Black) as u16);
+    // out.push(2648 + road_est1 as u16); // Max 6
+    out.push(2656 + std::cmp::min(7, road_est2) as u16);
+    // out.push(2664 + road_est3 as u16); // Max 6
+    out.push(2672 + std::cmp::min(7, road_est4) as u16);
     out
 }
 
-fn make_under_array(board: &Board6) -> Vec<u16> {
-    let mut out = Vec::with_capacity(36);
+// fn make_under_array2(board: &Board6) -> [u16; 36] {
+//     let mut out = [0; 36];
+//     for (outer_idx, stack) in board.board().iter().enumerate() {
+//         if let Some(top) = stack.top() {
+//             let top_idx = if board.side_to_move() == Color::White {
+//                 top.owner() as u16
+//             } else {
+//                 !top.owner() as u16
+//             };
+//             let offset;
+//             if top.is_flat() {
+//                 let (cap, _) = stack.captive_friendly();
+//                 offset = std::cmp::min(7, cap) as u16 + 8 * top_idx
+//             } else if top.is_wall() {
+//                 let (_, friendly) = stack.captive_friendly();
+//                 // Wall (16)
+//                 if friendly == 0 {
+//                     offset = 16 + top_idx
+//                 } else {
+//                     offset = 16 + 2 + top_idx
+//                 }
+//             } else {
+//                 // Capstone (20)
+//                 if let Some(under) = stack.from_top(1) {
+//                     if under.owner() == top.owner() {
+//                         offset = 22 + top_idx
+//                     } else {
+//                         offset = 24 + top_idx
+//                     }
+//                 } else {
+//                     offset = 20 + top_idx;
+//                 }
+//             }
+//             // assert!(offset <= 25);
+//             out[outer_idx] = UNDER_OFFSET + 27 * (outer_idx as u16) + offset;
+//         } else {
+//             out[outer_idx] = UNDER_OFFSET + 27 * (outer_idx as u16) + 26;
+//         }
+//     }
+//     out
+// }
+
+fn make_under_array(board: &Board6) -> [u16; 36] {
+    let mut out = [0; 36];
     for (outer_idx, stack) in board.board().iter().enumerate() {
         let stack_piece = stack
             .top()
@@ -247,7 +265,8 @@ fn make_under_array(board: &Board6) -> Vec<u16> {
         let (cap, friendly) = stack.captive_friendly();
         let cap_friendly_offset = std::cmp::min(cap, 6) * 7 + std::cmp::min(friendly, 6);
         let idx = stack_piece * 49 + cap_friendly_offset as usize;
-        out.push(UNDER_OFFSET + outer_idx as u16 * 78 + STACK_LOOKUP[idx]);
+        out[outer_idx] = UNDER_OFFSET + outer_idx as u16 * 78 + STACK_LOOKUP[idx];
+        // out.push(UNDER_OFFSET + outer_idx as u16 * 78 + STACK_LOOKUP[idx]);
         // let len = std::cmp::min(stack.len(), 17);
         // for pos in 1..len {
         //     let p = stack.from_top(pos).unwrap();
@@ -260,11 +279,15 @@ fn make_under_array(board: &Board6) -> Vec<u16> {
     out
 }
 
-trait Scalar: FromStr + Copy {
+pub(crate) trait Scalar: FromStr + Copy {
     const ZERO: Self;
 }
 
 impl Scalar for i16 {
+    const ZERO: Self = 0;
+}
+
+impl Scalar for i32 {
     const ZERO: Self = 0;
 }
 
@@ -306,6 +329,22 @@ fn array_2d<const A: usize, const B: usize, T: Scalar>(line: &str) -> [[T; A]; B
     }
     assert_eq!(count, A * B);
     out
+}
+
+pub(crate) fn array_1d_boxed<const A: usize, T: Scalar>(line: &str) -> Box<[T]> {
+    // dbg!(&line);
+    let mut out = vec![T::ZERO; A];
+    let mut count = 0;
+    for (i, val) in line
+        .split(",")
+        .filter_map(|x| x.parse::<T>().ok())
+        .enumerate()
+    {
+        out[i] = val;
+        count += 1;
+    }
+    assert_eq!(count, A);
+    out.into_boxed_slice()
 }
 
 fn array_1d<const A: usize, T: Scalar>(line: &str) -> [T; A] {

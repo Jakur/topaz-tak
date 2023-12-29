@@ -212,6 +212,8 @@ pub trait Bitboard:
     fn south_bits(self, steps: usize) -> Self;
     // Creates a bitboard mask of all squares within n west steps of a single square bitboard
     fn west_bits(self, steps: usize) -> Self;
+    // Returns a mask of all bits (including the source) orthogonal to the input index
+    fn orthogonal(index: usize) -> Self;
     fn top() -> Self;
     fn bottom() -> Self;
     fn left() -> Self;
@@ -724,6 +726,9 @@ macro_rules! bitboard_impl {
             fn west_bits(self, steps: usize) -> Self {
                 let shifted = self.0 >> steps;
                 Self::new((self.0 - 1) & !(shifted - 1))
+            }
+            fn orthogonal(index: usize) -> Self {
+                Self::ORTH_TABLE[index]
             }
             fn top() -> Self {
                 Self::TOP

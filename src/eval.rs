@@ -1,4 +1,5 @@
 use super::{Bitboard, Piece, Stack};
+use crate::board;
 use crate::board::BitIndexIterator;
 use crate::board::TakBoard;
 use crate::board::{Board5, Board6};
@@ -7,6 +8,7 @@ use crate::Position;
 
 pub use incremental::nn_repr;
 
+use std::collections::HashMap;
 use std::fs::File;
 
 static NN6: once_cell::sync::OnceCell<incremental::Weights> = once_cell::sync::OnceCell::new();
@@ -82,20 +84,28 @@ impl Evaluator for NNUE6 {
                 .update_diff(&self.old_white, &new, nn);
             // let rand_seed = Some(self.pos_seed ^ game.hash());
             let rand_seed = None;
+            let cap_diff =
+                (game.caps_reserve(Color::White) as i32) - (game.caps_reserve(Color::Black) as i32);
+
             std::mem::swap(&mut new, &mut self.old_white);
-            nn.incremental_forward(&self.incremental_white, rand_seed)
+            -cap_diff * (5 * game.ply() as i32)
+                + nn.incremental_forward(&self.incremental_white, rand_seed)
         } else {
             self.incremental_black
                 .update_diff(&self.old_black, &new, nn);
             // let rand_seed = Some(self.pos_seed ^ game.hash());
             let rand_seed = None;
             std::mem::swap(&mut new, &mut self.old_black);
-            nn.incremental_forward(&self.incremental_black, rand_seed)
+            let cap_diff =
+                (game.caps_reserve(Color::Black) as i32) - (game.caps_reserve(Color::White) as i32);
+            -cap_diff * (5 * game.ply() as i32)
+                + nn.incremental_forward(&self.incremental_black, rand_seed)
         };
         let least_pieces = std::cmp::min(
             game.pieces_reserve(Color::Black),
             game.pieces_reserve(Color::White),
         );
+
         if score > 400 || score < -400 || (game.komi() != 0 && least_pieces <= 8) {
             score += self.classical.evaluate(game, depth) / 4;
         }
@@ -140,6 +150,329 @@ impl Evaluator6 {
 pub const WIN_SCORE: i32 = 10_000;
 pub const LOSE_SCORE: i32 = -1 * WIN_SCORE;
 
+#[derive(Debug)]
+struct Embedding<const N: usize> {
+    lookup: [f32; N],
+}
+
+impl<const N: usize> Embedding<N> {
+    fn forward(&self, x: &[i32]) -> Vec<f32> {
+        let mut out = Vec::with_capacity(N);
+        for val in x.into_iter() {
+            out.push(self.lookup[*val as usize])
+        }
+        out
+    }
+    fn forward_scalar(&self, x: i32) -> f32 {
+        self.lookup[x as usize]
+    }
+    fn from_string(s: &str) -> Self {
+        let mut lookup = [0.0; N];
+        for (idx, val) in s.split(",").enumerate() {
+            let num = val.parse().unwrap();
+            lookup[idx] = num;
+        }
+        Self { lookup }
+    }
+}
+
+struct Linear<const N: usize> {
+    weights: [f32; N],
+}
+
+impl<const N: usize> Linear<N> {
+    fn forward(&self, x: &[f32]) -> f32 {
+        self.weights
+            .iter()
+            .copied()
+            .zip(x.into_iter().copied())
+            .map(|(x, y)| x * y)
+            .sum()
+    }
+    fn from_string(s: &str) -> Self {
+        let mut weights = [0.0; N];
+        for (idx, val) in s.split(",").enumerate() {
+            let num = val.parse().unwrap();
+            weights[idx] = num;
+        }
+        Self { weights }
+    }
+}
+
+pub struct SmoothWeights6 {
+    top_pst1: Embedding<8>,
+    top_pst2: Embedding<8>,
+    top_pst3: Embedding<8>,
+    // captive_pst: Embedding<7>,
+    // friendly_pst: Embedding<7>,
+    square_pst: Linear<36>,
+    mobility: Embedding<8>,
+    safety: Embedding<8>,
+    small: Embedding<20>,
+    road_dist: Embedding<36>,
+    reserve: Embedding<13>,
+    endgame_weight: f32,
+    color: f32,
+}
+
+impl SmoothWeights6 {
+    pub fn empty() -> Self {
+        static DATA: &'static str = include_str!("eval/classic.table");
+        let out = Self::parse(DATA);
+        out
+    }
+    pub fn parse(data: &str) -> Self {
+        let mut map = HashMap::new();
+        for line in data.lines() {
+            let mut split = line.split(":");
+            let name = split.next().unwrap();
+            let data = split.next().unwrap();
+            map.insert(name, data);
+        }
+        Self {
+            top_pst1: Embedding::<8>::from_string(map.get("top_pst1").unwrap()),
+            top_pst2: Embedding::<8>::from_string(map.get("top_pst2").unwrap()),
+            top_pst3: Embedding::<8>::from_string(map.get("top_pst3").unwrap()),
+            // captive_pst: Embedding::<7>::from_string(map.get("captive_pst").unwrap()),
+            // friendly_pst: Embedding::<7>::from_string(map.get("friendly_pst").unwrap()),
+            square_pst: Linear::<36>::from_string(map.get("square_pst").unwrap()),
+            mobility: Embedding::<8>::from_string(map.get("mobility").unwrap()),
+            safety: Embedding::<8>::from_string(map.get("safety").unwrap()),
+            small: Embedding::<20>::from_string(map.get("small").unwrap()),
+            road_dist: Embedding::<36>::from_string(map.get("road_dist").unwrap()),
+            reserve: Embedding::<13>::from_string(map.get("reserve").unwrap()),
+            endgame_weight: map
+                .get("endgame_weight")
+                .map(|x| x.parse().unwrap())
+                .unwrap(),
+            color: map.get("color").map(|x| x.parse().unwrap()).unwrap(),
+        }
+    }
+    // def adjacent_conv(self, x, embedding):
+    // x = embedding(x).view(-1, 1, self.board_size, self.board_size)
+    // x = F.conv2d(x, self.adjacent.to(x.device), padding=1).squeeze().view(-1, self.board_size * self.board_size)
+    // return x
+    fn adjacent_conv_sq(&self, xs: &[i32], embedding: &Embedding<8>, idx: usize) -> f32 {
+        const MAIN_SCALAR: f32 = 2.0;
+        const SECONDARY_SCALAR: f32 = 1.0;
+        let x = xs[idx];
+        let mut val = MAIN_SCALAR * embedding.forward_scalar(x);
+        let neighbors =
+            <<SmoothWeights6 as Evaluator>::Game as TakBoard>::Bits::index_to_bit(idx).adjacent();
+        for sq in BitIndexIterator::new(neighbors) {
+            val += SECONDARY_SCALAR * embedding.forward_scalar(xs[sq])
+        }
+        val
+    }
+}
+
+impl std::default::Default for SmoothWeights6 {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl Evaluator for SmoothWeights6 {
+    type Game = Board6;
+
+    fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
+        let comps = self.eval_components(game);
+        let x = comps.data;
+        let mut score = 0.0;
+        let sqs = Self::Game::SIZE * Self::Game::SIZE;
+        let offset1 = sqs * 3;
+        let tops = &x[0..sqs];
+        let captives = &x[sqs..sqs * 2];
+        let friendly = &x[sqs * 2..sqs * 3];
+        // let captives: Vec<_> = x[sqs..sqs * 2].into_iter().map(|&x| x as f32).collect();
+        // let friendly: Vec<_> = x[sqs * 2..sqs * 3].into_iter().map(|&x| x as f32).collect();
+        // let captives = self.captive_pst.forward(&x[sqs..sqs * 2]);
+        // let friendly = self.friendly_pst.forward(&x[sqs * 2..sqs * 3]);
+        let top_pst = self.top_pst1.forward(tops);
+        score += self.square_pst.forward(&top_pst);
+
+        // let safety = self.adjacent_conv(game, tops, &self.safety);
+        // let mut mobility = self.adjacent_conv(game, tops, &self.mobility);
+        // for (i, m) in mobility.iter_mut().enumerate() {
+        //     *m /= 1.0 + captives[i];
+        // }
+        for idx in 0..sqs {
+            if captives[idx] != 0 {
+                let captive_top = self.top_pst2.forward_scalar(tops[idx]);
+                let conv = self.adjacent_conv_sq(&tops, &self.safety, idx);
+                score += (captives[idx] as f32) * captive_top * conv;
+            }
+            if friendly[idx] != 0 {
+                let friendly_top = self.top_pst3.forward_scalar(tops[idx]);
+                let conv = self.adjacent_conv_sq(&tops, &self.mobility, idx);
+                let mobility_offset = 1 + captives[idx];
+                score += (friendly[idx] as f32) * friendly_top * conv / (mobility_offset as f32)
+            }
+        }
+        // let captive_top = self.top_pst2.forward(&tops);
+        // let friendly_top = self.top_pst3.forward(&tops);
+        // let captives = Self::mul_clamp_sum(&captives, &safety, &captive_top, -10.0, 10.0);
+        // let friendly = Self::mul_clamp_sum(&friendly, &mobility, &friendly_top, -10.0, 10.0);
+        // score += captives;
+        // score += friendly;
+        score += self
+            .small
+            .forward(&x[offset1..offset1 + 3])
+            .into_iter()
+            .sum::<f32>();
+        let road_dist_adv = self.road_dist.forward_scalar(x[offset1 + 3]);
+        // let reserves_sum = (x[offset1 + 4] + x[offset1 + 5]) as f32 / 60.0;
+        let reserve_adv = 6 + (x[offset1 + 5] - x[offset1 + 4]).clamp(-6, 6);
+        score += self.reserve.forward_scalar(reserve_adv);
+        score += road_dist_adv; // reserves_sum;
+        let len = x.len();
+        score += self.endgame_weight * (x[len - 3] as f32) / (x[len - 2] as f32);
+        score += self.color * x[len - 1] as f32;
+        if depth % 2 == 0 {
+            (score * 500.0).clamp(-2500.0, 2500.0) as i32
+        } else {
+            (score * 500.0).clamp(-2500.0, 2500.0) as i32
+        }
+    }
+
+    fn eval_stack(&self, game: &Self::Game, idx: usize, stack: &Stack) -> i32 {
+        unimplemented!()
+    }
+
+    fn eval_components(&self, game: &Self::Game) -> EvalComponents {
+        // [36*Tops, 36*Captives, 36*Friendly, cap_lonely, cs_threat, components, road_dist_adv, reserves, fill, half flat_adv]
+        let mut tops = [1; 36];
+        let mut captive = [0; 36];
+        let mut friendly = [0; 36];
+        let side = game.side_to_move();
+        let opp = !side;
+        for (idx, stack) in game.board.iter().enumerate() {
+            let piece = stack
+                .top()
+                .map(|x| {
+                    if game.side_to_move() == Color::White {
+                        x as i32 + 1
+                    } else {
+                        x.swap_color() as i32 + 1
+                    }
+                })
+                .unwrap_or(1);
+            tops[idx] = piece;
+            let (cap, fr) = stack.captive_friendly();
+            captive[idx] = std::cmp::min(cap, Self::Game::SIZE as i32);
+            friendly[idx] = std::cmp::min(fr, Self::Game::SIZE as i32);
+        }
+        let mut small = [0; 3];
+        let mut cap_lonely = 0;
+        for s in [side, opp].into_iter() {
+            let cap = game.bits.cap & game.bits.all_pieces(s);
+            if cap != <Self::Game as TakBoard>::Bits::ZERO {
+                let lonely =
+                    cap.adjacent() & (game.bits.flat | game.bits.wall) & game.bits.all_pieces(opp);
+                if lonely == <Self::Game as TakBoard>::Bits::ZERO {
+                    cap_lonely += 1;
+                }
+            }
+            cap_lonely = -cap_lonely;
+        }
+        small[0] = cap_lonely + 1; // Max 2
+        let cs = 3 + 4 + std::cmp::min(4, attackable_cs(side, game))
+            - std::cmp::min(4, attackable_cs(opp, game)); // Max 3 + 4 + 4 = 11
+        small[1] = cs;
+        let side_r = game.bits.road_pieces(side);
+        let opp_r = game.bits.road_pieces(opp);
+        let (loose_side_pc, side_comp) = flat_placement_road_h(side_r, game.bits.empty());
+        let (loose_opp_pc, opp_comp) = flat_placement_road_h(opp_r, game.bits.empty());
+        let comp_diff = 11 + 4 + std::cmp::min(side_comp, 4) - std::cmp::min(opp_comp, 4); // 11 + 4 + 4 = 19
+        small[2] = comp_diff as i32;
+        let mut last = [0; 6];
+        let road_idx = 6 * (loose_side_pc.clamp(1, 5)) + (loose_opp_pc.clamp(1, 5));
+        last[0] = road_idx;
+        last[1] = (game.pieces_reserve(side) + game.caps_reserve(side)) as i32;
+        last[2] = (game.pieces_reserve(opp) + game.caps_reserve(opp)) as i32;
+        let (flat_diff, divisor) = endgame_calc(game);
+        if side == Color::White {
+            last[3] = flat_diff;
+        } else {
+            last[3] = -flat_diff;
+        }
+        last[4] = divisor;
+        last[5] = if side == Color::White { 1 } else { -1 };
+        EvalComponents::from_arrays(vec![&tops, &captive, &friendly, &small, &last])
+    }
+}
+
+fn endgame_calc<T: TakBoard>(game: &T) -> (i32, i32) {
+    let empty_count = game.bits().empty().pop_count() as usize;
+    let white_res = game.pieces_reserve(Color::White) + game.caps_reserve(Color::White);
+    let black_res = game.pieces_reserve(Color::Black) + game.caps_reserve(Color::Black);
+    // Half flats in white's favor
+    let mut flat_diff = (game.bits().flat & game.bits().white).pop_count() as i32
+        - (game.bits().flat & game.bits().black).pop_count() as i32;
+    flat_diff *= 2;
+    flat_diff -= game.komi() as i32;
+    // TODO board fill considerations?
+    let (white_fill, black_fill) = if empty_count % 2 == 0 {
+        (empty_count / 2, empty_count / 2)
+    } else {
+        match game.side_to_move() {
+            Color::White => (1 + empty_count / 2, empty_count / 2),
+            Color::Black => (empty_count / 2, 1 + empty_count / 2),
+        }
+    };
+    // Todo checkout this side to move business
+    if white_res < black_res {
+        if white_fill < white_res {
+            if empty_count % 2 == 1 {
+                flat_diff += 2;
+            }
+        } else {
+            match game.side_to_move() {
+                Color::White => flat_diff += 2,
+                _ => {}
+            }
+        }
+    } else if black_res < white_res {
+        if black_fill < black_res {
+            if empty_count % 2 == 1 {
+                flat_diff -= 2;
+            }
+        } else {
+            match game.side_to_move() {
+                Color::Black => flat_diff -= 2,
+                _ => {}
+            }
+        }
+    } else {
+        match game.side_to_move() {
+            Color::White => {
+                if white_fill < white_res {
+                    if empty_count % 2 == 1 {
+                        flat_diff += 2;
+                    }
+                } else {
+                    flat_diff += 2;
+                }
+            }
+            Color::Black => {
+                if black_fill < black_res {
+                    if empty_count % 2 == 1 {
+                        flat_diff -= 2;
+                    }
+                } else {
+                    flat_diff -= 2;
+                }
+            }
+        }
+    }
+    let divisor = if flat_diff > 0 {
+        std::cmp::min(white_res, white_fill + 1) as i32
+    } else {
+        std::cmp::min(black_res, black_fill + 1) as i32
+    };
+    return (flat_diff, divisor);
+}
+
 macro_rules! eval_impl {
     ($board: ty, $weights: ty) => {
         impl Evaluator for $weights {
@@ -147,8 +480,19 @@ macro_rules! eval_impl {
             #[inline(never)]
             fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
                 let mut score = 0;
-
+                let white_r = game.bits.road_pieces(Color::White);
+                let black_r = game.bits.road_pieces(Color::Black);
+                // let blockers =
+                //     game.bits.blocker_pieces(Color::White) | game.bits.blocker_pieces(Color::Black);
                 for (idx, stack) in game.board.iter().enumerate() {
+                    // if stack.len() != 0 {
+                    //     let orth_bits = <Self::Game as TakBoard>::Bits::orthogonal(idx);
+                    //     let white_c = (white_r & orth_bits).pop_count() as i32;
+                    //     let black_c = (black_r & orth_bits).pop_count() as i32;
+                    //     let coherence_bonus = ((white_c * white_c) - (black_c * black_c))
+                    //         / (1 + (blockers & orth_bits).pop_count() as i32);
+                    //     score += coherence_bonus / 2;
+                    // }
                     if stack.len() == 1 {
                         let top = stack.top().unwrap();
                         let mut pw = self.piece_weight(top) + self.location[idx];
@@ -182,8 +526,6 @@ macro_rules! eval_impl {
                 }
                 score += self.cs_threat * attackable_cs(Color::White, game);
                 score -= self.cs_threat * attackable_cs(Color::Black, game);
-                let white_r = game.bits.road_pieces(Color::White);
-                let black_r = game.bits.road_pieces(Color::Black);
                 let (loose_white_pc, white_comp) =
                     flat_placement_road_h(white_r, game.bits.empty());
                 let (loose_black_pc, black_comp) =
@@ -225,72 +567,8 @@ macro_rules! eval_impl {
                 score -= (black_road_score * mul) / 100;
                 let empty_count = game.bits().empty().pop_count() as usize;
                 if white_res < 10 || black_res < 10 || empty_count <= 4 {
-                    // Half flats in white's favor
-                    let mut flat_diff = (game.bits.flat & game.bits.white).pop_count() as i32
-                        - (game.bits.flat & game.bits.black).pop_count() as i32;
-                    flat_diff *= 2;
-                    flat_diff -= game.komi() as i32;
-                    // TODO board fill considerations?
-                    let (white_fill, black_fill) = if empty_count % 2 == 0 {
-                        (empty_count / 2, empty_count / 2)
-                    } else {
-                        match game.side_to_move() {
-                            Color::White => (1 + empty_count / 2, empty_count / 2),
-                            Color::Black => (empty_count / 2, 1 + empty_count / 2),
-                        }
-                    };
-                    // Todo checkout this side to move business
-                    if white_res < black_res {
-                        if white_fill < white_res {
-                            if empty_count % 2 == 1 {
-                                flat_diff += 2;
-                            }
-                        } else {
-                            match game.side_to_move() {
-                                Color::White => flat_diff += 2,
-                                _ => {}
-                            }
-                        }
-                    } else if black_res < white_res {
-                        if black_fill < black_res {
-                            if empty_count % 2 == 1 {
-                                flat_diff -= 2;
-                            }
-                        } else {
-                            match game.side_to_move() {
-                                Color::Black => flat_diff -= 2,
-                                _ => {}
-                            }
-                        }
-                    } else {
-                        match game.side_to_move() {
-                            Color::White => {
-                                if white_fill < white_res {
-                                    if empty_count % 2 == 1 {
-                                        flat_diff += 2;
-                                    }
-                                } else {
-                                    flat_diff += 2;
-                                }
-                            }
-                            Color::Black => {
-                                if black_fill < black_res {
-                                    if empty_count % 2 == 1 {
-                                        flat_diff -= 2;
-                                    }
-                                } else {
-                                    flat_diff -= 2;
-                                }
-                            }
-                        }
-                    }
-                    if flat_diff > 0 {
-                        score +=
-                            (flat_diff * 100) / std::cmp::min(white_res, white_fill + 1) as i32;
-                    } else if flat_diff < 0 {
-                        score +=
-                            (flat_diff * 100) / std::cmp::min(black_res, black_fill + 1) as i32;
-                    }
+                    let (flat_diff, divisor) = endgame_calc(game);
+                    score += (flat_diff * 100) / divisor;
                 }
                 if let Color::White = game.side_to_move() {
                     if depth % 2 == 1 {
@@ -990,13 +1268,17 @@ impl Default for Weights7 {
     }
 }
 
+#[derive(Debug)]
 pub struct EvalComponents {
-    data: [i32; 27],
+    data: Vec<i32>,
 }
 
 impl EvalComponents {
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
     pub fn from_arrays(vals: Vec<&[i32]>) -> Self {
-        let mut data = [0; 27];
+        let mut data = vec![0; 117];
         let mut idx = 0;
         for slice in vals {
             for x in slice {
@@ -1011,6 +1293,13 @@ impl EvalComponents {
         for x in self.data.iter() {
             write!(writer, "{},", *x)?;
         }
+        Ok(())
+    }
+    pub fn write_io<W: std::io::Write>(&self, writer: &mut W) -> anyhow::Result<()> {
+        for x in self.data[0..self.data.len() - 1].iter() {
+            write!(writer, "{},", *x)?;
+        }
+        write!(writer, "{}", *self.data.last().unwrap())?;
         Ok(())
     }
     pub fn labels() -> Vec<String> {
