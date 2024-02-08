@@ -1,16 +1,18 @@
-use crate::eval::{attackable_cs, connected_components};
+use crate::eval::attackable_cs;
+use crate::Bitboard;
 use crate::Position;
-use crate::{board::Bitboard6, Bitboard};
 use crate::{board::TakBoard, Board6, Color};
-use rand_core::{RngCore, SeedableRng};
 use std::str::FromStr;
 
+use super::flat_placement_road_h;
+
 // const DIM1: usize = 2976;
-pub(crate) const DIM1: usize = 5488;
-const DIM2: usize = 128;
-const DIM3: usize = 64;
-// const DIM2: usize = 16;
-// const DIM3: usize = 16;
+// pub(crate) const DIM1: usize = 5696;
+pub const NN_REPR_SIZE: usize = 36 + 12;
+pub type NN_REPR = [i16; NN_REPR_SIZE];
+// pub(crate) const DIM1: usize = 9504;
+pub(crate) const DIM1: usize = 3072;
+const DIM2: usize = 256;
 
 const SCALE_INT: i16 = 500;
 const SCALE_FLOAT: f32 = SCALE_INT as f32;
@@ -18,16 +20,13 @@ const SCALE_FLOAT: f32 = SCALE_INT as f32;
 // const OFFSET: u16 = FLAT_OFFSET + 36 * 4;
 // const UNDER_OFFSET: u16 = 2648;
 const UNDER_OFFSET: u16 = 2680;
-const STACK_LOOKUP: [u16; 7 * 7 * 7] = include!("stack_lookup.table");
+pub(crate) const STACK_LOOKUP: [i16; 7 * 7 * 7] = include!("stack_lookup.table");
 const CONV_COMPRESS: [u16; 3usize.pow(9)] = include!("conv.table");
 
 pub struct Weights {
-    outer: Box<[[i16; DIM2]]>,
-    bias1: [i16; DIM2],
-    inner1: [[f32; DIM2]; DIM3], // Todo see if more precision is needed
-    bias2: [f32; DIM3],
-    inner2: [f32; DIM3],
-    bias3: f32,
+    outer: Box<[[f32; DIM2]]>,
+    side: [f32; DIM2],
+    opp: [f32; DIM2],
 }
 
 impl Weights {
@@ -36,102 +35,116 @@ impl Weights {
         r.read_to_string(&mut s).unwrap();
         let mut lines = s.lines();
         Some(Self {
-            outer: array_2d_boxed::<DIM2, DIM1, i16>(lines.next()?),
-            bias1: array_1d(lines.next()?),
-            inner1: array_2d(lines.next()?),
-            bias2: array_1d(lines.next()?),
-            inner2: array_1d(lines.next()?),
-            bias3: lines.next().map(|x| x.parse().ok())??,
+            outer: array_2d_boxed::<DIM2, DIM1, f32>(lines.next()?),
+            side: array_1d(lines.next()?),
+            opp: array_1d(lines.next()?),
         })
     }
     #[cfg(test)]
     fn ones() -> Self {
-        let init = [1; DIM2];
+        let init = [1.0; DIM2];
         Self {
             outer: vec![init; DIM1].into_boxed_slice(),
-            bias1: [1; DIM2],
-            inner1: [[1.0; DIM2]; DIM3], // Todo see if more precision is needed
-            bias2: [1.0; DIM3],
-            inner2: [1.0; DIM3],
-            bias3: 1.0,
+            side: [1.0; DIM2],
+            opp: [1.0; DIM2],
         }
     }
     pub fn build_incremental(&self, nonzero_input: &[usize]) -> Incremental {
         let mut out = Incremental {
-            storage: self.bias1.clone(),
+            storage: [0.0; DIM2],
         };
         for idx in nonzero_input.iter().copied() {
             out.move_in(idx, self);
         }
         out
     }
-    pub fn incremental_forward(&self, inc: &Incremental, rand_seed: Option<u64>) -> i32 {
-        let mut input = [0.0; DIM2];
-        for i in 0..input.len() {
-            input[i] = (relu6_int(inc.storage[i]) as f32) / SCALE_FLOAT;
-        }
-        if let Some(seed) = rand_seed {
-            let mut rng = rand_xoshiro::Xoroshiro64Star::seed_from_u64(seed);
-            for x in input.iter_mut() {
-                if rng.next_u32() & 0x110_0000 == 0x110_0000 {
-                    *x = 0.0;
-                }
-            }
-        }
-        let mut middle = self.bias2.clone();
+    pub fn incremental_forward(&self, side: &Incremental, opp: &Incremental) -> f32 {
+        let mut out = 0.0;
         for i in 0..DIM2 {
-            for j in 0..DIM3 {
-                middle[j] += input[i] * self.inner1[j][i];
-            }
+            out += square_clipped_relu(side.storage[i]) * self.side[i];
+            out += square_clipped_relu(opp.storage[i]) * self.opp[i];
         }
-        let mut out = self.bias3;
+        // let mut middle = self.bias2.clone();
+        // for i in 0..DIM2 {
+        //     for j in 0..DIM3 {
+        //         middle[j] += input[i] * self.inner1[j][i];
+        //     }
+        // }
+        // let mut out = self.bias3;
 
-        for i in 0..middle.len() {
-            out += relu6(middle[i]) * self.inner2[i];
-        }
-        ((out as f64).tanh() * SCALE_FLOAT as f64).trunc() as i32
+        // for i in 0..middle.len() {
+        //     out += relu6(middle[i]) * self.inner2[i];
+        // }
+        // ((out as f64).tanh() * SCALE_FLOAT as f64).trunc() as i32
+        out
+        // out / 255 // 1024?
     }
 }
 
-pub fn nn_repr(board: &Board6) -> Vec<u16> {
+pub fn nn_repr(board: &Board6) -> NN_REPR {
     // const OFFSET: usize = 4240;
-    let mut arr1 = make_array(board);
-    // debug_assert!(arr1.iter().all(|&x| x < (OFFSET + 64) as u16));
-    arr1.extend(make_under_array(board).into_iter());
-    arr1
-}
-
-struct ConvLookup {
-    lookup_friendly: [u16; 512],
-    lookup_enemy: [u16; 512],
-}
-
-const fn build_conv_lookup() -> ConvLookup {
-    let mut lookup_friendly = [0; 512];
-    let mut lookup_enemy = [0; 512];
-    let mut i = 1u32;
-    while i < 512 {
-        let mut idx1 = 0;
-        let mut idx2 = 0;
-        let mut temp = i;
-        // Essentially converting to base 3
-        while temp != 0 {
-            let lowest: u32 = 1 << temp.trailing_zeros();
-            // let lowest = temp.blsi();
-            // assert_eq!(est, lowest);
-            let offset = 3u32.pow(lowest.ilog2());
-            idx1 += offset;
-            idx2 += 2 * offset;
-            temp &= !lowest;
-        }
-        lookup_friendly[i as usize] = idx1 as u16;
-        lookup_enemy[i as usize] = idx2 as u16;
-        i += 1;
+    let mut out = [0; NN_REPR_SIZE];
+    let side = board.side_to_move();
+    for idx in 0..36 {
+        let stack = board.index(idx);
+        // if let Some(top) = stack.top() {
+        //     let (cap, friendly) = stack.captive_friendly();
+        //     let adjusted_top = if board.side_to_move() == Color::White {
+        //         top as i16
+        //     } else {
+        //         top.swap_color() as i16
+        //     };
+        //     let (c_score, f_score) = if top.owner() == board.side_to_move() {
+        //         (cap as i16, friendly as i16)
+        //     } else {
+        //         (-cap as i16, -friendly as i16)
+        //     };
+        //     match top {
+        //         crate::Piece::WhiteFlat | crate::Piece::BlackFlat => {
+        //             out[39] += c_score;
+        //             out[40] += f_score;
+        //         }
+        //         crate::Piece::WhiteWall | crate::Piece::BlackWall => {
+        //             out[41] += c_score;
+        //             out[42] += f_score;
+        //         }
+        //         crate::Piece::WhiteCap | crate::Piece::BlackCap => {
+        //             out[43] += c_score;
+        //             out[44] += f_score;
+        //         }
+        //     }
+        //     // out[idx] = adjusted_top * 9
+        //     //     + 3 * std::cmp::min(friendly as i16, 2)
+        //     //     + std::cmp::min(cap as i16, 2);
+        // } else {
+        //     // out[idx] = 0;
+        // }
+        out[idx] = stack.interpret_coarse(side) as i16;
     }
-    ConvLookup {
-        lookup_friendly,
-        lookup_enemy,
+    // Todo find out why index 37 does not match on side swap
+    out[36] = (board.pieces_reserve(side) + board.caps_reserve(side)) as i16;
+    out[37] = (board.pieces_reserve(!side) + board.caps_reserve(!side)) as i16;
+    out[36] /= 2;
+    out[37] /= 2;
+    let empty = board.bits().empty();
+    let (side_f, side_comp) = flat_placement_road_h(board.bits().road_pieces(side), empty);
+    let (enemy_f, enemy_comp) = flat_placement_road_h(board.bits().road_pieces(!side), empty);
+    out[38] = std::cmp::min(6, side_f as i16);
+    out[39] = std::cmp::min(6, enemy_f as i16);
+    out[40] = std::cmp::min(6, side_comp as i16);
+    out[41] = std::cmp::min(6, enemy_comp as i16);
+    out[42] = std::cmp::min(6, attackable_cs(side, board) as i16);
+    out[43] = std::cmp::min(6, attackable_cs(!side, board) as i16);
+
+    out[44] = if side == Color::White { 1 } else { -1 };
+    out[45] = out[36] - out[37];
+    out[46] = board.flat_diff(side) as i16;
+    out[47] = board.caps_reserve(side) as i16 - (board.caps_reserve(!side) as i16);
+
+    for i in 45..NN_REPR_SIZE {
+        out[i] = out[i].clamp(-6, 6);
     }
+    out
 }
 
 fn make_array(board: &Board6) -> Vec<u16> {
@@ -249,35 +262,35 @@ fn make_array(board: &Board6) -> Vec<u16> {
 //     out
 // }
 
-fn make_under_array(board: &Board6) -> [u16; 36] {
-    let mut out = [0; 36];
-    for (outer_idx, stack) in board.board().iter().enumerate() {
-        let stack_piece = stack
-            .top()
-            .map(|x| {
-                if board.side_to_move() == Color::White {
-                    x as usize
-                } else {
-                    x.swap_color() as usize
-                }
-            })
-            .unwrap_or(0);
-        let (cap, friendly) = stack.captive_friendly();
-        let cap_friendly_offset = std::cmp::min(cap, 6) * 7 + std::cmp::min(friendly, 6);
-        let idx = stack_piece * 49 + cap_friendly_offset as usize;
-        out[outer_idx] = UNDER_OFFSET + outer_idx as u16 * 78 + STACK_LOOKUP[idx];
-        // out.push(UNDER_OFFSET + outer_idx as u16 * 78 + STACK_LOOKUP[idx]);
-        // let len = std::cmp::min(stack.len(), 17);
-        // for pos in 1..len {
-        //     let p = stack.from_top(pos).unwrap();
-        //     let c = (p.owner() == Color::White) as usize;
-        //     debug_assert!(p.is_flat());
-        //     let idx = c + 2 * pos - 1 + outer_idx * 32;
-        //     out.push(UNDER_OFFSET + idx as u16);
-        // }
-    }
-    out
-}
+// fn make_under_array(board: &Board6) -> [u16; 36] {
+//     let mut out = [0; 36];
+//     for (outer_idx, stack) in board.board().iter().enumerate() {
+//         let stack_piece = stack
+//             .top()
+//             .map(|x| {
+//                 if board.side_to_move() == Color::White {
+//                     x as usize
+//                 } else {
+//                     x.swap_color() as usize
+//                 }
+//             })
+//             .unwrap_or(0);
+//         let (cap, friendly) = stack.captive_friendly();
+//         let cap_friendly_offset = std::cmp::min(cap, 6) * 7 + std::cmp::min(friendly, 6);
+//         let idx = stack_piece * 49 + cap_friendly_offset as usize;
+//         out[outer_idx] = UNDER_OFFSET + outer_idx as u16 * 78 + STACK_LOOKUP[idx];
+//         // out.push(UNDER_OFFSET + outer_idx as u16 * 78 + STACK_LOOKUP[idx]);
+//         // let len = std::cmp::min(stack.len(), 17);
+//         // for pos in 1..len {
+//         //     let p = stack.from_top(pos).unwrap();
+//         //     let c = (p.owner() == Color::White) as usize;
+//         //     debug_assert!(p.is_flat());
+//         //     let idx = c + 2 * pos - 1 + outer_idx * 32;
+//         //     out.push(UNDER_OFFSET + idx as u16);
+//         // }
+//     }
+//     out
+// }
 
 pub(crate) trait Scalar: FromStr + Copy {
     const ZERO: Self;
@@ -363,6 +376,18 @@ fn array_1d<const A: usize, T: Scalar>(line: &str) -> [T; A] {
     out
 }
 
+#[inline]
+fn square_clipped_relu(x: f32) -> f32 {
+    let val = x.clamp(0.0, 1.0);
+    val * val
+}
+
+// #[inline]
+// fn square_clipped_relu(x: i16) -> i32 {
+//     let val = x.clamp(0, 255) as i32;
+//     (val * val) / 255 // Still one factor of 255
+// }
+
 fn relu6_int(x: i16) -> i16 {
     const MAX: i16 = 6 * SCALE_INT;
     if x < 0 {
@@ -380,7 +405,7 @@ fn relu6(x: f32) -> f32 {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Incremental {
-    storage: [i16; DIM2],
+    storage: [f32; DIM2],
 }
 
 impl Default for Incremental {
@@ -391,9 +416,11 @@ impl Default for Incremental {
 
 impl Incremental {
     pub fn new() -> Self {
-        Incremental { storage: [0; DIM2] }
+        Incremental {
+            storage: [0.0; DIM2],
+        }
     }
-    pub fn update_diff(&mut self, old: &Vec<u16>, new: &Vec<u16>, weights: &Weights) {
+    pub fn update_diff(&mut self, old: &NN_REPR, new: &NN_REPR, weights: &Weights) {
         let mut iter_old = old.iter().copied();
         let mut iter_new = new.iter().copied();
         let mut old_val = iter_old.next();

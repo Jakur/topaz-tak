@@ -14,7 +14,7 @@ use std::thread;
 use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
-use topaz_tak::eval::{Evaluator, Weights5, Weights6, NNUE6};
+use topaz_tak::eval::{nn_repr, Evaluator, Weights5, Weights6, NNUE6};
 use topaz_tak::search::book;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::transposition_table::HashTable;
@@ -54,7 +54,7 @@ lazy_static! {
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
-    eval::global_init_weights("/home/justin/Code/rust/topaz-eval/explore/vals_new21.txt");
+    eval::global_init_weights("/home/justin/Code/rust/topaz-eval/explore/vals_perp_w200.txt");
     if let Some(arg1) = args.get(1) {
         if arg1 == "black" {
             play_game_cmd(false);
@@ -72,14 +72,18 @@ pub fn main() {
                     }
                     TakGame::Standard6(board) => {
                         // let mut eval = Weights6::default();
-                        // let mut eval = eval::NNUE6::new();
-                        let mut eval = eval::SmoothWeights6::empty();
+                        let mut eval = eval::NNUE6::new();
+                        // let mut eval = eval::SmoothWeights6::empty();
                         // let mut eval = eval::PST6::default();
                         let mut board = board.with_komi(4);
                         let score0 = eval.evaluate(&mut board, 0);
-                        let comp = eval.eval_components(&board);
+                        // board.null_move();
+                        // let null_move_score = eval.evaluate(&mut board, 100);
+                        // board.rev_null_move();
+                        let comp = nn_repr(&board);
                         dbg!(comp);
                         dbg!(score0);
+                        // dbg!(null_move_score);
                         dbg!(&board);
                         dbg!(board.hash());
                         topaz_tak::search::multi_search(&mut board, &mut eval, &mut info, 1);
@@ -229,7 +233,9 @@ pub fn main() {
             let mut moves = Vec::new();
             let mut game = build_tps(&args[2..]).unwrap();
             let table = HashTable::new(2 << 20);
-            let mut info = SearchInfo::new(20, &table).time_bank(TimeBank::flat(12_000));
+            let mut info =
+                SearchInfo::new(SELF_PLAY_DEPTH, &table).time_bank(TimeBank::flat(12_000));
+            const SELF_PLAY_DEPTH: usize = 4;
             while game.game_result().is_none() {
                 match game {
                     TakGame::Standard5(ref mut board) => {
@@ -238,7 +244,7 @@ pub fn main() {
                         println!("{}", outcome.best_move().unwrap());
                         let mv = outcome.next().unwrap();
                         board.do_move(mv);
-                        info = SearchInfo::new(20, &table)
+                        info = SearchInfo::new(SELF_PLAY_DEPTH, &table)
                             .time_bank(TimeBank::flat(12_000))
                             .quiet(true);
                         moves.push(mv);
@@ -251,7 +257,7 @@ pub fn main() {
                         println!("{}", outcome.best_move().unwrap());
                         let mv = outcome.next().unwrap();
                         board.do_move(mv);
-                        info = SearchInfo::new(20, &table)
+                        info = SearchInfo::new(SELF_PLAY_DEPTH, &table)
                             .time_bank(TimeBank::flat(12_000))
                             .quiet(true);
                         moves.push(mv);
@@ -795,8 +801,8 @@ fn tei_loop() {
                 let init = init.small_clone();
                 thread::spawn(move || match size {
                     5 => play_game_tei::<Weights5>(recv, init).unwrap(),
-                    6 => play_game_tei::<eval::Weights6>(recv, init).unwrap(),
-                    // 6 => play_game_tei::<NNUE6>(recv, init).unwrap(),
+                    // 6 => play_game_tei::<eval::Weights6>(recv, init).unwrap(),
+                    6 => play_game_tei::<NNUE6>(recv, init).unwrap(),
                     _ => unimplemented!(),
                 });
             }

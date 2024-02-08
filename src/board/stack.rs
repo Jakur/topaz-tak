@@ -24,6 +24,44 @@ impl Stack {
     pub fn init(&mut self, index: usize) {
         self.index = index as u8;
     }
+    pub fn interpret_coarse(&self, side_to_move: crate::Color) -> u16 {
+        if self.len() == 0 {
+            return 0;
+        }
+        let stack_piece = self
+            .top()
+            .map(|x| {
+                if side_to_move == crate::Color::White {
+                    x as usize
+                } else {
+                    x.swap_color() as usize
+                }
+            })
+            .unwrap();
+        let (cap, friendly) = self.captive_friendly();
+        let cap_friendly_offset = std::cmp::min(cap, 6) * 7 + std::cmp::min(friendly, 6);
+        let idx = (stack_piece * 49) as u16 + cap_friendly_offset as u16;
+        idx
+    }
+    pub fn interpret(&self, side_to_move: crate::Color) -> u16 {
+        if self.length == 0 {
+            0
+        } else {
+            let len = std::cmp::min(6, self.length);
+            let mask = (1 << len) - 1;
+            let mut under = match self.top_piece.owner() {
+                crate::Color::White => ((!self.data) & mask) >> 1,
+                crate::Color::Black => (self.data & mask) >> 1,
+            };
+            under |= 1 << (len - 1); // Stack length bit
+            let top = (self.top_piece.kind_index() as u16) * 64;
+            if self.top_piece.owner() == side_to_move {
+                top + (under as u16)
+            } else {
+                192 + top + (under as u16)
+            }
+        }
+    }
     pub fn from_bits(high_bits: u64, length: u8, top_piece: Piece) -> Self {
         let mut dummy: BitboardStorage<crate::board::Bitboard6> = BitboardStorage::default();
         match length {
@@ -360,6 +398,62 @@ impl Default for Pickup {
             pieces: 0,
             top: Piece::WhiteFlat,
             length: 0,
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::eval::nn_repr;
+    use crate::{Position, TakBoard};
+    #[test]
+    fn stack_interpret() {
+        let board = crate::board::Board6::try_from_tps("212,x,1,x3/1S,1,x,1,x2/x,122212C,11,x3/12,2,1,121,x2/2,2,21,2S,x2/221C,21,1222111,x3 2 33").unwrap();
+        for idx in 0..36 {
+            let stack = board.index(idx);
+            assert_eq!(
+                stack.interpret(board.side_to_move()) % 64,
+                stack.interpret(!board.side_to_move()) % 64
+            );
+        }
+        let board = crate::board::Board6::try_from_tps(
+            "1,1,1,1,x2/x,1S,x,1221C,2C,x/x2,2,121,1,x/x,22,1,1111112,x,12/x2,22S,2,1,1/2,2,x3,1 1 28",
+        )
+        .unwrap();
+        let repr = nn_repr(&board);
+        let expected = [
+            0b1,
+            0b1,
+            0b1,
+            0b1,
+            0,
+            0,
+            0,
+            0b1 + 64,
+            0,
+            0b1100 + 128,
+            64 * 5 + 0b1,
+            0,
+            0,
+            0,
+            64 * 3 + 0b1,
+            0b110,
+            0b1,
+            0,
+            0,
+            64 * 3 + 0b11,
+            1,
+            64 * 3 + 0b100000,
+        ];
+        for i in 0..36 {
+            let val = repr[i];
+            if let Some(x) = expected.get(i) {
+                eprintln!("{val:#b}");
+                assert_eq!(val, *x);
+                if val == 64 * 3 + 0b100000 {
+                    eprintln!("Extra test{:#b}", val - 192);
+                }
+            }
         }
     }
 }
