@@ -10,9 +10,10 @@ use super::flat_placement_road_h;
 // pub(crate) const DIM1: usize = 5696;
 pub const NN_REPR_SIZE: usize = 36 + 12;
 pub type NN_REPR = [i16; NN_REPR_SIZE];
-// pub(crate) const DIM1: usize = 9504;
-pub(crate) const DIM1: usize = 3072;
-const DIM2: usize = 256;
+pub(crate) const DIM1: usize = 14080;
+// pub(crate) const DIM1: usize = 2808;
+const DIM2: usize = 128;
+const DIM3: usize = 8;
 
 const SCALE_INT: i16 = 500;
 const SCALE_FLOAT: f32 = SCALE_INT as f32;
@@ -20,13 +21,15 @@ const SCALE_FLOAT: f32 = SCALE_INT as f32;
 // const OFFSET: u16 = FLAT_OFFSET + 36 * 4;
 // const UNDER_OFFSET: u16 = 2648;
 const UNDER_OFFSET: u16 = 2680;
-pub(crate) const STACK_LOOKUP: [i16; 7 * 7 * 7] = include!("stack_lookup.table");
+pub(crate) const STACK_LOOKUP: [i16; 384] = include!("stack_lookup.table");
 const CONV_COMPRESS: [u16; 3usize.pow(9)] = include!("conv.table");
 
 pub struct Weights {
     outer: Box<[[f32; DIM2]]>,
-    side: [f32; DIM2],
-    opp: [f32; DIM2],
+    inner: [[f32; DIM2]; DIM3],
+    inner_bias: [f32; DIM3],
+    side: [f32; DIM3],
+    opp: [f32; DIM3],
 }
 
 impl Weights {
@@ -36,6 +39,8 @@ impl Weights {
         let mut lines = s.lines();
         Some(Self {
             outer: array_2d_boxed::<DIM2, DIM1, f32>(lines.next()?),
+            inner: array_2d(lines.next()?),
+            inner_bias: array_1d(lines.next()?),
             side: array_1d(lines.next()?),
             opp: array_1d(lines.next()?),
         })
@@ -45,8 +50,10 @@ impl Weights {
         let init = [1.0; DIM2];
         Self {
             outer: vec![init; DIM1].into_boxed_slice(),
-            side: [1.0; DIM2],
-            opp: [1.0; DIM2],
+            inner: [[1.0; DIM2]; DIM3],
+            inner_bias: [1.0; DIM3],
+            side: [1.0; DIM3],
+            opp: [1.0; DIM3],
         }
     }
     pub fn build_incremental(&self, nonzero_input: &[usize]) -> Incremental {
@@ -60,24 +67,31 @@ impl Weights {
     }
     pub fn incremental_forward(&self, side: &Incremental, opp: &Incremental) -> f32 {
         let mut out = 0.0;
-        for i in 0..DIM2 {
-            out += square_clipped_relu(side.storage[i]) * self.side[i];
-            out += square_clipped_relu(opp.storage[i]) * self.opp[i];
+        let side_emb = self.get_embedding(side);
+        let opp_emb = self.get_embedding(opp);
+        for (val, w) in side_emb.into_iter().zip(self.side.into_iter()) {
+            out += val * w;
         }
-        // let mut middle = self.bias2.clone();
-        // for i in 0..DIM2 {
-        //     for j in 0..DIM3 {
-        //         middle[j] += input[i] * self.inner1[j][i];
-        //     }
-        // }
-        // let mut out = self.bias3;
-
-        // for i in 0..middle.len() {
-        //     out += relu6(middle[i]) * self.inner2[i];
-        // }
-        // ((out as f64).tanh() * SCALE_FLOAT as f64).trunc() as i32
+        for (val, w) in opp_emb.into_iter().zip(self.opp.into_iter()) {
+            out += val * w;
+        }
         out
-        // out / 255 // 1024?
+    }
+    fn get_embedding(&self, vals: &Incremental) -> [f32; DIM3] {
+        let mut input = [0.0; DIM2];
+        for i in 0..DIM2 {
+            input[i] = square_clipped_relu(vals.storage[i]);
+        }
+        let mut middle = self.inner_bias.clone();
+        for i in 0..DIM2 {
+            for j in 0..DIM3 {
+                middle[j] += input[i] * self.inner[j][i];
+            }
+        }
+        for m in middle.iter_mut() {
+            *m = float_relu(*m);
+        }
+        middle
     }
 }
 
@@ -119,7 +133,7 @@ pub fn nn_repr(board: &Board6) -> NN_REPR {
         // } else {
         //     // out[idx] = 0;
         // }
-        out[idx] = stack.interpret_coarse(side) as i16;
+        out[idx] = stack.interpret(side) as i16;
     }
     // Todo find out why index 37 does not match on side swap
     out[36] = (board.pieces_reserve(side) + board.caps_reserve(side)) as i16;
@@ -382,6 +396,11 @@ fn square_clipped_relu(x: f32) -> f32 {
     val * val
 }
 
+#[inline]
+fn float_relu(x: f32) -> f32 {
+    0.0_f32.max(x)
+}
+
 // #[inline]
 // fn square_clipped_relu(x: i16) -> i32 {
 //     let val = x.clamp(0, 255) as i32;
@@ -472,6 +491,15 @@ impl Incremental {
             self.storage[i] -= weights.outer[idx][i];
         }
     }
+}
+
+pub(crate) fn flip_stack_repr(val: i16) -> i16 {
+    let table: [i16; 64] = [
+        0, 1, 3, 2, 7, 6, 5, 4, 15, 14, 13, 12, 11, 10, 9, 8, 31, 30, 29, 28, 27, 26, 25, 24, 23,
+        22, 21, 20, 19, 18, 17, 16, 63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48,
+        47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32,
+    ];
+    table[val as usize]
 }
 
 // pub fn undo_nn_repr(nn: Vec<u16>) -> Board6 {

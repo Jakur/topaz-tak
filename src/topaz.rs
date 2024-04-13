@@ -54,7 +54,7 @@ lazy_static! {
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
-    eval::global_init_weights("/home/justin/Code/rust/topaz-eval/explore/vals_perp_w200.txt");
+    eval::global_init_weights("/home/justin/Code/rust/topaz-eval/explore/vals_perp_m21.txt");
     if let Some(arg1) = args.get(1) {
         if arg1 == "black" {
             play_game_cmd(false);
@@ -71,8 +71,8 @@ pub fn main() {
                         search(&mut board, &mut eval, &mut info);
                     }
                     TakGame::Standard6(board) => {
-                        // let mut eval = Weights6::default();
-                        let mut eval = eval::NNUE6::new();
+                        let mut eval = Weights6::default();
+                        // let mut eval = eval::NNUE6::new();
                         // let mut eval = eval::SmoothWeights6::empty();
                         // let mut eval = eval::PST6::default();
                         let mut board = board.with_komi(4);
@@ -80,8 +80,16 @@ pub fn main() {
                         // board.null_move();
                         // let null_move_score = eval.evaluate(&mut board, 100);
                         // board.rev_null_move();
-                        let comp = nn_repr(&board);
-                        dbg!(comp);
+                        // let (comp, opp_comp) = eval.get_states(&board);
+                        // let comp = nn_repr(&board);
+                        board.null_move();
+                        // let (null_comp, null_opp_comp) = eval.get_states(&board);
+                        board.rev_null_move();
+                        // for i in 0..comp.len() {
+                        //     assert_eq!(comp[i], null_opp_comp[i]);
+                        //     assert_eq!(opp_comp[i], null_comp[i]);
+                        // }
+                        // dbg!(opp_comp);
                         dbg!(score0);
                         // dbg!(null_move_score);
                         dbg!(&board);
@@ -801,8 +809,8 @@ fn tei_loop() {
                 let init = init.small_clone();
                 thread::spawn(move || match size {
                     5 => play_game_tei::<Weights5>(recv, init).unwrap(),
-                    // 6 => play_game_tei::<eval::Weights6>(recv, init).unwrap(),
-                    6 => play_game_tei::<NNUE6>(recv, init).unwrap(),
+                    6 => play_game_tei::<eval::Weights6>(recv, init).unwrap(),
+                    // 6 => play_game_tei::<NNUE6>(recv, init).unwrap(),
                     _ => unimplemented!(),
                 });
             }

@@ -49,10 +49,14 @@ impl Stack {
         } else {
             let len = std::cmp::min(6, self.length);
             let mask = (1 << len) - 1;
-            let mut under = match self.top_piece.owner() {
-                crate::Color::White => ((!self.data) & mask) >> 1,
-                crate::Color::Black => (self.data & mask) >> 1,
+            let mut under = match side_to_move {
+                crate::Color::Black => ((!self.data) & mask) >> 1,
+                crate::Color::White => (self.data & mask) >> 1,
             };
+            // let mut under = match self.top_piece.owner() {
+            //     crate::Color::White => ((!self.data) & mask) >> 1,
+            //     crate::Color::Black => (self.data & mask) >> 1,
+            // };
             under |= 1 << (len - 1); // Stack length bit
             let top = (self.top_piece.kind_index() as u16) * 64;
             if self.top_piece.owner() == side_to_move {

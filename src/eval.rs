@@ -43,6 +43,7 @@ pub trait Evaluator {
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32;
     fn eval_stack(&self, game: &Self::Game, index: usize, stack: &Stack) -> i32;
     fn eval_components(&self, game: &Self::Game) -> EvalComponents;
+    fn is_quiet(&self, game: &Self::Game) -> bool;
 }
 
 pub struct NNUE6 {
@@ -74,7 +75,7 @@ impl NNUE6 {
             classical,
         }
     }
-    fn get_states(&mut self, game: &Board6) -> (NN_REPR, NN_REPR) {
+    pub fn get_states(&mut self, game: &Board6) -> (NN_REPR, NN_REPR) {
         // const OFFSETS: [u16; 39] = [
         //     0, 156, 312, 468, 624, 780, 936, 1092, 1248, 1404, 1560, 1716, 1872, 2028, 2184, 2340,
         //     2496, 2652, 2808, 2964, 3120, 3276, 3432, 3588, 3744, 3900, 4056, 4212, 4368, 4524,
@@ -86,22 +87,39 @@ impl NNUE6 {
         //     7453, 7710, 7967, 8224, 8481, 8738, 8995, 9252, 9273, 9294, 9315, 9336, 9357, 9378,
         //     9399, 9420, 9441, 9462, 9483,
         // ];
+        // const OFFSETS: [i16; NN_REPR_SIZE] = [
+        //     0, 71, 142, 213, 284, 355, 426, 497, 568, 639, 710, 781, 852, 923, 994, 1065, 1136,
+        //     1207, 1278, 1349, 1420, 1491, 1562, 1633, 1704, 1775, 1846, 1917, 1988, 2059, 2130,
+        //     2201, 2272, 2343, 2414, 2485, 2556, 2577, 2598, 2619, 2640, 2661, 2682, 2703, 2724,
+        //     2745, 2766, 2787,
+        // ];
         const OFFSETS: [i16; NN_REPR_SIZE] = [
-            0, 78, 156, 234, 312, 390, 468, 546, 624, 702, 780, 858, 936, 1014, 1092, 1170, 1248,
-            1326, 1404, 1482, 1560, 1638, 1716, 1794, 1872, 1950, 2028, 2106, 2184, 2262, 2340,
-            2418, 2496, 2574, 2652, 2730, 2808, 2829, 2850, 2871, 2892, 2913, 2934, 2955, 2976,
-            2997, 3018, 3039,
+            0, 384, 768, 1152, 1536, 1920, 2304, 2688, 3072, 3456, 3840, 4224, 4608, 4992, 5376,
+            5760, 6144, 6528, 6912, 7296, 7680, 8064, 8448, 8832, 9216, 9600, 9984, 10368, 10752,
+            11136, 11520, 11904, 12288, 12672, 13056, 13440, 13824, 13845, 13866, 13887, 13908,
+            13929, 13950, 13971, 13992, 14013, 14034, 14055,
         ];
         let mut side = nn_repr(game);
         let mut opp = side.clone();
         for (idx, val) in side.into_iter().take(36).enumerate() {
             if val != 0 {
                 // 196
-                if val >= 196 {
-                    opp[idx] -= 147;
+                if val >= 192 {
+                    opp[idx] -= 192;
                 } else {
-                    opp[idx] += 147;
+                    opp[idx] += 192;
                 }
+                let stack = val % 64;
+                let new_stack = incremental::flip_stack_repr(stack);
+                // Move out old stack
+                opp[idx] -= stack;
+                // Move in new stack
+                opp[idx] += new_stack;
+                // if val >= 196 {
+                //     opp[idx] -= 147;
+                // } else {
+                //     opp[idx] += 147;
+                // }
             }
         }
         // if side[38] == 0 {
@@ -111,8 +129,8 @@ impl NNUE6 {
         // }
         // Refine
         for (idx, (val_a, val_b)) in side.iter_mut().zip(opp.iter_mut()).enumerate().take(36) {
-            *val_a = OFFSETS[idx] + incremental::STACK_LOOKUP[*val_a as usize];
-            *val_b = OFFSETS[idx] + incremental::STACK_LOOKUP[*val_b as usize];
+            *val_a = OFFSETS[idx] + *val_a; // + incremental::STACK_LOOKUP[*val_a as usize];
+            *val_b = OFFSETS[idx] + *val_b; // + incremental::STACK_LOOKUP[*val_b as usize];
         }
         for i in (36..=42).step_by(2) {
             opp.swap(i, i + 1);
@@ -135,7 +153,7 @@ impl Evaluator for NNUE6 {
     type Game = Board6;
 
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
-        const TEMPO_OFFSET: i32 = 45;
+        const TEMPO_OFFSET: i32 = 0;
         let (mut side, mut opp) = self.get_states(game);
         let nn = NN6.get().unwrap(); // Could probably unchecked due to init in new
                                      // eprintln!("{:?}", side);
@@ -197,7 +215,8 @@ impl Evaluator for NNUE6 {
         // }
         // eprintln!("{}", score);
         // 500?
-        let score = (score * 250.0) as i32;
+        let score = (score * 500.0) as i32;
+        // let score = (libm::tanh(score.into()) * 250.0) as i32;
         if depth % 2 == 1 {
             score + TEMPO_OFFSET
         } else {
@@ -212,6 +231,10 @@ impl Evaluator for NNUE6 {
 
     fn eval_components(&self, _game: &Self::Game) -> EvalComponents {
         unimplemented!()
+    }
+
+    fn is_quiet(&self, game: &Self::Game) -> bool {
+        true
     }
 }
 
@@ -489,6 +512,9 @@ impl Evaluator for SmoothWeights6 {
         last[5] = if side == Color::White { 1 } else { -1 };
         EvalComponents::from_arrays(vec![&tops, &captive, &friendly, &small, &last])
     }
+    fn is_quiet(&self, game: &Self::Game) -> bool {
+        true
+    }
 }
 
 fn endgame_calc<T: TakBoard>(game: &T) -> (i32, i32) {
@@ -616,9 +642,9 @@ macro_rules! eval_impl {
                 score += self.cs_threat * attackable_cs(Color::White, game);
                 score -= self.cs_threat * attackable_cs(Color::Black, game);
                 let (loose_white_pc, white_comp) =
-                    flat_placement_road_h(white_r, game.bits.empty());
+                    flat_placement_road_short(white_r, game.bits.empty());
                 let (loose_black_pc, black_comp) =
-                    flat_placement_road_h(black_r, game.bits.empty());
+                    flat_placement_road_short(black_r, game.bits.empty());
                 score -= white_comp as i32 * self.connectivity;
                 score += black_comp as i32 * self.connectivity;
 
@@ -654,22 +680,36 @@ macro_rules! eval_impl {
 
                 score += (white_road_score * mul) / 100;
                 score -= (black_road_score * mul) / 100;
-                let empty_count = game.bits().empty().pop_count() as usize;
-                if white_res < 10 || black_res < 10 || empty_count <= 4 {
-                    let (flat_diff, divisor) = endgame_calc(game);
-                    score += (flat_diff * 100) / divisor;
+                // let empty_count = game.bits().empty().pop_count() as usize;
+                let (mut flat_diff, divisor) = endgame_calc(game); // Note flat diff is in half-flats
+                debug_assert!(flat_diff % 2 == 0);
+                // Endgame fcd
+                score += (flat_diff * 100) / divisor;
+                // Early game fcd
+                if let Color::Black = game.side_to_move() {
+                    flat_diff *= -1;
                 }
+                let flat_diff_idx = (5 + (flat_diff / 2).clamp(-5, 5)) as usize;
+                score += (self.flat_advantage[flat_diff_idx] * divisor) / 100;
+                let white_res_adv = (white_res as i32 - black_res as i32).clamp(-5, 5);
+                let reserve_idx = if let Color::White = game.side_to_move() {
+                    (5 + white_res_adv) as usize
+                } else {
+                    (5 - white_res_adv) as usize
+                };
+                score += self.reserve_diff[reserve_idx];
+
                 if let Color::White = game.side_to_move() {
                     if depth % 2 == 1 {
                         score + self.tempo_offset
                     } else {
-                        score
+                        score // self.tempo_offset
                     }
                 } else {
                     if depth % 2 == 1 {
                         -1 * score + self.tempo_offset
                     } else {
-                        -1 * score
+                        -1 * score // + self.tempo_offset
                     }
                 }
                 // if Self::Game::SIZE == 10 && score.abs() < 350 {
@@ -847,6 +887,9 @@ macro_rules! eval_impl {
                 ];
                 EvalComponents::from_arrays(vec)
             }
+            fn is_quiet(&self, game: &Self::Game) -> bool {
+                true
+            }
         }
     };
 }
@@ -864,7 +907,7 @@ fn attackable_cs<B: TakBoard>(color: Color, game: &B) -> i32 {
     count
 }
 
-eval_impl![crate::Board7, Weights7];
+// eval_impl![crate::Board7, Weights7];
 eval_impl![Board6, Weights6];
 eval_impl![Board5, Weights5];
 
@@ -905,6 +948,67 @@ fn one_gap_road_old<B: Bitboard + std::fmt::Debug>(road_bits: B, blocker_bits: B
                     best = score;
                 }
             }
+        }
+    }
+    (best, count)
+}
+
+/// A heuristic for road building that approximates the number of flat placements
+/// needed to make a road. In a future version, we should link together disjoint
+/// components during the search to make the counts more accurate. Compared to
+/// earlier approaches, this more accurately values row blockades, but it lacks
+/// a way to see threats for a single decisive capture
+fn flat_placement_road_short<B: Bitboard + std::fmt::Debug>(
+    road_bits: B,
+    empty: B,
+) -> (i32, usize) {
+    let mut iter = ComponentIterator::new(road_bits);
+    let mut best = 1_000;
+    let mut count = 0;
+    let north = road_bits.flood(B::top()) | B::top();
+    let south = road_bits.flood(B::bottom()) | B::bottom();
+    let east = road_bits.flood(B::right()) | B::right();
+    let west = road_bits.flood(B::left()) | B::left();
+    let safe = empty;
+    while let Some(comp) = iter.next() {
+        count += 1;
+        if comp.pop_count() >= 2 {
+            let mut steps = 0;
+            let mut n_steps = 1_000;
+            let mut s_steps = 1_000;
+            let mut e_steps = 1_000;
+            let mut w_steps = 1_000;
+            let mut explored = comp;
+            let mut prev = B::ZERO;
+            let mut other_neighbor = (!comp & road_bits).adjacent() & empty;
+            while prev != explored {
+                if (explored & north) != B::ZERO {
+                    n_steps = std::cmp::min(n_steps, steps);
+                }
+                if (explored & south) != B::ZERO {
+                    s_steps = std::cmp::min(s_steps, steps);
+                }
+                if (explored & east) != B::ZERO {
+                    e_steps = std::cmp::min(e_steps, steps);
+                }
+                if (explored & west) != B::ZERO {
+                    w_steps = std::cmp::min(w_steps, steps);
+                }
+                prev = explored;
+                explored = (explored.adjacent() | explored) & safe;
+                steps += 1;
+                if steps > 2 {
+                    break;
+                }
+                if (other_neighbor & explored) != B::ZERO {
+                    // Combine components
+                    explored = (road_bits | explored).flood(explored);
+                    other_neighbor = (!explored & road_bits).adjacent() & empty;
+                    // other_neighbor = other_neighbor & !explored;
+                }
+            }
+            let score = std::cmp::min(n_steps + s_steps, e_steps + w_steps);
+            best = std::cmp::min(best, score);
         }
     }
     (best, count)
@@ -1040,6 +1144,12 @@ fn connected_components<B: Bitboard, F: Fn(B, B) -> B>(mut bits: B, flood_fn: F)
     BitOutcome::new(largest, count)
 }
 
+#[derive(Default, Debug)]
+struct MomentumCounter {
+    white_road_diff: i32,
+    black_road_diff: i32,
+}
+
 pub struct Weights5 {
     location: [i32; 25],
     connectivity: i32,
@@ -1048,6 +1158,9 @@ pub struct Weights5 {
     stack_eval: StackEval,
     flat_road: [i32; 4],
     cs_threat: i32,
+    flat_advantage: [i32; 11],
+    reserve_diff: [i32; 11],
+    mom: MomentumCounter,
 }
 
 impl Weights5 {
@@ -1068,6 +1181,9 @@ impl Weights5 {
             stack_eval: StackEval::build_simple(stack_top),
             flat_road,
             cs_threat,
+            flat_advantage: [0; 11],
+            reserve_diff: [0; 11],
+            mom: Default::default(),
         }
     }
     fn piece_weight(&self, p: Piece) -> i32 {
@@ -1196,6 +1312,9 @@ pub struct Weights6 {
     // stack_top: [i32; 6],
     flat_road: [i32; 4],
     cs_threat: i32,
+    flat_advantage: [i32; 11],
+    reserve_diff: [i32; 11],
+    mom: MomentumCounter,
 }
 
 impl Weights6 {
@@ -1207,6 +1326,8 @@ impl Weights6 {
         stack_top: [i32; 6],
         flat_road: [i32; 4],
         cs_threat: i32,
+        flat_advantage: [i32; 11],
+        reserve_diff: [i32; 11],
     ) -> Self {
         Self {
             location,
@@ -1216,6 +1337,9 @@ impl Weights6 {
             stack_eval: StackEval::build_simple(stack_top),
             flat_road,
             cs_threat,
+            flat_advantage,
+            reserve_diff,
+            mom: Default::default(),
         }
     }
 
@@ -1288,19 +1412,108 @@ impl Weights6 {
 
 impl Default for Weights6 {
     fn default() -> Self {
-        Weights6 {
-            location: [
-                -11, -5, -2, -2, -5, -11, -5, 4, 9, 9, 4, -11, -2, 9, 14, 14, 9, -2, -2, 9, 14, 14,
-                9, -2, -5, 4, 9, 9, 4, -11, -11, -5, -2, -2, -5, -11,
-            ],
-            connectivity: 14,
-            tempo_offset: 150,
-            piece: [122, 57, 113],
-            stack_eval: StackEval::build_simple([-61, 85, -29, 99, -20, 116]),
-            flat_road: [40, 22, 13, 8],
-            cs_threat: 64,
-        }
+        // let data = vec![
+        //     -29, 9, 29, 55, 26, 84, 74, 84, 83, 39, 46, 33, -13, 188, 85, 178, 159, 68, 181, 161,
+        //     198,
+        // ];
+        // let mut data = vec![
+        //     38, 54, 72, 79, 93, 69, 29, 161, 54, 48, 137, 159, 90, 120, 84, 157, 156, 111, 65, 10,
+        //     82, 118, 61, 94, 57, 128, 5, 30, 46, 74, 156,
+        // ];
+        // let mut data = vec![
+        //     9, 53, 77, 76, 96, 86, 19, 162, 24, 54, 138, 163, 64, 161, 18, 103, 127, 92, 39, 8, 89,
+        //     83, 25, 59, 81, 98, 11, 25, 86, 143, 108,
+        // ];
+        // for x in data.iter_mut() {
+        //     *x = (*x) / 2;
+        // }
+        // let data = vec![
+        //     0, 5, 9, 16, 21, 25, 11, 114, 57, 95, 69, 97, 35, 122, 22, 144, 50, 19, 8, 2, 58, 77,
+        //     8, 95, 0, 5, 4, 2, 2, 0, 10,
+        // ];
+        let data = vec![
+            0, 4, 9, 14, 19, 23, 11, 114, 58, 97, 68, 98, 34, 120, 23, 142, 49, 23, 9, 2, 61, 32,
+            17, 72, 2, 84, 2, 4, 5, 6, 8,
+        ];
+        build_weights(&data)
+        // Weights6 {
+        //     location: [
+        //         -11, -5, -2, -2, -5, -11, -5, 4, 9, 9, 4, -11, -2, 9, 14, 14, 9, -2, -2, 9, 14, 14,
+        //         9, -2, -5, 4, 9, 9, 4, -11, -11, -5, -2, -2, -5, -11,
+        //     ],
+        //     connectivity: 14,
+        //     tempo_offset: 150,
+        //     piece: [122, 57, 113],
+        //     stack_eval: StackEval::build_simple([-61, 85, -29, 99, -20, 116]),
+        //     flat_road: [40, 22, 13, 8],
+        //     cs_threat: 64,
+        //     mom: Default::default(),
+        // }
     }
+}
+
+type WeightBuilder = Vec<i32>;
+
+#[rustfmt::skip]
+fn get_location(slice: [i32; 6]) -> [i32; 36] {
+    let [corner, offcorner, edge, kosumi, ctouch, center] = slice;
+    [
+        corner, offcorner, edge, edge, offcorner, corner,
+        offcorner, kosumi, ctouch, ctouch, kosumi, offcorner,
+        edge, ctouch, center, center, ctouch, edge,
+        edge, ctouch, center, center, ctouch, edge,
+        offcorner, kosumi, ctouch, ctouch, kosumi, offcorner,
+        corner, offcorner, edge, edge, offcorner, corner
+    ]
+}
+
+fn build_weights(w: &WeightBuilder) -> Weights6 {
+    let location = get_location([w[0], w[1], w[2], w[3], w[4], w[5]]);
+    let connectivity = w[6];
+    let tempo_offset = 150;
+    let piece = [w[7], w[8], w[9]];
+    let stack_top = [-w[10], w[11], -w[12], w[13], -w[14], w[15]];
+    //     connectivity: 14,
+    //     tempo_offset: 150,
+    //     piece: [122, 57, 113],
+    //     stack_eval: StackEval::build_simple([-61, 85, -29, 99, -20, 116]),
+    //     flat_road: [40, 22, 13, 8],
+    //     cs_threat: 64,
+    let flat_road = [w[16], w[17], w[18], w[19]];
+    let cs_threat = w[20];
+    // 0 +1, +2, +3, +4, +5
+    let f: Vec<_> = w[21..=25].iter().scan(0, |acc, x| Some(*acc + x)).collect();
+
+    let flat_diff = [
+        -f[4], -f[3], -f[2], -f[1], -f[0], 0, f[0], f[1], f[2], f[3], f[4],
+    ];
+    let r: Vec<_> = w[26..=30].iter().scan(0, |acc, x| Some(*acc + x)).collect();
+    let reserve_diff = [
+        -r[4], -r[3], -r[2], -r[1], -r[0], 0, r[0], r[1], r[2], r[3], r[4],
+    ];
+    let weights = Weights6::new(
+        location,
+        connectivity,
+        tempo_offset,
+        piece,
+        stack_top,
+        flat_road,
+        cs_threat,
+        flat_diff,
+        reserve_diff,
+    );
+    // let mut idx = 16;
+    // for top in [Piece::WhiteFlat, Piece::WhiteWall, Piece::WhiteCap].into_iter() {
+    //     for cap in 1..=5 {
+    //         for friendly in 0..=5 - cap {
+    //             weights
+    //                 .stack_eval
+    //                 .set_cap_friendly(top, cap, friendly, w[idx]);
+    //             idx += 1;
+    //         }
+    //     }
+    // }
+    weights
 }
 
 pub struct Weights7 {
@@ -1312,6 +1525,7 @@ pub struct Weights7 {
     // stack_top: [i32; 6],
     flat_road: [i32; 4],
     cs_threat: i32,
+    mom: MomentumCounter,
 }
 
 impl Weights7 {
@@ -1332,6 +1546,7 @@ impl Weights7 {
             stack_eval,
             flat_road,
             cs_threat,
+            mom: Default::default(),
         }
     }
     fn piece_weight(&self, p: Piece) -> i32 {
@@ -1353,6 +1568,7 @@ impl Default for Weights7 {
             stack_eval: StackEval::build_simple([-61, 85, -29, 99, -20, 116]),
             flat_road: [40, 22, 13, 8],
             cs_threat: 64,
+            mom: Default::default(),
         }
     }
 }
