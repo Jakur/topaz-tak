@@ -357,22 +357,25 @@ impl SmartMoveBuffer {
                 }
             }
             let src_stack = board.index(src_idx);
-            if let Some(piece) = src_stack.from_top(x.mv.number() as usize) {
-                if piece.owner() == active_side {
-                    score += 2;
-                } else {
-                    score -= 2;
+            let top_piece = src_stack.top().unwrap();
+            if x.mv.number() == 1 && score == 2 && top_piece.is_flat() {
+                x.score = -100;
+            } else {
+                if let Some(piece) = src_stack.from_top(x.mv.number() as usize) {
+                    if piece.owner() == active_side {
+                        score += 2;
+                    } else {
+                        score -= 2;
+                    }
                 }
-            }
-            if let Some(piece) = src_stack.top() {
-                if piece.is_cap() {
+                if top_piece.is_cap() {
                     score += 1;
                     if x.mv.crush() {
                         score += 1;
                     }
                 }
+                x.score += score;
             }
-            x.score += score;
             // if &x.mv.to_ptn::<T>() == DEBUG {
             //     dbg!(x.score);
             // }

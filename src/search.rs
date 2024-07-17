@@ -886,6 +886,7 @@ where
             moves.score_pv_move(entry.game_move);
         }
     }
+    // moves.drop_below_score(-50);
     let ply_depth = info.ply_depth(board);
     for c in 0..moves.len() {
         let count = if has_searched_pv { c + 1 } else { c };

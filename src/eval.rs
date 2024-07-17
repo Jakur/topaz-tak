@@ -797,7 +797,16 @@ macro_rules! eval_impl {
                 if safety < 0 {
                     captive *= 2;
                 }
-                let stack_score = pw + self.stack_eval.eval_cap_friendly(top, captive, friendly);
+                let mut stack_score =
+                    pw + self.stack_eval.eval_cap_friendly(top, captive, friendly);
+                // let friendly_flats = game.bits().flat & game.bits().all_pieces(top.owner());
+                let enemy_flats = game.bits().flat & game.bits().all_pieces(!top.owner());
+                let orth = <Self::Game as TakBoard>::Bits::orthogonal(idx);
+                let count = (orth & enemy_flats).pop_count() as i32;
+                let all_friendly = friendly + 1;
+                if count >= all_friendly {
+                    stack_score += std::cmp::min(75, 5 * all_friendly * all_friendly);
+                }
                 // let friendly_score = friendly * f_mul;
                 // // let friendly_score = std::cmp::min(friendly * f_mul, 300);
                 // let stack_score = captive * c_mul + friendly_score + pw;
@@ -1435,6 +1444,10 @@ impl Default for Weights6 {
             0, 4, 9, 14, 19, 23, 11, 114, 58, 97, 68, 98, 34, 120, 23, 142, 49, 23, 9, 2, 61, 32,
             17, 72, 2, 84, 2, 4, 5, 6, 8,
         ];
+        // let data = vec![
+        //     145, 163, 163, 161, 135, 102, 126, 163, 0, 1, 160, 161, 38, 160, 9, 163, 90, 161, 150,
+        //     138, 152, 13, 8, 66, 37, 48, 93, 0, 4, 15, 0,
+        // ];
         build_weights(&data)
         // Weights6 {
         //     location: [

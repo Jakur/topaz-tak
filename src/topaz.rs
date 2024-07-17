@@ -75,6 +75,7 @@ pub fn main() {
                         // let mut eval = eval::NNUE6::new();
                         // let mut eval = eval::SmoothWeights6::empty();
                         // let mut eval = eval::PST6::default();
+                        dbg!(&eval);
                         let mut board = board.with_komi(4);
                         let score0 = eval.evaluate(&mut board, 0);
                         // board.null_move();
