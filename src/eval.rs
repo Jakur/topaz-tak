@@ -37,12 +37,14 @@ fn nn_file() -> Option<String> {
 }
 
 mod incremental;
+mod smooth;
+pub use smooth::SmoothWeights6;
 
 pub trait Evaluator {
     type Game: TakBoard + Send;
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32;
     fn eval_stack(&self, game: &Self::Game, index: usize, stack: &Stack) -> i32;
-    fn eval_components(&self, game: &Self::Game) -> EvalComponents;
+    fn eval_components<'a, T: EvalComponents<'a> + 'a>(&'a self, game: &Self::Game) -> T;
     fn is_quiet(&self, game: &Self::Game) -> bool;
 }
 
@@ -229,7 +231,7 @@ impl Evaluator for NNUE6 {
         unimplemented!()
     }
 
-    fn eval_components(&self, _game: &Self::Game) -> EvalComponents {
+    fn eval_components<'a, T: EvalComponents<'a>>(&'a self, _game: &Self::Game) -> T {
         unimplemented!()
     }
 
@@ -261,261 +263,6 @@ impl Evaluator6 {
 
 pub const WIN_SCORE: i32 = 10_000;
 pub const LOSE_SCORE: i32 = -1 * WIN_SCORE;
-
-#[derive(Debug)]
-struct Embedding<const N: usize> {
-    lookup: [f32; N],
-}
-
-impl<const N: usize> Embedding<N> {
-    fn forward(&self, x: &[i32]) -> Vec<f32> {
-        let mut out = Vec::with_capacity(N);
-        for val in x.into_iter() {
-            out.push(self.lookup[*val as usize])
-        }
-        out
-    }
-    fn forward_scalar(&self, x: i32) -> f32 {
-        self.lookup[x as usize]
-    }
-    fn from_string(s: &str) -> Self {
-        let mut lookup = [0.0; N];
-        for (idx, val) in s.split(",").enumerate() {
-            let num = val.parse().unwrap();
-            lookup[idx] = num;
-        }
-        Self { lookup }
-    }
-}
-
-struct Linear<const N: usize> {
-    weights: [f32; N],
-}
-
-impl<const N: usize> Linear<N> {
-    fn forward(&self, x: &[f32]) -> f32 {
-        self.weights
-            .iter()
-            .copied()
-            .zip(x.into_iter().copied())
-            .map(|(x, y)| x * y)
-            .sum()
-    }
-    fn from_string(s: &str) -> Self {
-        let mut weights = [0.0; N];
-        for (idx, val) in s.split(",").enumerate() {
-            let num = val.parse().unwrap();
-            weights[idx] = num;
-        }
-        Self { weights }
-    }
-}
-
-pub struct SmoothWeights6 {
-    top_pst1: Embedding<8>,
-    top_pst2: Embedding<8>,
-    top_pst3: Embedding<8>,
-    // captive_pst: Embedding<7>,
-    // friendly_pst: Embedding<7>,
-    square_pst: Linear<36>,
-    mobility: Embedding<8>,
-    safety: Embedding<8>,
-    small: Embedding<20>,
-    road_dist: Embedding<36>,
-    reserve: Embedding<13>,
-    endgame_weight: f32,
-    color: f32,
-}
-
-impl SmoothWeights6 {
-    pub fn empty() -> Self {
-        static DATA: &'static str = include_str!("eval/classic.table");
-        let out = Self::parse(DATA);
-        out
-    }
-    pub fn parse(data: &str) -> Self {
-        let mut map = HashMap::new();
-        for line in data.lines() {
-            let mut split = line.split(":");
-            let name = split.next().unwrap();
-            let data = split.next().unwrap();
-            map.insert(name, data);
-        }
-        Self {
-            top_pst1: Embedding::<8>::from_string(map.get("top_pst1").unwrap()),
-            top_pst2: Embedding::<8>::from_string(map.get("top_pst2").unwrap()),
-            top_pst3: Embedding::<8>::from_string(map.get("top_pst3").unwrap()),
-            // captive_pst: Embedding::<7>::from_string(map.get("captive_pst").unwrap()),
-            // friendly_pst: Embedding::<7>::from_string(map.get("friendly_pst").unwrap()),
-            square_pst: Linear::<36>::from_string(map.get("square_pst").unwrap()),
-            mobility: Embedding::<8>::from_string(map.get("mobility").unwrap()),
-            safety: Embedding::<8>::from_string(map.get("safety").unwrap()),
-            small: Embedding::<20>::from_string(map.get("small").unwrap()),
-            road_dist: Embedding::<36>::from_string(map.get("road_dist").unwrap()),
-            reserve: Embedding::<13>::from_string(map.get("reserve").unwrap()),
-            endgame_weight: map
-                .get("endgame_weight")
-                .map(|x| x.parse().unwrap())
-                .unwrap(),
-            color: map.get("color").map(|x| x.parse().unwrap()).unwrap(),
-        }
-    }
-    // def adjacent_conv(self, x, embedding):
-    // x = embedding(x).view(-1, 1, self.board_size, self.board_size)
-    // x = F.conv2d(x, self.adjacent.to(x.device), padding=1).squeeze().view(-1, self.board_size * self.board_size)
-    // return x
-    fn adjacent_conv_sq(&self, xs: &[i32], embedding: &Embedding<8>, idx: usize) -> f32 {
-        const MAIN_SCALAR: f32 = 2.0;
-        const SECONDARY_SCALAR: f32 = 1.0;
-        let x = xs[idx];
-        let mut val = MAIN_SCALAR * embedding.forward_scalar(x);
-        let neighbors =
-            <<SmoothWeights6 as Evaluator>::Game as TakBoard>::Bits::index_to_bit(idx).adjacent();
-        for sq in BitIndexIterator::new(neighbors) {
-            val += SECONDARY_SCALAR * embedding.forward_scalar(xs[sq])
-        }
-        val
-    }
-}
-
-impl std::default::Default for SmoothWeights6 {
-    fn default() -> Self {
-        Self::empty()
-    }
-}
-
-impl Evaluator for SmoothWeights6 {
-    type Game = Board6;
-
-    fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
-        let comps = self.eval_components(game);
-        let x = comps.data;
-        let mut score = 0.0;
-        let sqs = Self::Game::SIZE * Self::Game::SIZE;
-        let offset1 = sqs * 3;
-        let tops = &x[0..sqs];
-        let captives = &x[sqs..sqs * 2];
-        let friendly = &x[sqs * 2..sqs * 3];
-        // let captives: Vec<_> = x[sqs..sqs * 2].into_iter().map(|&x| x as f32).collect();
-        // let friendly: Vec<_> = x[sqs * 2..sqs * 3].into_iter().map(|&x| x as f32).collect();
-        // let captives = self.captive_pst.forward(&x[sqs..sqs * 2]);
-        // let friendly = self.friendly_pst.forward(&x[sqs * 2..sqs * 3]);
-        let top_pst = self.top_pst1.forward(tops);
-        score += self.square_pst.forward(&top_pst);
-
-        // let safety = self.adjacent_conv(game, tops, &self.safety);
-        // let mut mobility = self.adjacent_conv(game, tops, &self.mobility);
-        // for (i, m) in mobility.iter_mut().enumerate() {
-        //     *m /= 1.0 + captives[i];
-        // }
-        for idx in 0..sqs {
-            if captives[idx] != 0 {
-                let captive_top = self.top_pst2.forward_scalar(tops[idx]);
-                let conv = self.adjacent_conv_sq(&tops, &self.safety, idx);
-                score += (captives[idx] as f32) * captive_top * conv;
-            }
-            if friendly[idx] != 0 {
-                let friendly_top = self.top_pst3.forward_scalar(tops[idx]);
-                let conv = self.adjacent_conv_sq(&tops, &self.mobility, idx);
-                let mobility_offset = 1 + captives[idx];
-                score += (friendly[idx] as f32) * friendly_top * conv / (mobility_offset as f32)
-            }
-        }
-        // let captive_top = self.top_pst2.forward(&tops);
-        // let friendly_top = self.top_pst3.forward(&tops);
-        // let captives = Self::mul_clamp_sum(&captives, &safety, &captive_top, -10.0, 10.0);
-        // let friendly = Self::mul_clamp_sum(&friendly, &mobility, &friendly_top, -10.0, 10.0);
-        // score += captives;
-        // score += friendly;
-        score += self
-            .small
-            .forward(&x[offset1..offset1 + 3])
-            .into_iter()
-            .sum::<f32>();
-        let road_dist_adv = self.road_dist.forward_scalar(x[offset1 + 3]);
-        // let reserves_sum = (x[offset1 + 4] + x[offset1 + 5]) as f32 / 60.0;
-        let reserve_adv = 6 + (x[offset1 + 5] - x[offset1 + 4]).clamp(-6, 6);
-        score += self.reserve.forward_scalar(reserve_adv);
-        score += road_dist_adv; // reserves_sum;
-        let len = x.len();
-        score += self.endgame_weight * (x[len - 3] as f32) / (x[len - 2] as f32);
-        score += self.color * x[len - 1] as f32;
-        if depth % 2 == 0 {
-            (score * 500.0).clamp(-2500.0, 2500.0) as i32
-        } else {
-            (score * 500.0).clamp(-2500.0, 2500.0) as i32
-        }
-    }
-
-    fn eval_stack(&self, game: &Self::Game, idx: usize, stack: &Stack) -> i32 {
-        unimplemented!()
-    }
-
-    fn eval_components(&self, game: &Self::Game) -> EvalComponents {
-        // [36*Tops, 36*Captives, 36*Friendly, cap_lonely, cs_threat, components, road_dist_adv, reserves, fill, half flat_adv]
-        let mut tops = [1; 36];
-        let mut captive = [0; 36];
-        let mut friendly = [0; 36];
-        let side = game.side_to_move();
-        let opp = !side;
-        for (idx, stack) in game.board.iter().enumerate() {
-            let piece = stack
-                .top()
-                .map(|x| {
-                    if game.side_to_move() == Color::White {
-                        x as i32 + 1
-                    } else {
-                        x.swap_color() as i32 + 1
-                    }
-                })
-                .unwrap_or(1);
-            tops[idx] = piece;
-            let (cap, fr) = stack.captive_friendly();
-            captive[idx] = std::cmp::min(cap, Self::Game::SIZE as i32);
-            friendly[idx] = std::cmp::min(fr, Self::Game::SIZE as i32);
-        }
-        let mut small = [0; 3];
-        let mut cap_lonely = 0;
-        for s in [side, opp].into_iter() {
-            let cap = game.bits.cap & game.bits.all_pieces(s);
-            if cap != <Self::Game as TakBoard>::Bits::ZERO {
-                let lonely =
-                    cap.adjacent() & (game.bits.flat | game.bits.wall) & game.bits.all_pieces(opp);
-                if lonely == <Self::Game as TakBoard>::Bits::ZERO {
-                    cap_lonely += 1;
-                }
-            }
-            cap_lonely = -cap_lonely;
-        }
-        small[0] = cap_lonely + 1; // Max 2
-        let cs = 3 + 4 + std::cmp::min(4, attackable_cs(side, game))
-            - std::cmp::min(4, attackable_cs(opp, game)); // Max 3 + 4 + 4 = 11
-        small[1] = cs;
-        let side_r = game.bits.road_pieces(side);
-        let opp_r = game.bits.road_pieces(opp);
-        let (loose_side_pc, side_comp) = flat_placement_road_h(side_r, game.bits.empty());
-        let (loose_opp_pc, opp_comp) = flat_placement_road_h(opp_r, game.bits.empty());
-        let comp_diff = 11 + 4 + std::cmp::min(side_comp, 4) - std::cmp::min(opp_comp, 4); // 11 + 4 + 4 = 19
-        small[2] = comp_diff as i32;
-        let mut last = [0; 6];
-        let road_idx = 6 * (loose_side_pc.clamp(1, 5)) + (loose_opp_pc.clamp(1, 5));
-        last[0] = road_idx;
-        last[1] = (game.pieces_reserve(side) + game.caps_reserve(side)) as i32;
-        last[2] = (game.pieces_reserve(opp) + game.caps_reserve(opp)) as i32;
-        let (flat_diff, divisor) = endgame_calc(game);
-        if side == Color::White {
-            last[3] = flat_diff;
-        } else {
-            last[3] = -flat_diff;
-        }
-        last[4] = divisor;
-        last[5] = if side == Color::White { 1 } else { -1 };
-        EvalComponents::from_arrays(vec![&tops, &captive, &friendly, &small, &last])
-    }
-    fn is_quiet(&self, game: &Self::Game) -> bool {
-        true
-    }
-}
 
 fn endgame_calc<T: TakBoard>(game: &T) -> (i32, i32) {
     let empty_count = game.bits().empty().pop_count() as usize;
@@ -816,85 +563,8 @@ macro_rules! eval_impl {
                     return -stack_score;
                 }
             }
-            fn eval_components(&self, game: &Self::Game) -> EvalComponents {
-                let player = game.side_to_move();
-                let opp = !game.side_to_move();
-                let empty = [game.bits().empty().pop_count() as i32];
-                let mut loc_score = [0; 2];
-                let mut pieces = [0; 6];
-                let mut capstone_status = [0; 2];
-                let mut capstone_height = [0; 2];
-                let mut stack_score = [0; 2];
-                let mut stack_count = [0; 2];
-                let reserves = [
-                    (game.pieces_reserve(player) + game.caps_reserve(player)) as i32,
-                    (game.pieces_reserve(opp) + game.caps_reserve(opp)) as i32,
-                ];
-                let flat_placement = [
-                    flat_placement_road_h(game.bits().road_pieces(player), game.bits().empty()),
-                    flat_placement_road_h(game.bits().road_pieces(opp), game.bits().empty()),
-                ];
-                let comps = [flat_placement[0].1 as i32, flat_placement[1].1 as i32];
-                let flat_placement = [flat_placement[0].0, flat_placement[1].0];
-                let cs = [attackable_cs(player, game), attackable_cs(opp, game)];
-                let one_gap = [
-                    one_gap_road(game.bits().road_pieces(player)).0,
-                    one_gap_road(game.bits().road_pieces(opp)).0,
-                ];
-                // let pieces_left = white_res + black_res;
-                // let time_mul = (pieces_left as i32 * 100) / 60;
-                for (idx, stack) in game.board().iter().enumerate() {
-                    if stack.len() == 0 {
-                        continue;
-                    }
-                    let top = stack.top().unwrap();
-                    let color = (top.owner() != player) as usize; // Friendly 0, Enemy 1
-                    let mul = if top.is_cap() {
-                        capstone_height[color] = stack.len() as i32;
-                        if let Some(piece) = stack.from_top(1) {
-                            // Todo check this
-                            if piece.owner() == top.owner() {
-                                capstone_status[color] = 1;
-                            } else {
-                                capstone_status[color] = -1;
-                            }
-                        }
-                        2
-                    } else {
-                        1
-                    };
-                    loc_score[color] += mul * self.location[idx];
-                    if stack.len() == 1 {
-                        let piece_idx = if let Color::White = player {
-                            top as usize - 1
-                        } else {
-                            top.swap_color() as usize - 1
-                        };
-                        pieces[piece_idx] += 1;
-                    } else if stack.len() > 1 {
-                        if let Color::White = top.owner() {
-                            stack_score[color] += self.eval_stack(game, idx, stack);
-                        } else {
-                            stack_score[color] -= self.eval_stack(game, idx, stack);
-                        }
-                        stack_count[color] += 1;
-                    }
-                }
-                let vec = vec![
-                    empty.as_slice(),
-                    &loc_score,
-                    &pieces,
-                    &capstone_status,
-                    &capstone_height,
-                    &stack_score,
-                    &stack_count,
-                    &reserves,
-                    &comps,
-                    &flat_placement,
-                    &one_gap,
-                    &cs,
-                ];
-                EvalComponents::from_arrays(vec)
+            fn eval_components<'a, T: EvalComponents<'a>>(&'a self, game: &Self::Game) -> T {
+                unimplemented!()
             }
             fn is_quiet(&self, game: &Self::Game) -> bool {
                 true
@@ -942,7 +612,8 @@ fn one_gap_road_old<B: Bitboard + std::fmt::Debug>(road_bits: B, blocker_bits: B
     while let Some(comp) = iter.next() {
         count += 1;
         if comp.pop_count() >= 3 {
-            let score = comp.simple_road_est();
+            let (score_a, score_b) = comp.simple_road_est();
+            let score = std::cmp::max(score_a, score_b);
             if score > best {
                 best = score;
             }
@@ -952,7 +623,8 @@ fn one_gap_road_old<B: Bitboard + std::fmt::Debug>(road_bits: B, blocker_bits: B
             while potential != B::ZERO {
                 let lowest = potential.pop_lowest();
                 let check = (lowest | road_bits).flood(lowest);
-                let score = check.simple_road_est();
+                let (score_a, score_b) = check.simple_road_est();
+                let score = std::cmp::max(score_a, score_b);
                 if score > best {
                     best = score;
                 }
@@ -1090,7 +762,8 @@ fn one_gap_road<B: Bitboard + std::fmt::Debug>(road_bits: B) -> (i32, usize) {
     while let Some(comp) = iter.next() {
         count += 1;
         if comp.pop_count() >= 3 {
-            let score = comp.simple_road_est();
+            let (score_a, score_b) = comp.simple_road_est();
+            let score = std::cmp::max(score_a, score_b);
             if score > best {
                 best = score;
             }
@@ -1100,7 +773,8 @@ fn one_gap_road<B: Bitboard + std::fmt::Debug>(road_bits: B) -> (i32, usize) {
                 let lowest = potential.pop_lowest();
                 let bend = (lowest.loose_adjacent() | lowest) & road_bits;
                 let fl = road_bits.flood(bend);
-                let score = fl.simple_road_est();
+                let (score_a, score_b) = fl.simple_road_est();
+                let score = std::cmp::max(score_a, score_b);
                 if score > best {
                     best = score;
                 }
@@ -1132,6 +806,34 @@ where
         } else {
             let lowest = self.bits.lowest();
             let set = B::flood(self.bits, lowest);
+            self.bits = self.bits ^ set;
+            Some(set)
+        }
+    }
+}
+
+struct LooseComponentIterator<B> {
+    bits: B,
+}
+
+impl<B> LooseComponentIterator<B> {
+    fn new(bits: B) -> Self {
+        Self { bits }
+    }
+}
+
+impl<B> Iterator for LooseComponentIterator<B>
+where
+    B: Bitboard,
+{
+    type Item = B;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.bits == B::ZERO {
+            None
+        } else {
+            let lowest = self.bits.lowest();
+            let set = B::loose_flood(self.bits, lowest);
             self.bits = self.bits ^ set;
             Some(set)
         }
@@ -1586,76 +1288,13 @@ impl Default for Weights7 {
     }
 }
 
-#[derive(Debug)]
-pub struct EvalComponents {
-    data: Vec<i32>,
-}
-
-impl EvalComponents {
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
-    pub fn from_arrays(vals: Vec<&[i32]>) -> Self {
-        let mut data = vec![0; 117];
-        let mut idx = 0;
-        for slice in vals {
-            for x in slice {
-                data[idx] = *x;
-                idx += 1;
-            }
-        }
-        assert_eq!(idx, data.len());
-        Self { data }
-    }
-    pub fn write_data<W: std::fmt::Write>(&self, writer: &mut W) -> anyhow::Result<()> {
-        for x in self.data.iter() {
-            write!(writer, "{},", *x)?;
-        }
-        Ok(())
-    }
-    pub fn write_io<W: std::io::Write>(&self, writer: &mut W) -> anyhow::Result<()> {
-        for x in self.data[0..self.data.len() - 1].iter() {
-            write!(writer, "{},", *x)?;
-        }
-        write!(writer, "{}", *self.data.last().unwrap())?;
-        Ok(())
-    }
-    pub fn labels() -> Vec<String> {
-        let mut out = [
-            "empty",
-            "loc_friendly",
-            "loc_enemy",
-            "flat_friendly",
-            "wall_friendly",
-            "cap_friendly",
-            "flat_enemy",
-            "wall_enemy",
-            "cap_enemy",
-        ]
-        .iter()
-        .map(|x| format!("{}", x))
-        .collect();
-        for name in [
-            "cap_status",
-            "cap_height",
-            "stack_score",
-            "stack_count",
-            "reserves",
-            "comps",
-            "flat_placement_r",
-            "one_gap_r",
-            "cs",
-        ]
-        .iter()
-        {
-            Self::add_names(name, &mut out);
-        }
-        out
-    }
-    fn add_names(name: &str, vec: &mut Vec<String>) {
-        vec.push(format!("{}_friendly", name));
-        vec.push(format!("{}_enemy", name));
-    }
+pub trait EvalComponents<'a> {
+    fn create(weights: &'a SmoothWeights6) -> Self
+    where
+        Self: 'a;
+    fn score(&self) -> i32;
+    fn mark(&mut self, index: usize);
+    fn set_phase(&mut self, phase: usize);
 }
 
 #[allow(clippy::zero_prefixed_literal)]

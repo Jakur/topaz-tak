@@ -21,7 +21,7 @@ const SCALE_FLOAT: f32 = SCALE_INT as f32;
 // const OFFSET: u16 = FLAT_OFFSET + 36 * 4;
 // const UNDER_OFFSET: u16 = 2648;
 const UNDER_OFFSET: u16 = 2680;
-pub(crate) const STACK_LOOKUP: [i16; 384] = include!("stack_lookup.table");
+pub(crate) const STACK_LOOKUP: [u16; 343] = include!("stack_lookup.table");
 const CONV_COMPRESS: [u16; 3usize.pow(9)] = include!("conv.table");
 
 pub struct Weights {

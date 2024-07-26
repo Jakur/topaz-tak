@@ -32,7 +32,7 @@ const LMR_REDUCE_ROOT: bool = true; // probably shouldn't
 const PV_SEARCH_ENABLED: bool = true; // no speedup, worse playing strength
 const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF
 
-const REVERSE_FUTILITY_MARGIN: i32 = 170;
+const REVERSE_FUTILITY_MARGIN: i32 = 280;
 
 // aspiration window parameters
 // CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!

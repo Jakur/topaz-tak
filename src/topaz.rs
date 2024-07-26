@@ -71,11 +71,11 @@ pub fn main() {
                         search(&mut board, &mut eval, &mut info);
                     }
                     TakGame::Standard6(board) => {
-                        let mut eval = Weights6::default();
+                        // let mut eval = Weights6::default();
                         // let mut eval = eval::NNUE6::new();
-                        // let mut eval = eval::SmoothWeights6::empty();
+                        let mut eval = eval::SmoothWeights6::empty();
                         // let mut eval = eval::PST6::default();
-                        dbg!(&eval);
+                        // dbg!(&eval);
                         let mut board = board.with_komi(4);
                         let score0 = eval.evaluate(&mut board, 0);
                         // board.null_move();
@@ -810,7 +810,7 @@ fn tei_loop() {
                 let init = init.small_clone();
                 thread::spawn(move || match size {
                     5 => play_game_tei::<Weights5>(recv, init).unwrap(),
-                    6 => play_game_tei::<eval::Weights6>(recv, init).unwrap(),
+                    6 => play_game_tei::<eval::SmoothWeights6>(recv, init).unwrap(),
                     // 6 => play_game_tei::<NNUE6>(recv, init).unwrap(),
                     _ => unimplemented!(),
                 });
