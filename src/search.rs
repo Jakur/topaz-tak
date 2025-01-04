@@ -32,7 +32,7 @@ const LMR_REDUCE_ROOT: bool = true; // probably shouldn't
 const PV_SEARCH_ENABLED: bool = true; // no speedup, worse playing strength
 const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF
 
-const REVERSE_FUTILITY_MARGIN: i32 = 280;
+const REVERSE_FUTILITY_MARGIN: i32 = 130;
 
 // aspiration window parameters
 // CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
@@ -65,7 +65,6 @@ pub struct SearchInfo<'a> {
     pub stats: SearchStats,
     early_abort_depth: usize,
     quiet: bool,
-    book: Option<book::Book>,
 }
 
 impl<'a> SearchInfo<'a> {
@@ -86,7 +85,6 @@ impl<'a> SearchInfo<'a> {
             stats: SearchStats::new(16),
             early_abort_depth: 6,
             quiet: false,
-            book: None,
         }
     }
     pub fn print_cuts(&self) {
@@ -94,17 +92,6 @@ impl<'a> SearchInfo<'a> {
             "Fail High: {} Fail High First: {} Transposition Hits: {} ",
             self.stats.fail_high, self.stats.fail_high_first, self.stats.transposition_cutoffs
         );
-    }
-    pub fn book_mut(&mut self) -> Option<&mut book::Book> {
-        self.book.as_mut()
-    }
-    pub fn take_book(mut self, other: &mut Self) -> Self {
-        std::mem::swap(&mut self.book, &mut other.book);
-        self
-    }
-    pub fn book(mut self, book: book::Book) -> Self {
-        self.book = Some(book);
-        self
     }
     pub fn set_start_ply(&mut self, start_ply: usize) {
         self.start_ply = start_ply;
@@ -902,13 +889,6 @@ where
         // search first move fully!
         if count == 0 {
             let mut bonus = 0;
-            if data.is_root {
-                if let Some(ref book) = info.book {
-                    if let Some(offset) = book.get(board) {
-                        bonus = offset;
-                    }
-                }
-            }
             score = bonus
                 - alpha_beta(
                     board,
@@ -945,15 +925,6 @@ where
             }
             let mut next_beta = -alpha;
             let mut bonus = 0;
-            if data.is_root {
-                if let Some(ref book) = info.book {
-                    if let Some(offset) = book.get(board) {
-                        bonus = offset;
-                        next_beta += offset;
-                        next_alpha += offset;
-                    }
-                }
-            }
             if PV_SEARCH_ENABLED && depth > 1 && !data.is_root {
                 next_alpha = -(alpha + 1);
                 needs_re_search_on_alpha_beta = true;

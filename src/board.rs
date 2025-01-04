@@ -65,6 +65,8 @@ pub trait TakBoard:
     fn flat_diff(&self, player: Color) -> i32;
     /// Returns a cloned board rotated counter-clockwise in standard orientation
     fn rotate(&self) -> Self;
+    // Returns a symmetry of the position given and index from 1 to 7 (inclusive)
+    fn symmetry(&self, idx: usize) -> Option<Self>;
     /// Returns all 8 possible symmetrics of the board, including a copy of the board itself
     fn symmetries(&self) -> Vec<Self>;
     /// Reset all stack indices and the zobrist hash of the position
@@ -382,6 +384,21 @@ macro_rules! board_impl {
 
             fn rotate(&self) -> Self {
                 self.transform_board(|(row, col)| (Self::SIZE - 1 - col, row))
+            }
+
+            fn symmetry(&self, idx: usize) -> Option<Self> {
+                let state = match idx {
+                    0 => self.clone(),
+                    1 => self.flip_ns(),
+                    2 => self.flip_ew(),
+                    3 => self.rotate(),
+                    4 => self.rotate().rotate(),
+                    5 => self.rotate().rotate().rotate(),
+                    6 => self.rotate().flip_ns(),
+                    7 => self.rotate().flip_ew(),
+                    _ => return None,
+                };
+                Some(state)
             }
 
             fn symmetries(&self) -> Vec<Self> {
@@ -857,7 +874,8 @@ mod test {
         let mut rotated = board.clone();
         for _ in 0..4 {
             rotated = rotated.rotate();
-            dbg!(rotated.bits.flat);
+            dbg!(&rotated);
+            // dbg!(rotated.bits.flat);
             hash.push(rotated.zobrist());
         }
         dbg!(&hash);
@@ -866,6 +884,9 @@ mod test {
         for h in hash.iter().copied() {
             // All unique
             assert_eq!(hash.iter().filter(|&&x| x == h).count(), 1)
+        }
+        for board in board.symmetries() {
+            dbg!(board);
         }
     }
 }

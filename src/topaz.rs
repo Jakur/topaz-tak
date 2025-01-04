@@ -14,7 +14,7 @@ use std::thread;
 use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
-use topaz_tak::eval::{nn_repr, Evaluator, Weights5, Weights6, NNUE6};
+use topaz_tak::eval::{Evaluator, Weights5, Weights6, NNUE6};
 use topaz_tak::search::book;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::transposition_table::HashTable;
@@ -54,7 +54,8 @@ lazy_static! {
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
-    eval::global_init_weights("/home/justin/Code/rust/topaz-eval/explore/vals_perp_m21.txt");
+    // eval::global_init_weights("/home/justin/Code/rust/topaz-eval/explore/vals_perp_m21.txt");
+    eval::global_init_weights("/home/justin/Code/rust/topaz-eval/wide_net12.txt");
     if let Some(arg1) = args.get(1) {
         if arg1 == "black" {
             play_game_cmd(false);
@@ -72,8 +73,8 @@ pub fn main() {
                     }
                     TakGame::Standard6(board) => {
                         // let mut eval = Weights6::default();
-                        // let mut eval = eval::NNUE6::new();
-                        let mut eval = eval::SmoothWeights6::empty();
+                        let mut eval = eval::NNUE6::new();
+                        // let mut eval = eval::SmoothWeights6::empty();
                         // let mut eval = eval::PST6::default();
                         // dbg!(&eval);
                         let mut board = board.with_komi(4);
@@ -92,6 +93,7 @@ pub fn main() {
                         // }
                         // dbg!(opp_comp);
                         dbg!(score0);
+                        dbg!(topaz_tak::eval::nn_repr(&board));
                         // dbg!(null_move_score);
                         dbg!(&board);
                         dbg!(board.hash());
@@ -190,54 +192,6 @@ pub fn main() {
             let nodes = search_efficiency(&vals, true).unwrap();
             dbg!(nodes.into_iter().sum::<usize>());
             return;
-        } else if arg1 == "book" {
-            let book = Arc::new(Mutex::new(book::Book::new(
-                search::book::BookMode::Explore,
-                HashMap::new(),
-            )));
-            let count = std::thread::available_parallelism().unwrap().get();
-            assert!(count >= 1_usize);
-            let openings = vec![&["a1", "f6"], &["a1", "a6"], &["a1", "b1"]];
-            let mut handles = vec![];
-            for (t_id, start) in openings.into_iter().enumerate() {
-                let book = Arc::clone(&book);
-                println!("Thread: {}", t_id);
-                let handle = std::thread::spawn(move || {
-                    let mut file = BufWriter::new(
-                        OpenOptions::new()
-                            .write(true)
-                            .create(true)
-                            .open(&format!("book_games{}.txt", t_id))
-                            .unwrap(),
-                    );
-                    for i in 0..100 {
-                        let data = { book.lock().unwrap().clone() };
-                        let (moves, game_res) = play_book_game(start, data);
-                        if i % 50 == 0 {
-                            println!("T{} Game {}", t_id, i);
-                        }
-                        let combo: Vec<_> = moves
-                            .iter()
-                            .copied()
-                            .map(|m| m.to_ptn::<Board6>())
-                            .collect();
-                        let s = combo.join(" ");
-                        writeln!(&mut file, "{}", s).unwrap();
-                        // println!("{}", s);
-                        book.lock()
-                            .unwrap()
-                            .update(Board6::new().with_komi(4), game_res, moves);
-                    }
-                });
-                handles.push(handle);
-            }
-            if !handles.into_iter().all(|h| h.join().is_ok()) {
-                println!("Something went wrong, thread panicked or lock poisoned?");
-            }
-            book.lock()
-                .unwrap()
-                .save(&mut std::fs::File::create("book6s.json").unwrap())
-                .expect("Failed to write book");
         } else if arg1 == "selfplay" {
             let mut moves = Vec::new();
             let mut game = build_tps(&args[2..]).unwrap();
@@ -426,31 +380,6 @@ pub fn main() {
     } else {
         println!("Unknown command: {}", buffer);
     }
-}
-
-fn play_book_game(st: &[&str], book: book::Book) -> (Vec<GameMove>, GameResult) {
-    const BOOK_DEPTH: usize = 6;
-    let mut eval = NNUE6::default();
-    let mut moves = Vec::new();
-    let mut board = Board6::new().with_komi(4);
-    for mv in st {
-        let mv = GameMove::try_from_ptn(mv, &board).unwrap();
-        moves.push(mv);
-        board.do_move(mv);
-    }
-    let table = HashTable::new(2 << 20);
-    let mut info = SearchInfo::new(BOOK_DEPTH, &table).book(book).quiet(true);
-    while board.game_result().is_none() {
-        let outcome = search(&mut board, &mut eval, &mut info).unwrap();
-        // println!("{}", outcome.best_move().unwrap());
-        let mv = outcome.next().unwrap();
-        board.do_move(mv);
-        info = SearchInfo::new(BOOK_DEPTH, &table)
-            .take_book(&mut info)
-            .quiet(true);
-        moves.push(mv);
-    }
-    return (moves, board.game_result().unwrap());
 }
 
 fn build_tps<S: AsRef<str>>(args: &[S]) -> Result<TakGame> {
@@ -810,8 +739,8 @@ fn tei_loop() {
                 let init = init.small_clone();
                 thread::spawn(move || match size {
                     5 => play_game_tei::<Weights5>(recv, init).unwrap(),
-                    6 => play_game_tei::<eval::SmoothWeights6>(recv, init).unwrap(),
-                    // 6 => play_game_tei::<NNUE6>(recv, init).unwrap(),
+                    // 6 => play_game_tei::<eval::SmoothWeights6>(recv, init).unwrap(),
+                    6 => play_game_tei::<NNUE6>(recv, init).unwrap(),
                     _ => unimplemented!(),
                 });
             }
@@ -871,7 +800,6 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                 }
                 let use_time = 10_000; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, &table)
-                    .take_book(&mut info)
                     .time_bank(TimeBank::flat(use_time))
                     .abort_depth(50);
                 let res = topaz_tak::search::multi_search(&mut board, &mut eval, &mut info, 4);

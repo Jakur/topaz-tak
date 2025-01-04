@@ -137,6 +137,19 @@ impl Stack {
             None
         }
     }
+    pub fn white_black_deep(&self) -> [i32; 4] {
+        // Todo variable cutoff, checks?
+        let black = (self.data >> 2).count_ones() as i32;
+        let white = std::cmp::max(0, self.length as i32 - 2 - black);
+        let black_deep = (self.data >> 7).count_ones() as i32;
+        let white_deep = std::cmp::max(0, self.length as i32 - 7 - black_deep);
+        [
+            white - white_deep,
+            black - black_deep,
+            white_deep,
+            black_deep,
+        ]
+    }
     pub fn captive_friendly(&self) -> (i32, i32) {
         if self.length <= 1 {
             return (0, 0);
@@ -408,56 +421,62 @@ impl Default for Pickup {
 
 #[cfg(test)]
 mod test {
-    use crate::eval::nn_repr;
-    use crate::{Position, TakBoard};
+    use crate::{board::Board6, Position, TakBoard};
     #[test]
-    fn stack_interpret() {
-        let board = crate::board::Board6::try_from_tps("212,x,1,x3/1S,1,x,1,x2/x,122212C,11,x3/12,2,1,121,x2/2,2,21,2S,x2/221C,21,1222111,x3 2 33").unwrap();
-        for idx in 0..36 {
-            let stack = board.index(idx);
-            assert_eq!(
-                stack.interpret(board.side_to_move()) % 64,
-                stack.interpret(!board.side_to_move()) % 64
-            );
-        }
-        let board = crate::board::Board6::try_from_tps(
-            "1,1,1,1,x2/x,1S,x,1221C,2C,x/x2,2,121,1,x/x,22,1,1111112,x,12/x2,22S,2,1,1/2,2,x3,1 1 28",
-        )
-        .unwrap();
-        let repr = nn_repr(&board);
-        let expected = [
-            0b1,
-            0b1,
-            0b1,
-            0b1,
-            0,
-            0,
-            0,
-            0b1 + 64,
-            0,
-            0b1100 + 128,
-            64 * 5 + 0b1,
-            0,
-            0,
-            0,
-            64 * 3 + 0b1,
-            0b110,
-            0b1,
-            0,
-            0,
-            64 * 3 + 0b11,
-            1,
-            64 * 3 + 0b100000,
-        ];
-        for i in 0..36 {
-            let val = repr[i];
-            if let Some(x) = expected.get(i) {
-                eprintln!("{val:#b}");
-                assert_eq!(val, *x);
-                if val == 64 * 3 + 0b100000 {
-                    eprintln!("Extra test{:#b}", val - 192);
-                }
-            }
-        }
+    fn deep_stack_counts() {
+        let tps = "1,1S,2,112S,2,x/x2,1,1,1,x/x,1,x,11212211112C,21,1/x2,21,21C,1,1/x,221,1,x,1,2/2,2,1,2,2,2 1 34";
+        let board = Board6::try_from_tps(tps).unwrap();
+        let array = board.board[15].white_black_deep();
+        assert_eq!(array, [3, 2, 3, 1]);
     }
+    // #[test]
+    // fn stack_interpret() {
+    //     let board = crate::board::Board6::try_from_tps("212,x,1,x3/1S,1,x,1,x2/x,122212C,11,x3/12,2,1,121,x2/2,2,21,2S,x2/221C,21,1222111,x3 2 33").unwrap();
+    //     for idx in 0..36 {
+    //         let stack = board.index(idx);
+    //         assert_eq!(
+    //             stack.interpret(board.side_to_move()) % 64,
+    //             stack.interpret(!board.side_to_move()) % 64
+    //         );
+    //     }
+    //     let board = crate::board::Board6::try_from_tps(
+    //         "1,1,1,1,x2/x,1S,x,1221C,2C,x/x2,2,121,1,x/x,22,1,1111112,x,12/x2,22S,2,1,1/2,2,x3,1 1 28",
+    //     )
+    //     .unwrap();
+    //     let repr = nn_repr(&board);
+    //     let expected = [
+    //         0b1,
+    //         0b1,
+    //         0b1,
+    //         0b1,
+    //         0,
+    //         0,
+    //         0,
+    //         0b1 + 64,
+    //         0,
+    //         0b1100 + 128,
+    //         64 * 5 + 0b1,
+    //         0,
+    //         0,
+    //         0,
+    //         64 * 3 + 0b1,
+    //         0b110,
+    //         0b1,
+    //         0,
+    //         0,
+    //         64 * 3 + 0b11,
+    //         1,
+    //         64 * 3 + 0b100000,
+    //     ];
+    //     for i in 0..36 {
+    //         let val = repr[i];
+    //         if let Some(x) = expected.get(i) {
+    //             eprintln!("{val:#b}");
+    //             assert_eq!(val, *x);
+    //             if val == 64 * 3 + 0b100000 {
+    //                 eprintln!("Extra test{:#b}", val - 192);
+    //             }
+    //         }
+    //     }
+    // }
 }

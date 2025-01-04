@@ -1,19 +1,18 @@
-use self::incremental::NN_REPR;
-
 use super::{Bitboard, Piece, Stack};
 use crate::board;
 use crate::board::BitIndexIterator;
 use crate::board::TakBoard;
 use crate::board::{Board5, Board6};
 use crate::eval::incremental::Incremental;
-use crate::eval::incremental::NN_REPR_SIZE;
 use crate::Color;
 use crate::Position;
 
 pub use incremental::nn_repr;
+pub use incremental::NNRepr;
 
 use std::collections::HashMap;
 use std::fs::File;
+use std::thread::current;
 
 static NN6: once_cell::sync::OnceCell<incremental::Weights> = once_cell::sync::OnceCell::new();
 
@@ -51,8 +50,8 @@ pub trait Evaluator {
 pub struct NNUE6 {
     incremental_white: incremental::Incremental,
     incremental_black: incremental::Incremental,
-    old_white: NN_REPR,
-    old_black: NN_REPR,
+    old_white: NNRepr,
+    old_black: NNRepr,
     classical: Weights6,
 }
 
@@ -70,161 +69,118 @@ impl NNUE6 {
         });
         let classical = Weights6::default();
         Self {
-            incremental_white: nn.build_incremental(&[0; NN_REPR_SIZE]),
-            incremental_black: nn.build_incremental(&[0; NN_REPR_SIZE]),
-            old_white: [0; NN_REPR_SIZE],
-            old_black: [0; NN_REPR_SIZE],
+            incremental_white: nn.empty_incremental(),
+            incremental_black: nn.empty_incremental(),
+            old_white: NNRepr::empty(),
+            old_black: NNRepr::empty(),
             classical,
         }
     }
-    pub fn get_states(&mut self, game: &Board6) -> (NN_REPR, NN_REPR) {
-        // const OFFSETS: [u16; 39] = [
-        //     0, 156, 312, 468, 624, 780, 936, 1092, 1248, 1404, 1560, 1716, 1872, 2028, 2184, 2340,
-        //     2496, 2652, 2808, 2964, 3120, 3276, 3432, 3588, 3744, 3900, 4056, 4212, 4368, 4524,
-        //     4680, 4836, 4992, 5148, 5304, 5460, 5616, 5652, 5688,
-        // ];
-        // const OFFSETS: [i16; NN_REPR_SIZE] = [
-        //     0, 257, 514, 771, 1028, 1285, 1542, 1799, 2056, 2313, 2570, 2827, 3084, 3341, 3598,
-        //     3855, 4112, 4369, 4626, 4883, 5140, 5397, 5654, 5911, 6168, 6425, 6682, 6939, 7196,
-        //     7453, 7710, 7967, 8224, 8481, 8738, 8995, 9252, 9273, 9294, 9315, 9336, 9357, 9378,
-        //     9399, 9420, 9441, 9462, 9483,
-        // ];
-        // const OFFSETS: [i16; NN_REPR_SIZE] = [
-        //     0, 71, 142, 213, 284, 355, 426, 497, 568, 639, 710, 781, 852, 923, 994, 1065, 1136,
-        //     1207, 1278, 1349, 1420, 1491, 1562, 1633, 1704, 1775, 1846, 1917, 1988, 2059, 2130,
-        //     2201, 2272, 2343, 2414, 2485, 2556, 2577, 2598, 2619, 2640, 2661, 2682, 2703, 2724,
-        //     2745, 2766, 2787,
-        // ];
-        const OFFSETS: [i16; NN_REPR_SIZE] = [
-            0, 384, 768, 1152, 1536, 1920, 2304, 2688, 3072, 3456, 3840, 4224, 4608, 4992, 5376,
-            5760, 6144, 6528, 6912, 7296, 7680, 8064, 8448, 8832, 9216, 9600, 9984, 10368, 10752,
-            11136, 11520, 11904, 12288, 12672, 13056, 13440, 13824, 13845, 13866, 13887, 13908,
-            13929, 13950, 13971, 13992, 14013, 14034, 14055,
-        ];
-        let mut side = nn_repr(game);
-        let mut opp = side.clone();
-        for (idx, val) in side.into_iter().take(36).enumerate() {
-            if val != 0 {
-                // 196
-                if val >= 192 {
-                    opp[idx] -= 192;
-                } else {
-                    opp[idx] += 192;
-                }
-                let stack = val % 64;
-                let new_stack = incremental::flip_stack_repr(stack);
-                // Move out old stack
-                opp[idx] -= stack;
-                // Move in new stack
-                opp[idx] += new_stack;
-                // if val >= 196 {
-                //     opp[idx] -= 147;
-                // } else {
-                //     opp[idx] += 147;
-                // }
-            }
-        }
-        // if side[38] == 0 {
-        //     opp[38] = 1;
-        // } else {
-        //     opp[38] = 0;
-        // }
-        // Refine
-        for (idx, (val_a, val_b)) in side.iter_mut().zip(opp.iter_mut()).enumerate().take(36) {
-            *val_a = OFFSETS[idx] + *val_a; // + incremental::STACK_LOOKUP[*val_a as usize];
-            *val_b = OFFSETS[idx] + *val_b; // + incremental::STACK_LOOKUP[*val_b as usize];
-        }
-        for i in (36..=42).step_by(2) {
-            opp.swap(i, i + 1);
-            // std::mem::swap(&mut opp[i], &mut opp[i + 1]);
-            // opp[i] = side[i + 1];
-            // opp[i + 1] = side[i];
-        }
-        for i in 44..OFFSETS.len() {
-            opp[i] = -side[i];
-        }
-        for i in 36..OFFSETS.len() {
-            side[i] += OFFSETS[i];
-            opp[i] += OFFSETS[i];
-        }
-        (side, opp)
-    }
+    // pub fn get_states(&mut self, game: &Board6) -> (NN_REPR, NN_REPR) {
+    //     // const OFFSETS: [u16; 39] = [
+    //     //     0, 156, 312, 468, 624, 780, 936, 1092, 1248, 1404, 1560, 1716, 1872, 2028, 2184, 2340,
+    //     //     2496, 2652, 2808, 2964, 3120, 3276, 3432, 3588, 3744, 3900, 4056, 4212, 4368, 4524,
+    //     //     4680, 4836, 4992, 5148, 5304, 5460, 5616, 5652, 5688,
+    //     // ];
+    //     // const OFFSETS: [i16; NN_REPR_SIZE] = [
+    //     //     0, 257, 514, 771, 1028, 1285, 1542, 1799, 2056, 2313, 2570, 2827, 3084, 3341, 3598,
+    //     //     3855, 4112, 4369, 4626, 4883, 5140, 5397, 5654, 5911, 6168, 6425, 6682, 6939, 7196,
+    //     //     7453, 7710, 7967, 8224, 8481, 8738, 8995, 9252, 9273, 9294, 9315, 9336, 9357, 9378,
+    //     //     9399, 9420, 9441, 9462, 9483,
+    //     // ];
+    //     // const OFFSETS: [i16; NN_REPR_SIZE] = [
+    //     //     0, 71, 142, 213, 284, 355, 426, 497, 568, 639, 710, 781, 852, 923, 994, 1065, 1136,
+    //     //     1207, 1278, 1349, 1420, 1491, 1562, 1633, 1704, 1775, 1846, 1917, 1988, 2059, 2130,
+    //     //     2201, 2272, 2343, 2414, 2485, 2556, 2577, 2598, 2619, 2640, 2661, 2682, 2703, 2724,
+    //     //     2745, 2766, 2787,
+    //     // ];
+    //     const OFFSETS: [i16; NN_REPR_SIZE] = [
+    //         0, 384, 768, 1152, 1536, 1920, 2304, 2688, 3072, 3456, 3840, 4224, 4608, 4992, 5376,
+    //         5760, 6144, 6528, 6912, 7296, 7680, 8064, 8448, 8832, 9216, 9600, 9984, 10368, 10752,
+    //         11136, 11520, 11904, 12288, 12672, 13056, 13440, 13824, 13845, 13866, 13887, 13908,
+    //         13929, 13950, 13971, 13992, 14013, 14034, 14055,
+    //     ];
+    //     let mut side = nn_repr(game);
+    //     let mut opp = side.clone();
+    //     for (idx, val) in side.into_iter().take(36).enumerate() {
+    //         if val != 0 {
+    //             // 196
+    //             if val >= 192 {
+    //                 opp[idx] -= 192;
+    //             } else {
+    //                 opp[idx] += 192;
+    //             }
+    //             let stack = val % 64;
+    //             let new_stack = incremental::flip_stack_repr(stack);
+    //             // Move out old stack
+    //             opp[idx] -= stack;
+    //             // Move in new stack
+    //             opp[idx] += new_stack;
+    //             // if val >= 196 {
+    //             //     opp[idx] -= 147;
+    //             // } else {
+    //             //     opp[idx] += 147;
+    //             // }
+    //         }
+    //     }
+    //     // if side[38] == 0 {
+    //     //     opp[38] = 1;
+    //     // } else {
+    //     //     opp[38] = 0;
+    //     // }
+    //     // Refine
+    //     for (idx, (val_a, val_b)) in side.iter_mut().zip(opp.iter_mut()).enumerate().take(36) {
+    //         *val_a = OFFSETS[idx] + *val_a; // + incremental::STACK_LOOKUP[*val_a as usize];
+    //         *val_b = OFFSETS[idx] + *val_b; // + incremental::STACK_LOOKUP[*val_b as usize];
+    //     }
+    //     for i in (36..=42).step_by(2) {
+    //         opp.swap(i, i + 1);
+    //         // std::mem::swap(&mut opp[i], &mut opp[i + 1]);
+    //         // opp[i] = side[i + 1];
+    //         // opp[i + 1] = side[i];
+    //     }
+    //     for i in 44..OFFSETS.len() {
+    //         opp[i] = -side[i];
+    //     }
+    //     for i in 36..OFFSETS.len() {
+    //         side[i] += OFFSETS[i];
+    //         opp[i] += OFFSETS[i];
+    //     }
+    //     (side, opp)
+    // }
 }
 
 impl Evaluator for NNUE6 {
     type Game = Board6;
 
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
-        const TEMPO_OFFSET: i32 = 0;
-        let (mut side, mut opp) = self.get_states(game);
-        let nn = NN6.get().unwrap(); // Could probably unchecked due to init in new
-                                     // eprintln!("{:?}", side);
-                                     // eprintln!("{:?}", opp);
-                                     // let white_cap_penalty = (game.caps_reserve(Color::White) * 5 * game.ply()) as i32;
-                                     // let black_cap_penalty = (game.caps_reserve(Color::Black) * 5 * game.ply()) as i32;
-        let score = if let Color::White = game.side_to_move() {
-            // let side_weights = nn.build_incremental(&s);
-            // if depth == 100 {
-            //     dbg!(&side_weights);
-            // }
-            // let opp_weights = nn.build_incremental(&o);
-            self.incremental_white
-                .update_diff(&self.old_white, &side, &nn);
-            self.incremental_black
-                .update_diff(&self.old_black, &opp, &nn);
-            std::mem::swap(&mut side, &mut self.old_white);
-            std::mem::swap(&mut opp, &mut self.old_black);
-            // nn.incremental_forward(&side_weights, &opp_weights)
-            nn.incremental_forward(&self.incremental_white, &self.incremental_black)
-        } else {
-            self.incremental_white
-                .update_diff(&self.old_white, &opp, &nn);
-            self.incremental_black
-                .update_diff(&self.old_black, &side, &nn);
-            std::mem::swap(&mut opp, &mut self.old_white);
-            std::mem::swap(&mut side, &mut self.old_black);
-            nn.incremental_forward(&self.incremental_black, &self.incremental_white)
-        };
-        // let mut score = if let Color::White = game.side_to_move() {
-        //     self.incremental_white
-        //         .update_diff(&self.old_white, &new, nn);
-        //     // let rand_seed = Some(self.pos_seed ^ game.hash());
-        //     let rand_seed = None;
-        //     let cap_diff =
-        //         (game.caps_reserve(Color::White) as i32) - (game.caps_reserve(Color::Black) as i32);
-
-        //     std::mem::swap(&mut new, &mut self.old_white);
-        //     -cap_diff * (5 * game.ply() as i32)
-        //         + nn.incremental_forward(&self.incremental_white, rand_seed)
-        // } else {
-        //     self.incremental_black
-        //         .update_diff(&self.old_black, &new, nn);
-        //     // let rand_seed = Some(self.pos_seed ^ game.hash());
-        //     let rand_seed = None;
-        //     std::mem::swap(&mut new, &mut self.old_black);
-        //     let cap_diff =
-        //         (game.caps_reserve(Color::Black) as i32) - (game.caps_reserve(Color::White) as i32);
-        //     -cap_diff * (5 * game.ply() as i32)
-        //         + nn.incremental_forward(&self.incremental_black, rand_seed)
-        // };
-        // let least_pieces = std::cmp::min(
-        //     game.pieces_reserve(Color::Black),
-        //     game.pieces_reserve(Color::White),
-        // );
-
-        // if score > 400 || score < -400 || (game.komi() != 0 && least_pieces <= 8) {
-        //     score += self.classical.evaluate(game, depth) / 4;
+        const TEMPO_OFFSET: i32 = 50;
+        // // let (mut side, mut opp) = self.get_states(game);
+        let side = game.side_to_move();
+        let nn = NN6.get().unwrap();
+        let mut current_state = nn_repr(game);
+        // if !current_state.is_sorted() {
+        //     dbg!(&game);
+        //     dbg!(&current_state);
+        //     assert!(false);
         // }
-        // eprintln!("{}", score);
-        // 500?
-        let score = (score * 500.0) as i32;
-        // let score = (libm::tanh(score.into()) * 250.0) as i32;
-        if depth % 2 == 1 {
-            score + TEMPO_OFFSET
+        let win_score = if let Color::White = side {
+            self.incremental_white
+                .update_diff(&self.old_white, &current_state, &nn, side);
+            std::mem::swap(&mut current_state, &mut self.old_white);
+            nn.incremental_forward(&self.incremental_white)
         } else {
-            score
+            self.incremental_black
+                .update_diff(&self.old_black, &current_state, &nn, side);
+            std::mem::swap(&mut current_state, &mut self.old_black);
+            nn.incremental_forward(&self.incremental_black)
+        };
+        let eval = (win_score * 150.0) as i32;
+        if depth % 2 == 0 {
+            eval
+        } else {
+            eval - TEMPO_OFFSET
         }
-        // score
     }
 
     fn eval_stack(&self, _game: &Self::Game, _index: usize, _stack: &Stack) -> i32 {
@@ -1398,40 +1354,40 @@ mod test {
         assert_eq!(2, black_c);
     }
 
-    #[test]
-    fn test_nn() {
-        const MARGIN: f32 = 0.01;
-        let evals = [0.0450, -0.1636, -0.0117, -0.2939];
-        let tps = [
-            "2S,x,1,1,x,1S/x,x,x,2,1,2/x,2,x,x,1,1S/x,12,1C,x,x,x/1S,1,x,2,x,x/x,x,x,2C,2,x 2 10",
-            "2S,x,1,1,x,1S/x,x,x,2,1,2/x,2,x,x,1,1S/x,12,1C,2,x,x/1S,1,x,2,x,x/x,x,x,2C,2,x 1 11",
-            "2S,x,1,1,x,1S/x,x,x,2,1,2/x,2,x,1,1,1S/x,12,1C,2,x,x/1S,1,x,2,x,x/x,x,x,2C,2,x 2 11",
-            "2S,x,1,1,x,1S/x,x,x,2,1,2/x,2,2,1,1,1S/x,12,1C,2,x,x/1S,1,x,2,x,x/x,x,x,2C,2,x 1 12",
-        ];
-        super::global_init_weights("/home/justin/Code/rust/topaz-eval/explore/vals_perp_w0.txt");
-        let mut nn = NNUE6::new();
-        for (ref_eval, t) in evals.into_iter().zip(tps.into_iter()) {
-            let mut game = Board6::try_from_tps(t).unwrap().with_komi(4);
-            let (a, b) = nn.get_states(&game);
-            eprintln!("{:?}", &a);
-            eprintln!("{:?}", &b);
-            game.null_move();
-            let (c, d) = nn.get_states(&game);
-            assert_eq!(a, d);
-            assert_eq!(b, c);
-            game.rev_null_move();
-            let (e, f) = nn.get_states(&game);
-            assert_eq!(a, e);
-            assert_eq!(b, f);
-            let e = (nn.evaluate(&game, 0) as f32) / 500.0;
-            let mut low = ref_eval - MARGIN;
-            let mut high = ref_eval + MARGIN;
-            if low > high {
-                std::mem::swap(&mut low, &mut high);
-            }
-            eprintln!("Ref: [ {:.3}, {:.3} ] Pred: {}", low, high, e);
-            assert!(e > low);
-            assert!(e < high);
-        }
-    }
+    // #[test]
+    // fn test_nn() {
+    //     const MARGIN: f32 = 0.01;
+    //     let evals = [0.0450, -0.1636, -0.0117, -0.2939];
+    //     let tps = [
+    //         "2S,x,1,1,x,1S/x,x,x,2,1,2/x,2,x,x,1,1S/x,12,1C,x,x,x/1S,1,x,2,x,x/x,x,x,2C,2,x 2 10",
+    //         "2S,x,1,1,x,1S/x,x,x,2,1,2/x,2,x,x,1,1S/x,12,1C,2,x,x/1S,1,x,2,x,x/x,x,x,2C,2,x 1 11",
+    //         "2S,x,1,1,x,1S/x,x,x,2,1,2/x,2,x,1,1,1S/x,12,1C,2,x,x/1S,1,x,2,x,x/x,x,x,2C,2,x 2 11",
+    //         "2S,x,1,1,x,1S/x,x,x,2,1,2/x,2,2,1,1,1S/x,12,1C,2,x,x/1S,1,x,2,x,x/x,x,x,2C,2,x 1 12",
+    //     ];
+    //     super::global_init_weights("/home/justin/Code/rust/topaz-eval/explore/vals_perp_w0.txt");
+    //     let mut nn = NNUE6::new();
+    //     for (ref_eval, t) in evals.into_iter().zip(tps.into_iter()) {
+    //         let mut game = Board6::try_from_tps(t).unwrap().with_komi(4);
+    //         let (a, b) = nn.get_states(&game);
+    //         eprintln!("{:?}", &a);
+    //         eprintln!("{:?}", &b);
+    //         game.null_move();
+    //         let (c, d) = nn.get_states(&game);
+    //         assert_eq!(a, d);
+    //         assert_eq!(b, c);
+    //         game.rev_null_move();
+    //         let (e, f) = nn.get_states(&game);
+    //         assert_eq!(a, e);
+    //         assert_eq!(b, f);
+    //         let e = (nn.evaluate(&game, 0) as f32) / 500.0;
+    //         let mut low = ref_eval - MARGIN;
+    //         let mut high = ref_eval + MARGIN;
+    //         if low > high {
+    //             std::mem::swap(&mut low, &mut high);
+    //         }
+    //         eprintln!("Ref: [ {:.3}, {:.3} ] Pred: {}", low, high, e);
+    //         assert!(e > low);
+    //         assert!(e < high);
+    //     }
+    // }
 }
