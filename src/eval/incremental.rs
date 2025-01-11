@@ -1,750 +1,498 @@
-use crate::board::{BitIndexIterator, Bitboard6};
-use crate::{Bitboard, Board6, Color};
-use std::str::FromStr;
+use super::Weights6;
 
-// const DIM1: usize = 2976;
-// pub(crate) const DIM1: usize = 5696;
-// pub const NN_REPR_SIZE: usize = 31 * 2;
-pub const NN_REPR_SIZE: usize = 51;
-pub(crate) const DIM1: usize = 440;
-const NULL_IDX: u16 = DIM2 as u16 - 1;
-// pub(crate) const DIM1: usize = 2808;
-const DIM2: usize = 512;
-const DIM3: usize = 8;
+pub const STACK_DEPTH: usize = 10;
+pub const HIDDEN_SIZE: usize = 512;
+pub const SCALE: i32 = 400;
+pub const QA: i16 = 255;
+pub const QB: i16 = 64;
+pub const WHITE_FLAT: ValidPiece = ValidPiece(0);
+pub const BLACK_FLAT: ValidPiece = ValidPiece(1);
+pub const WHITE_WALL: ValidPiece = ValidPiece(2);
+pub const BLACK_WALL: ValidPiece = ValidPiece(3);
+pub const WHITE_CAP: ValidPiece = ValidPiece(4);
+pub const BLACK_CAP: ValidPiece = ValidPiece(5);
+const _ASS: () = assert!(
+    WHITE_FLAT.flip_color().0 == BLACK_FLAT.0
+        && BLACK_WALL.flip_color().0 == WHITE_WALL.0
+        && BLACK_CAP.flip_color().0 == WHITE_CAP.0
+);
 
-const SCALE_INT: i16 = 500;
-const SCALE_FLOAT: f32 = SCALE_INT as f32;
+pub static NNUE: Network = unsafe {
+    let bytes = include_bytes!("quantised_6.bin");
+    assert!(bytes.len() == std::mem::size_of::<Network>());
+    std::mem::transmute(*bytes)
+};
 
-// const OFFSET: u16 = FLAT_OFFSET + 36 * 4;
-// const UNDER_OFFSET: u16 = 2648;
-const UNDER_OFFSET: u16 = 0;
-pub(crate) const STACK_LOOKUP: [u16; 343] = include!("stack_lookup.table");
-// const CONV_COMPRESS: [u16; 3usize.pow(9)] = include!("conv.table");
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ValidPiece(pub u8);
 
-pub struct Weights {
-    white: Box<[[f32; DIM2]]>,
-    black: Box<[[f32; DIM2]]>,
-    linear: [f32; DIM2],
-    bias: f32,
+impl ValidPiece {
+    pub const fn without_color(self) -> u8 {
+        self.0 >> 1
+    }
+    const fn flip_color(self) -> Self {
+        Self(self.0 ^ 1) // Toggle bit 0
+    }
+    pub const fn promote_cap(self) -> Self {
+        Self(self.0 | 4) // Set bit 2
+    }
+    pub const fn is_white(self) -> bool {
+        (self.0 & 1) == 0
+    }
 }
 
-impl Weights {
-    pub fn from_file<R: std::io::Read>(mut r: R) -> Option<Self> {
-        let mut s = String::new();
-        r.read_to_string(&mut s).unwrap();
-        let mut lines: Vec<_> = s.lines().collect();
-        Some(Self {
-            white: take_n_lines::<DIM1, DIM2, f32>(&lines[0..DIM1]),
-            black: take_n_lines::<DIM1, DIM2, f32>(&lines[DIM1..2 * DIM1]),
-            linear: array_1d(lines[lines.len() - 2]),
-            bias: lines.last()?.parse().ok()?,
-        })
+#[derive(Clone, Copy, Debug)]
+pub struct PieceSquare(pub u8);
+
+impl PieceSquare {
+    pub fn new(square: usize, piece: u8) -> Self {
+        Self((square as u8) | piece << 6)
     }
-    #[cfg(test)]
-    fn ones() -> Self {
-        let init = [1.0; DIM2];
+    pub fn square(self) -> u8 {
+        self.0 & 63
+    }
+    pub fn piece(self) -> ValidPiece {
+        let masked = 0b1100_0000 & self.0;
+        ValidPiece(masked >> 6)
+    }
+    pub fn promote_wall(&mut self) {
+        self.0 |= 128;
+    }
+}
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct BoardData {
+    pub(crate) caps: [u8; 2],
+    pub(crate) data: [PieceSquare; 62], // Each stack must be presented from top to bottom sequentially
+    pub(crate) white_to_move: bool,
+    pub(crate) score: i16,
+    pub(crate) result: u8,
+}
+
+impl BoardData {
+    pub fn minimal(caps: [u8; 2], data: [PieceSquare; 62], white_to_move: bool) -> Self {
         Self {
-            white: vec![init; DIM1].into_boxed_slice(),
-            black: vec![init; DIM1].into_boxed_slice(),
-            linear: init,
-            bias: 1.0,
+            caps,
+            data,
+            white_to_move,
+            score: 0,
+            result: 0,
         }
     }
-    pub fn empty_incremental(&self) -> Incremental {
-        Incremental::new()
-    }
-    pub fn build_incremental(&self, nonzero_input: &[usize], color: Color) -> Incremental {
-        let mut out = Incremental {
-            storage: [0.0; DIM2],
-        };
-        let outer = match color {
-            Color::White => &self.white,
-            Color::Black => &self.black,
-        };
-        for idx in nonzero_input.iter().copied() {
-            out.move_in(idx, outer);
+}
+
+#[derive(Clone, Copy)]
+pub struct TakSimple6 {}
+
+impl TakSimple6 {
+    pub const SQUARE_INPUTS: usize = 36 * (6 + 2 * STACK_DEPTH);
+    // Squares + Side + Reserves
+    pub const NUM_INPUTS: usize = TakSimple6::SQUARE_INPUTS + 8 + 80; // Pad to 1024
+
+    pub fn handle_features<F: FnMut(usize, usize)>(&self, pos: &BoardData, mut f: F) {
+        let mut reserves: [usize; 2] = [31, 31];
+        for (piece, square, depth_idx) in pos.into_iter() {
+            let c = (piece.is_white() ^ pos.white_to_move) as usize; // 0 if matches, else 1
+            reserves[c] -= 1;
+            let location = usize::from(piece.without_color() + depth_idx);
+            let sq = usize::from(square);
+
+            let stm = [0, 468][c] + 36 * location + sq;
+            let ntm = [468, 0][c] + 36 * location + sq;
+            f(stm, ntm);
         }
-        out
-    }
-    pub fn incremental_forward(&self, incremental: &Incremental) -> f32 {
-        let mut out = self.bias;
-        for i in 0..DIM2 {
-            let val = incremental.storage[i];
-            out += self.linear[i] * relu6(val);
-        }
-        out
-    }
-    fn get_embedding(&self, vals: &Incremental) -> [f32; DIM3] {
-        todo!()
-    }
-}
-
-pub fn nn_repr(board: &Board6) -> NNRepr {
-    make_array(board)
-}
-
-// fn make_array(board: &Board6) -> NNRepr {
-//     const SQ_OFFSET: u16 = 24;
-//     // let mut out = Vec::with_capacity(31 * 2);
-//     let mut out = NNRepr::empty();
-//     for sq in BitIndexIterator::new(board.bits.white | board.bits.black) {
-//         let mut offset = sq as u16 * SQ_OFFSET;
-//         let stack = &board.board[sq];
-//         let top = stack.top().unwrap() as u16 - 1; // 0 to 5
-//         out.push(offset + top);
-//         offset += 6;
-//         for stack_idx in 1..=8 {
-//             let piece_color = stack.from_top(stack_idx).map(|x| x.owner() as u16);
-//             if let Some(piece_color) = piece_color {
-//                 out.push(offset + (stack_idx as u16) * 2 + piece_color)
-//             } else {
-//                 break;
-//             }
-//         }
-//     }
-//     debug_assert!(out.len() <= 62);
-//     out
-// }
-
-fn make_array(board: &Board6) -> NNRepr {
-    use crate::{Position, TakBoard};
-    use bitintr::Pext;
-    const MISC_OFFSET: u16 = 6 * 4096;
-    const STACK_OFFSET: u16 = MISC_OFFSET + 1152;
-    let side = board.side_to_move();
-    let mut out = NNRepr::empty();
-    for sq_idx in [0, 7, 14, 21, 28, 35] {
-        let mask = Bitboard6::orthogonal(sq_idx);
-        for (color_idx, color) in [side, !side].into_iter().enumerate() {
-            let bits = board.bits().road_pieces(color);
-            let unique_idx = bits.raw_bits().pext(mask.raw_bits()); // 0 to 2^11
-            assert!(unique_idx < 2048);
-            out.push((sq_idx as u16 / 7) * 4096 + 2048 * color_idx as u16 + unique_idx as u16)
-        }
-    }
-    let double_fcd = (board.flat_diff(side).clamp(-12, 12) + 12) as u16;
-    let side_reserves = board.pieces_reserve(side) as u16;
-    let enemy_reserves = board.pieces_reserve(!side) as u16;
-    out.push(MISC_OFFSET + double_fcd);
-    out.push(MISC_OFFSET + 32 + side_reserves * 32 + enemy_reserves);
-    if let Color::White = side {
-        out.push(MISC_OFFSET + 1150);
-    } else {
-        out.push(MISC_OFFSET + 1151);
-    }
-    // out.push(MISC_OFFSET + 24 + side_reserves);
-    // out.push(MISC_OFFSET + 24 + 32 + enemy_reserves);
-    let stacks = make_under_array(board);
-    for val in stacks {
-        out.push(val + STACK_OFFSET);
-    }
-    // for sq in BitIndexIterator::new(board.bits.white | board.bits.black) {
-    //     let mut offset = sq as u16 * SQ_OFFSET;
-    //     let stack = &board.board[sq];
-    //     let top = if let Color::White = side {
-    //         stack.top().unwrap()
-    //     } else {
-    //         stack.top().unwrap().swap_color()
-    //     };
-    //     let top_idx = top as u16 - 1; // 0 to 5
-    //     offset += 6;
-    //     let base_idx = STACK_OFFSET + SQ_OFFSET * sq as u16 + top_idx * 64;
-    //     let mut friendly_idx = 0; // 0 - 64
-    //     let mut enemy_idx = 0; // 0 - 64
-    //     for stack_idx in 1..=6 {
-    //         let piece_color = stack
-    //             .from_top(stack_idx)
-    //             .map(|x| (x.owner() == side) as u16);
-    //         if let Some(piece_color) = piece_color {
-    //             if piece_color == 1 {
-    //                 friendly_idx |= 1 << (stack_idx - 1)
-    //             } else {
-    //                 enemy_idx |= 1 << (stack_idx - 1);
-    //             }
-    //         } else {
-    //             break;
-    //         }
-    //     }
-    // }
-    out
-}
-
-// fn make_array(board: &Board6) -> NNRepr {
-//     const SQ_OFFSET: u16 = 42;
-//     // let mut out = Vec::with_capacity(31 * 2);
-//     let mut out = NNRepr::empty();
-//     for sq in BitIndexIterator::new(board.bits.white | board.bits.black) {
-//         let mut offset = sq as u16 * SQ_OFFSET;
-//         let stack = &board.board[sq];
-//         let top = stack.top().unwrap() as u16 - 1; // 0 to 5
-//         out.push(offset + top);
-//         offset += 6;
-//         if let Some(under) = stack.from_top(1).map(|x| x.owner()) {
-//             out.push(offset + 2 * top + (under as u16)); // sq_offset + []
-//             offset += 12;
-//             let deep = stack.white_black_deep(); // [White, Black, White_Very_Deep, Black_Very_Deep]
-//             for _ in 0..deep[0] {
-//                 out.push(offset + top);
-//             }
-//             offset += 6;
-//             for _ in 0..deep[1] {
-//                 out.push(offset + top);
-//             }
-//             offset += 6;
-//             for _ in 0..deep[2] {
-//                 out.push(offset + top);
-//             }
-//             offset += 6;
-//             for _ in 0..deep[3] {
-//                 out.push(offset + top);
-//             }
-//             // let mut manual = [0, 0, 0, 0];
-//             // while let Some(further) = stack.from_top(idx).map(|x| x.owner()) {
-//             //     if idx > 7 {
-//             //         // Todo how to treat the last piece that cannot be moved but can be revealed
-//             //         out.push(sq_offset + further as u16 + 10);
-//             //         manual[2 + further as usize] += 1;
-//             //     } else {
-//             //         out.push(sq_offset + further as u16 + 8);
-//             //         manual[further as usize] += 1;
-//             //     }
-//             //     idx += 1;
-//             // }
-//         }
-//     }
-//     debug_assert!(out.len() <= 62);
-//     out
-// }
-
-// fn make_array(board: &Board6) -> NNRepr {
-//     const SQ_OFFSET: u16 = 12;
-//     // let mut out = Vec::with_capacity(31 * 2);
-//     let mut out = NNRepr::empty();
-//     for sq in BitIndexIterator::new(board.bits.white | board.bits.black) {
-//         let sq_offset = sq as u16 * SQ_OFFSET;
-//         let stack = &board.board[sq];
-//         let top = stack.top().unwrap() as u16 - 1; // 0 to 5
-//         out.push(sq_offset + top);
-//         if let Some(under) = stack.from_top(1).map(|x| x.owner()) {
-//             out.push(sq_offset + under as u16 + 6); // 6 or 7
-//             let deep = stack.white_black_deep(); // [White, Black, White_Very_Deep, Black_Very_Deep]
-//             for _ in 0..deep[0] {
-//                 out.push(sq_offset + 8);
-//             }
-//             for _ in 0..deep[1] {
-//                 out.push(sq_offset + 9);
-//             }
-//             for _ in 0..deep[2] {
-//                 out.push(sq_offset + 10);
-//             }
-//             for _ in 0..deep[3] {
-//                 out.push(sq_offset + 11);
-//             }
-//             // let mut manual = [0, 0, 0, 0];
-//             // while let Some(further) = stack.from_top(idx).map(|x| x.owner()) {
-//             //     if idx > 7 {
-//             //         // Todo how to treat the last piece that cannot be moved but can be revealed
-//             //         out.push(sq_offset + further as u16 + 10);
-//             //         manual[2 + further as usize] += 1;
-//             //     } else {
-//             //         out.push(sq_offset + further as u16 + 8);
-//             //         manual[further as usize] += 1;
-//             //     }
-//             //     idx += 1;
-//             // }
-//         }
-//     }
-//     debug_assert!(out.len() <= 62);
-//     out
-// }
-
-// fn make_under_array2(board: &Board6) -> [u16; 36] {
-//     let mut out = [0; 36];
-//     for (outer_idx, stack) in board.board().iter().enumerate() {
-//         if let Some(top) = stack.top() {
-//             let top_idx = if board.side_to_move() == Color::White {
-//                 top.owner() as u16
-//             } else {
-//                 !top.owner() as u16
-//             };
-//             let offset;
-//             if top.is_flat() {
-//                 let (cap, _) = stack.captive_friendly();
-//                 offset = std::cmp::min(7, cap) as u16 + 8 * top_idx
-//             } else if top.is_wall() {
-//                 let (_, friendly) = stack.captive_friendly();
-//                 // Wall (16)
-//                 if friendly == 0 {
-//                     offset = 16 + top_idx
-//                 } else {
-//                     offset = 16 + 2 + top_idx
-//                 }
-//             } else {
-//                 // Capstone (20)
-//                 if let Some(under) = stack.from_top(1) {
-//                     if under.owner() == top.owner() {
-//                         offset = 22 + top_idx
-//                     } else {
-//                         offset = 24 + top_idx
-//                     }
-//                 } else {
-//                     offset = 20 + top_idx;
-//                 }
-//             }
-//             // assert!(offset <= 25);
-//             out[outer_idx] = UNDER_OFFSET + 27 * (outer_idx as u16) + offset;
-//         } else {
-//             out[outer_idx] = UNDER_OFFSET + 27 * (outer_idx as u16) + 26;
-//         }
-//     }
-//     out
-// }
-
-fn make_under_array(board: &Board6) -> [u16; 36] {
-    use crate::board::TakBoard;
-    use crate::Position;
-    let mut out = [0; 36];
-    for (outer_idx, stack) in board.board().iter().enumerate() {
-        let stack_piece = stack
-            .top()
-            .map(|x| {
-                if board.side_to_move() == Color::White {
-                    x as usize
-                } else {
-                    x.swap_color() as usize
-                }
-            })
-            .unwrap_or(0);
-        let (cap, friendly) = stack.captive_friendly();
-        let cap_friendly_offset = std::cmp::min(cap, 6) * 7 + std::cmp::min(friendly, 6);
-        let idx = stack_piece * 49 + cap_friendly_offset as usize;
-        out[outer_idx] = UNDER_OFFSET + outer_idx as u16 * 78 + STACK_LOOKUP[idx];
-        // out.push(UNDER_OFFSET + outer_idx as u16 * 78 + STACK_LOOKUP[idx]);
-        // let len = std::cmp::min(stack.len(), 17);
-        // for pos in 1..len {
-        //     let p = stack.from_top(pos).unwrap();
-        //     let c = (p.owner() == Color::White) as usize;
-        //     debug_assert!(p.is_flat());
-        //     let idx = c + 2 * pos - 1 + outer_idx * 32;
-        //     out.push(UNDER_OFFSET + idx as u16);
-        // }
-    }
-    out
-}
-
-pub(crate) trait Scalar: FromStr + Copy {
-    const ZERO: Self;
-}
-
-impl Scalar for i16 {
-    const ZERO: Self = 0;
-}
-
-impl Scalar for i32 {
-    const ZERO: Self = 0;
-}
-
-impl Scalar for f32 {
-    const ZERO: Self = 0.0;
-}
-
-fn array_2d_boxed<const A: usize, const B: usize, T: Scalar>(line: &str) -> Box<[[T; A]]> {
-    let init = [T::ZERO; A];
-    let mut out = vec![init; B];
-    // let mut out = Box::new([[T::ZERO; A]; B]);
-    let mut count = 0;
-    for (i, sp) in line.split(";").enumerate() {
-        for (j, val) in sp
-            .split(",")
-            .filter_map(|x| x.parse::<T>().ok())
-            .enumerate()
-        {
-            out[i][j] = val;
-            count += 1;
-        }
-    }
-    assert_eq!(count, A * B);
-    out.into_boxed_slice()
-}
-
-fn array_2d<const A: usize, const B: usize, T: Scalar>(line: &str) -> [[T; A]; B] {
-    let mut out = [[T::ZERO; A]; B];
-    let mut count = 0;
-    for (i, sp) in line.split(";").enumerate() {
-        for (j, val) in sp
-            .split(",")
-            .filter_map(|x| x.parse::<T>().ok())
-            .enumerate()
-        {
-            out[i][j] = val;
-            count += 1;
-        }
-    }
-    assert_eq!(count, A * B);
-    out
-}
-
-pub(crate) fn array_1d_boxed<const A: usize, T: Scalar>(line: &str) -> Box<[T]> {
-    // dbg!(&line);
-    let mut out = vec![T::ZERO; A];
-    let mut count = 0;
-    for (i, val) in line
-        .split(",")
-        .filter_map(|x| x.parse::<T>().ok())
-        .enumerate()
-    {
-        out[i] = val;
-        count += 1;
-    }
-    assert_eq!(count, A);
-    out.into_boxed_slice()
-}
-
-fn array_1d<const A: usize, T: Scalar>(line: &str) -> [T; A] {
-    // dbg!(&line);
-    let mut out = [T::ZERO; A];
-    let mut count = 0;
-    for (i, val) in line
-        .split(",")
-        .filter_map(|x| x.parse::<T>().ok())
-        .enumerate()
-    {
-        out[i] = val;
-        count += 1;
-    }
-    assert_eq!(count, A);
-    out
-}
-
-fn take_n_lines<const N: usize, const I: usize, T: Scalar>(lines: &[&str]) -> Box<[[f32; I]]> {
-    assert_eq!(N, lines.len());
-    let mut out = Vec::new();
-    for line in lines {
-        out.push(array_1d(line));
-    }
-    out.into_boxed_slice()
-}
-
-#[inline]
-fn square_clipped_relu(x: f32) -> f32 {
-    let val = x.clamp(0.0, 1.0);
-    val * val
-}
-
-#[inline]
-fn float_relu(x: f32) -> f32 {
-    0.0_f32.max(x)
-}
-
-// #[inline]
-// fn square_clipped_relu(x: i16) -> i32 {
-//     let val = x.clamp(0, 255) as i32;
-//     (val * val) / 255 // Still one factor of 255
-// }
-
-fn relu6_int(x: i16) -> i16 {
-    const MAX: i16 = 6 * SCALE_INT;
-    if x < 0 {
-        return 0;
-    }
-    std::cmp::min(MAX, x)
-}
-
-fn relu6(x: f32) -> f32 {
-    if x < 0.0 {
-        return 0.0;
-    }
-    f32::min(6.0, x)
-}
-
-#[derive(Debug)]
-pub struct NNRepr {
-    data: [u16; NN_REPR_SIZE],
-    len: usize,
-}
-
-impl IntoIterator for NNRepr {
-    type Item = u16;
-
-    type IntoIter = std::iter::Take<std::array::IntoIter<u16, NN_REPR_SIZE>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        // self.data.into_iter().take_while(|&x| x != NULL_IDX)
-        self.data.into_iter().take(self.len)
-    }
-}
-
-impl NNRepr {
-    pub const fn size() -> usize {
-        NN_REPR_SIZE
-    }
-    pub fn empty() -> Self {
-        Self {
-            data: [NULL_IDX; NN_REPR_SIZE],
-            len: 0,
-        }
-    }
-    pub fn get(&self, idx: usize) -> Option<u16> {
-        if idx >= self.len {
-            None
+        let white_res_adv = (31 + reserves[0] - reserves[1]).clamp(23, 39);
+        let black_res_adv = (31 + reserves[1] - reserves[0]).clamp(23, 39);
+        if pos.white_to_move {
+            // White to move
+            f(
+                Self::SQUARE_INPUTS + 8 + reserves[0],
+                Self::SQUARE_INPUTS + 8 + reserves[1],
+            );
+            f(975 + white_res_adv, 975 + black_res_adv);
+            f(Self::SQUARE_INPUTS, Self::SQUARE_INPUTS + 1);
         } else {
-            Some(self.data[idx])
+            // Black to move
+            f(
+                Self::SQUARE_INPUTS + 8 + reserves[1],
+                Self::SQUARE_INPUTS + 8 + reserves[0],
+            );
+            f(975 + black_res_adv, 960 + white_res_adv);
+            f(Self::SQUARE_INPUTS + 1, Self::SQUARE_INPUTS);
         }
     }
-    pub fn len(&self) -> usize {
-        self.len
+}
+
+impl IntoIterator for BoardData {
+    type Item = (ValidPiece, u8, u8);
+    type IntoIter = TakBoardIter;
+    fn into_iter(self) -> Self::IntoIter {
+        TakBoardIter {
+            board: self,
+            idx: 0,
+            last: u8::MAX,
+            depth: 0,
+        }
     }
-    pub fn is_sorted(&self) -> bool {
-        for (a, b) in self.iter().zip(self.iter().skip(1)) {
-            if a > b {
-                return false;
+}
+
+pub struct TakBoardIter {
+    board: BoardData,
+    idx: usize,
+    last: u8,
+    depth: u8,
+}
+
+impl Iterator for TakBoardIter {
+    type Item = (ValidPiece, u8, u8); // PieceType, Square, Depth
+    fn next(&mut self) -> Option<Self::Item> {
+        const DEPTH_TABLE: [u8; 10] = [0, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+        if self.idx > self.board.data.len() {
+            return None;
+        }
+        let val = self.board.data[self.idx];
+        let square = val.square();
+        if square >= 36 {
+            return None;
+        }
+        let mut piece = val.piece();
+        if square == self.last {
+            self.depth += 1;
+        } else {
+            self.depth = 0;
+            if self.board.caps[0] == square || self.board.caps[1] == square {
+                piece = piece.promote_cap();
             }
         }
-        true
-    }
-    fn push(&mut self, val: u16) {
-        self.data[self.len] = val;
-        self.len += 1;
-    }
-    fn iter(&self) -> impl Iterator<Item = u16> + '_ {
-        // self.data.iter().copied().take_while(|&x| x != NULL_IDX)
-        self.data.iter().copied().take(self.len)
+        self.idx += 1;
+        self.last = square;
+        Some((piece, square, DEPTH_TABLE[self.depth as usize]))
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Incremental {
-    storage: [f32; DIM2],
+/// A column of the feature-weights matrix.
+/// Note the `align(64)`.
+#[derive(Clone, Copy)]
+#[repr(C, align(64))]
+pub struct Accumulator {
+    vals: [i16; HIDDEN_SIZE],
 }
 
-impl Default for Incremental {
+impl Accumulator {
+    /// Initialised with bias so we can just efficiently
+    /// operate on it afterwards.
+    pub fn new(net: &Network) -> Self {
+        net.feature_bias
+    }
+
+    pub fn from_old(old: &Self) -> Self {
+        old.clone()
+    }
+
+    pub fn add_all(&mut self, features: &[u16], net: &Network) {
+        for f in features {
+            self.add_feature(*f as usize, net);
+        }
+    }
+
+    pub fn remove_all(&mut self, features: &[u16], net: &Network) {
+        for f in features {
+            self.remove_feature(*f as usize, net);
+        }
+    }
+
+    /// Add a feature to an accumulator.
+    pub fn add_feature(&mut self, feature_idx: usize, net: &Network) {
+        for (i, d) in self
+            .vals
+            .iter_mut()
+            .zip(&net.feature_weights[feature_idx].vals)
+        {
+            *i += *d
+        }
+    }
+
+    /// Remove a feature from an accumulator.
+    pub fn remove_feature(&mut self, feature_idx: usize, net: &Network) {
+        for (i, d) in self
+            .vals
+            .iter_mut()
+            .zip(&net.feature_weights[feature_idx].vals)
+        {
+            *i -= *d
+        }
+    }
+}
+
+pub struct NNUE6 {
+    white: (Incremental, Incremental),
+    black: (Incremental, Incremental),
+    pub classical: Weights6,
+}
+
+impl NNUE6 {
+    pub fn incremental_eval(&mut self, takboard: BoardData) -> i32 {
+        let (ours, theirs) = build_features(takboard);
+        let (old_ours, old_theirs) = if takboard.white_to_move {
+            (&self.white.0, &self.white.1)
+        } else {
+            (&self.black.0, &self.black.1)
+        };
+        // Ours
+        let mut ours_acc = Accumulator::from_old(&old_ours.vec);
+        let (sub, add) = ours.diff(&old_ours.state);
+        ours_acc.remove_all(&sub, &NNUE);
+        ours_acc.add_all(&add, &NNUE);
+        let ours = Incremental {
+            state: ours,
+            vec: ours_acc,
+        };
+        // Theirs
+        let mut theirs_acc = Accumulator::from_old(&old_theirs.vec);
+        let (sub, add) = theirs.diff(&old_theirs.state);
+        theirs_acc.remove_all(&sub, &NNUE);
+        theirs_acc.add_all(&add, &NNUE);
+        let theirs = Incremental {
+            state: theirs,
+            vec: theirs_acc,
+        };
+        // Output
+        let eval = NNUE.evaluate(
+            &ours.vec,
+            &theirs.vec,
+            &ours.state.piece_data,
+            &ours.state.meta,
+        );
+        if takboard.white_to_move {
+            self.white = (ours, theirs);
+        } else {
+            self.black = (ours, theirs);
+        }
+        eval
+    }
+    pub(crate) fn manual_eval(takboard: BoardData) -> i32 {
+        let (ours, theirs) = build_features(takboard);
+        let ours = Incremental::fresh_new(&NNUE, ours);
+        let theirs = Incremental::fresh_new(&NNUE, theirs);
+        let eval = NNUE.evaluate(
+            &ours.vec,
+            &theirs.vec,
+            &ours.state.piece_data,
+            &ours.state.meta,
+        );
+        eval
+    }
+}
+
+impl Default for NNUE6 {
     fn default() -> Self {
-        Self::new()
+        Self {
+            white: (
+                Incremental::fresh_empty(&NNUE),
+                Incremental::fresh_empty(&NNUE),
+            ),
+            black: (
+                Incremental::fresh_empty(&NNUE),
+                Incremental::fresh_empty(&NNUE),
+            ),
+            classical: Weights6::default(),
+        }
     }
+}
+
+fn build_features(takboard: BoardData) -> (IncrementalState, IncrementalState) {
+    let mut ours = Vec::new();
+    let mut theirs = Vec::new();
+    let simple = TakSimple6 {};
+    simple.handle_features(&takboard, |x, y| {
+        ours.push(x as u16);
+        theirs.push(y as u16);
+    });
+    (
+        IncrementalState::from_vec(ours),
+        IncrementalState::from_vec(theirs),
+    )
+}
+
+#[inline]
+pub fn screlu(x: i16) -> i32 {
+    i32::from(x.clamp(0, QA as i16)).pow(2)
+}
+
+/// This is the quantised format that bullet outputs.
+#[repr(C)]
+pub struct Network {
+    /// Column-Major `HIDDEN_SIZE x 768` matrix.
+    feature_weights: [Accumulator; TakSimple6::NUM_INPUTS],
+    /// Vector with dimension `HIDDEN_SIZE`.
+    feature_bias: Accumulator,
+    /// Column-Major `1 x (2 * HIDDEN_SIZE)`
+    /// matrix, we use it like this to make the
+    /// code nicer in `Network::evaluate`.
+    output_weights: [i16; 2 * HIDDEN_SIZE],
+    /// Piece-Square Table for Input
+    pqst: [i16; TakSimple6::NUM_INPUTS],
+    /// Scalar output bias.
+    output_bias: i16,
+}
+
+impl Network {
+    /// Calculates the output of the network, starting from the already
+    /// calculated hidden layer (done efficiently during makemoves).
+    pub fn evaluate(
+        &self,
+        us: &Accumulator,
+        them: &Accumulator,
+        original_input: &[u16],
+        original_meta: &[u16],
+    ) -> i32 {
+        // Initialise output with bias.
+        let mut sum = 0;
+        let mut psqt_out = 0;
+
+        // Side-To-Move Accumulator -> Output.
+        for (&input, &weight) in us.vals.iter().zip(&self.output_weights[..HIDDEN_SIZE]) {
+            let val = screlu(input) * i32::from(weight);
+            sum += val;
+        }
+
+        // Not-Side-To-Move Accumulator -> Output.
+        for (&input, &weight) in them.vals.iter().zip(&self.output_weights[HIDDEN_SIZE..]) {
+            sum += screlu(input) * i32::from(weight);
+        }
+
+        // Update Piece Square Table
+        for idx in original_input {
+            if *idx == u16::MAX {
+                break;
+            }
+            psqt_out += i32::from(self.pqst[*idx as usize]);
+        }
+        // This is dumb but I'll fix it later
+        for idx in original_meta {
+            psqt_out += i32::from(self.pqst[*idx as usize]);
+        }
+        // Apply eval scale.
+        psqt_out *= SCALE;
+        // Remove quantisation.
+        let output =
+            (sum / (QA as i32) + i32::from(self.output_bias)) * SCALE / (QA as i32 * QB as i32);
+        psqt_out /= i32::from(QA);
+        output + psqt_out
+    }
+}
+
+// Sorry this naming convention is so bad
+struct Incremental {
+    state: IncrementalState,
+    vec: Accumulator,
 }
 
 impl Incremental {
-    pub fn new() -> Self {
-        Incremental {
-            storage: [0.0; DIM2],
+    fn fresh_empty(net: &Network) -> Self {
+        let mut acc = Accumulator::new(net);
+        let inc = IncrementalState::from_vec(vec![0, 1, 2]); // Todo make this cleaner
+        for d in inc.meta {
+            acc.add_feature(d as usize, net);
+        }
+        Self {
+            state: inc,
+            vec: acc,
         }
     }
-    pub fn update_diff(&mut self, old: &NNRepr, new: &NNRepr, weights: &Weights, color: Color) {
-        let mut iter_old = old.iter();
-        let mut iter_new = new.iter();
-        let mut old_val = iter_old.next();
-        let mut new_val = iter_new.next();
-        let outer = match color {
-            Color::White => &weights.white,
-            Color::Black => &weights.black,
-        };
+    fn fresh_new(net: &Network, data: IncrementalState) -> Self {
+        let mut acc = Accumulator::new(net);
+        for d in data.meta {
+            acc.add_feature(d as usize, net);
+        }
+        for f in data.piece_data {
+            let f = f as usize;
+            if f > TakSimple6::SQUARE_INPUTS {
+                break;
+            }
+            acc.add_feature(f, net);
+        }
+        Self {
+            vec: acc,
+            state: data,
+        }
+    }
+}
+
+struct IncrementalState {
+    pub(crate) meta: [u16; 3],
+    pub(crate) piece_data: [u16; 62],
+}
+
+impl IncrementalState {
+    pub fn from_vec(mut vec: Vec<u16>) -> Self {
+        let mut meta = [0; 3];
+        for i in 0..3 {
+            meta[i] = vec.pop().unwrap();
+        }
+        let mut piece_data = [u16::MAX; 62];
+        piece_data[0..vec.len()].copy_from_slice(&vec);
+        Self { meta, piece_data }
+    }
+    pub fn diff(&self, old: &Self) -> (Vec<u16>, Vec<u16>) {
+        // Todo in the real algorithm, do not allocate vecs. This is just to demonstrate the idea
+        let mut subtract = Vec::new();
+        let mut add = Vec::new();
+        Self::operate(&self.meta, &old.meta, &mut add);
+        Self::operate(&old.meta, &self.meta, &mut subtract);
+        // Piece data is not sorted, but it is grouped by square
+        let mut new_st = 0;
+        let mut old_st = 0;
         loop {
-            match (old_val, new_val) {
-                (Some(old), Some(new)) => {
-                    if old == new {
-                        // Duplicate, advance both pointers
-                        old_val = iter_old.next();
-                        new_val = iter_new.next();
-                    } else if old > new {
-                        // hash in new
-                        self.move_in(new as usize, outer);
-                        // advance new
-                        new_val = iter_new.next();
-                    } else {
-                        // hash out old
-                        self.move_out(old as usize, outer);
-                        // advance old
-                        old_val = iter_old.next();
-                    }
-                }
-                (Some(old), None) => {
-                    // hash out old
-                    self.move_out(old as usize, outer);
-                    // advance old
-                    old_val = iter_old.next();
-                }
-                (None, Some(new)) => {
-                    // hash in new
-                    self.move_in(new as usize, outer);
-                    // advance new
-                    new_val = iter_new.next();
-                }
-                (None, None) => {
-                    break;
-                }
+            let ol = Self::get_sq(old.piece_data[old_st]);
+            let nw = Self::get_sq(self.piece_data[new_st]);
+            if ol >= 36 && nw >= 36 {
+                break;
+            }
+            if nw < ol {
+                let new_end = Self::get_end(&self.piece_data, new_st);
+                add.extend(self.piece_data[new_st..new_end].iter().copied());
+                new_st = new_end;
+            } else if ol < nw {
+                let old_end = Self::get_end(&old.piece_data, old_st);
+                subtract.extend(old.piece_data[old_st..old_end].iter().copied());
+                old_st = old_end;
+            } else {
+                // They are equal
+                let new_end = Self::get_end(&self.piece_data, new_st);
+                let old_end = Self::get_end(&old.piece_data, old_st);
+                Self::operate(
+                    &self.piece_data[new_st..new_end],
+                    &old.piece_data[old_st..old_end],
+                    &mut add,
+                );
+                Self::operate(
+                    &old.piece_data[old_st..old_end],
+                    &self.piece_data[new_st..new_end],
+                    &mut subtract,
+                );
+                new_st = new_end;
+                old_st = old_end;
             }
         }
+        // End
+        (subtract, add)
     }
-    pub fn move_in(&mut self, idx: usize, weights: &[[f32; DIM2]]) {
-        for i in 0..DIM2 {
-            self.storage[i] += weights[idx][i];
+    fn get_end(slice: &[u16], st: usize) -> usize {
+        let st_val = Self::get_sq(slice[st]);
+        st + slice[st..]
+            .iter()
+            .position(|&x| Self::get_sq(x) != st_val)
+            .unwrap()
+    }
+    /// Extend out with values in left which are not present in right
+    fn operate(left: &[u16], right: &[u16], out: &mut Vec<u16>) {
+        out.extend(left.iter().copied().filter(|x| !right.contains(x)));
+    }
+    fn get_sq(val: u16) -> u16 {
+        if val == u16::MAX {
+            return 64;
         }
+        val % 36
     }
-    pub fn move_out(&mut self, idx: usize, weights: &[[f32; DIM2]]) {
-        for i in 0..DIM2 {
-            self.storage[i] -= weights[idx][i];
-        }
-    }
-}
-
-pub(crate) fn flip_stack_repr(val: i16) -> i16 {
-    let table: [i16; 64] = [
-        0, 1, 3, 2, 7, 6, 5, 4, 15, 14, 13, 12, 11, 10, 9, 8, 31, 30, 29, 28, 27, 26, 25, 24, 23,
-        22, 21, 20, 19, 18, 17, 16, 63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48,
-        47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32,
-    ];
-    table[val as usize]
-}
-
-// pub fn undo_nn_repr(nn: Vec<u16>) -> Board6 {
-//     let mut flats = [30, 30];
-//     let mut caps = [1, 1];
-//     let mut stacks = vec![Vec::new(); 36];
-//     let mut bits = vec![Bitboard6::ZERO; 2];
-//     let mut st = nn.iter().take_while(|&&x| x < FLAT_OFFSET as u16);
-
-//     for mask in [0xe0e0e00, 0x70707000, 0x70707000000000, 0xe0e0e00000000] {
-//         for b in bits.iter_mut() {
-//             let v = *st.next().unwrap() as u64 % 512;
-//             *b |= Bitboard6::new(v.pdep(mask));
-//         }
-//     }
-//     for (mut b, p) in bits
-//         .into_iter()
-//         .zip([Piece::WhiteFlat, Piece::BlackFlat].into_iter())
-//     {
-//         while b.nonzero() {
-//             let idx = b.lowest_index();
-//             stacks[idx].push(p);
-//             b.pop_lowest();
-//             flats[p.owner() as usize] -= 1;
-//         }
-//     }
-//     for x in nn
-//         .iter()
-//         .copied()
-//         .filter(|&x| x >= FLAT_OFFSET && x < FLAT_OFFSET)
-//     {
-//         let index = ((x - FLAT_OFFSET) % 36) as usize;
-//         if stacks[index].len() == 0 {
-//             continue;
-//         }
-//         let piece = match (x - FLAT_OFFSET) / 36 {
-//             0 => {
-//                 caps[0] -= 1;
-//                 Piece::WhiteCap
-//             }
-//             1 => {
-//                 caps[1] -= 1;
-//                 Piece::BlackCap
-//             }
-//             2 => {
-//                 flats[0] -= 1;
-//                 Piece::WhiteWall
-//             }
-//             _ => {
-//                 flats[1] -= 1;
-//                 Piece::BlackWall
-//             }
-//         };
-//         stacks[index].push(piece);
-//     }
-
-//     for under in nn.iter().copied().filter(|&x| x >= UNDER_OFFSET) {
-//         let x = under - UNDER_OFFSET - 1;
-//         let p = if x % 2 == 1 {
-//             flats[0] -= 1;
-//             Piece::WhiteFlat
-//         } else {
-//             flats[1] -= 1;
-//             Piece::BlackFlat
-//         };
-//         let outer = (x / 32) as usize;
-//         // assert!(stacks[outer].len() != 0);
-//         stacks[outer as usize].push(p);
-//     }
-//     for s in stacks.iter_mut() {
-//         s.reverse();
-//     }
-//     let mut out = Board6::new();
-//     let mut storage = BitboardStorage::<Bitboard6>::default();
-//     for (idx, st) in stacks.into_iter().enumerate() {
-//         for p in st.into_iter() {
-//             out.board[idx].push(p, &mut storage);
-//         }
-//     }
-//     out.reset_stacks();
-//     out
-// }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::TakBoard;
-
-    #[test]
-    fn sorted_array_repr() {
-        let tps =
-            "2,2,2,x2,1/x2,2,1,2,1/x,2,212S,x,1,1/x,2,21C,12C,x,1/1,1,1,x,2112,1/x3,1,2,2 1 20";
-        let board = Board6::try_from_tps(tps).unwrap();
-        let vals = make_array(&board);
-        assert!(vals.is_sorted());
-    }
-
-    // #[test]
-    // fn compute_diff() {
-    //     let weights = &Weights::ones();
-    //     let mut increment = Incremental::default();
-    //     let old = vec![12, 56, 112, 1096];
-    //     let new = vec![12, 40, 51, 52, 112, 1200];
-    //     let mut iter_old = old.iter().copied();
-    //     let mut iter_new = new.iter().copied();
-    //     let mut old_val = iter_old.next();
-    //     let mut new_val = iter_new.next();
-    //     // Debug purposes only
-    //     let mut hash_in = Vec::new();
-    //     let mut hash_out = Vec::new();
-    //     loop {
-    //         match (old_val, new_val) {
-    //             (Some(old), Some(new)) => {
-    //                 if old == new {
-    //                     // Duplicate, advance both pointers
-    //                     old_val = iter_old.next();
-    //                     new_val = iter_new.next();
-    //                 } else if old > new {
-    //                     // hash in new
-    //                     increment.move_in(new, weights);
-    //                     hash_in.push(new);
-    //                     // advance new
-    //                     new_val = iter_new.next();
-    //                 } else {
-    //                     // hash out old
-    //                     increment.move_out(old, weights);
-    //                     hash_out.push(old);
-    //                     // advance old
-    //                     old_val = iter_old.next();
-    //                 }
-    //             }
-    //             (Some(old), None) => {
-    //                 // hash out old
-    //                 increment.move_out(old, weights);
-    //                 hash_out.push(old);
-    //                 // advance old
-    //                 old_val = iter_old.next();
-    //             }
-    //             (None, Some(new)) => {
-    //                 // hash in new
-    //                 increment.move_in(new, weights);
-    //                 hash_in.push(new);
-    //                 // advance new
-    //                 new_val = iter_new.next();
-    //             }
-    //             (None, None) => {
-    //                 break;
-    //             }
-    //         }
-    //     }
-    //     assert_eq!(vec![56, 1096], hash_out);
-    //     assert_eq!(vec![40, 51, 52, 1200], hash_in);
-    // }
 }

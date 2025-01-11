@@ -50,23 +50,23 @@ impl GameInitializer {
             ..*self
         }
     }
-    pub fn various_search(&mut self, g: TakGame) {
-        match g {
-            TakGame::Standard5(board) => {
-                if self.num_threads == 1 {
-                    if self.use_nn {
-                        unimplemented!()
-                    } else {
-                        todo!()
-                    }
-                } else {
-                    todo!()
-                }
-            }
-            TakGame::Standard6(board) => todo!(),
-            TakGame::Standard7(board) => todo!(),
-        }
-    }
+    // pub fn various_search(&mut self, g: TakGame) {
+    //     match g {
+    //         TakGame::Standard5(board) => {
+    //             if self.num_threads == 1 {
+    //                 if self.use_nn {
+    //                     unimplemented!()
+    //                 } else {
+    //                     todo!()
+    //                 }
+    //             } else {
+    //                 todo!()
+    //             }
+    //         }
+    //         TakGame::Standard6(board) => todo!(),
+    //         TakGame::Standard7(board) => todo!(),
+    //     }
+    // }
 }
 
 impl std::default::Default for GameInitializer {

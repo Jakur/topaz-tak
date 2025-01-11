@@ -4,10 +4,10 @@ use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
     generate_aggressive_place_moves, generate_all_stack_moves, generate_masked_stack_moves,
-    GameMove, KillerMoves, MoveBuffer, PlaceHistory, RevGameMove, SmartMoveBuffer,
+    GameMove, HistoryMoves, KillerMoves, MoveBuffer, PlaceHistory, RevGameMove, SmartMoveBuffer,
 };
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
-use crate::{TeiCommand, TimeBank};
+use crate::{Bitboard, TeiCommand, TimeBank};
 use crossbeam_channel::Receiver;
 use instant::Instant;
 use std::marker::PhantomData;
@@ -56,7 +56,8 @@ pub struct SearchInfo<'a> {
     pv_table: &'a HashTable,
     pub killer_moves: Vec<KillerMoves>,
     pub hist_moves: PlaceHistory<49>, // Todo make this better generic
-    pub stack_win_kill: Vec<KillerMoves>,
+    // pub stack_moves: HistoryMoves<2401>,
+    // pub stack_win_kill: Vec<KillerMoves>,
     stopped: bool,
     input: Option<Receiver<TeiCommand>>,
     time_bank: TimeBank,
@@ -74,7 +75,8 @@ impl<'a> SearchInfo<'a> {
             max_depth,
             pv_table,
             killer_moves: vec![KillerMoves::new(); depth_size],
-            stack_win_kill: vec![KillerMoves::new(); depth_size],
+            // stack_moves: HistoryMoves::new(7), // Todo fix this
+            // stack_win_kill: vec![KillerMoves::new(); depth_size],
             hist_moves: PlaceHistory::new(), // Todo init in search
             nodes: 0,
             stopped: false,
@@ -630,12 +632,14 @@ where
         //     );
         // }
         // // Todo make this work with pv?
-        // let side = board.side_to_move();
-        // if board.pieces_reserve(side) == 1 && board.caps_reserve(side) == 0 {
-        //     if board.flat_diff(side) >= 0 {
-        //         return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
-        //     }
-        // }
+        let side = board.side_to_move();
+        if (board.pieces_reserve(side) == 1 && board.caps_reserve(side) == 0)
+            || board.bits().empty().pop_count() == 1
+        {
+            if board.flat_diff(side) >= 0 {
+                return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
+            }
+        }
         // if let Some(prev) = last_move {
         //     return q_search(board, evaluator, info, alpha, beta, prev);
         // } else {
@@ -838,6 +842,7 @@ where
                             if ply_depth < info.killer_moves.len() {
                                 info.killer_moves[ply_depth].add(m);
                             }
+                            // info.stack_moves.update(depth, m);
                         } else {
                             info.hist_moves.update(depth, m);
                         }
@@ -877,7 +882,7 @@ where
     let ply_depth = info.ply_depth(board);
     for c in 0..moves.len() {
         let count = if has_searched_pv { c + 1 } else { c };
-        let m = moves.get_best(last_move, board);
+        let m = moves.get_best(ply_depth, info);
 
         let rev_move = board.do_move(m);
         let next_extensions = extensions;
@@ -888,24 +893,22 @@ where
 
         // search first move fully!
         if count == 0 {
-            let mut bonus = 0;
-            score = bonus
-                - alpha_beta(
-                    board,
-                    evaluator,
-                    info,
-                    SearchData::new(
-                        bonus - beta,
-                        bonus - alpha,
-                        next_depth,
-                        true,
-                        Some(rev_move),
-                        next_extensions,
-                        tak_history,
-                        data.is_pv,
-                        false,
-                    ),
-                );
+            score = -alpha_beta(
+                board,
+                evaluator,
+                info,
+                SearchData::new(
+                    -beta,
+                    -alpha,
+                    next_depth,
+                    true,
+                    Some(rev_move),
+                    next_extensions,
+                    tak_history,
+                    data.is_pv,
+                    false,
+                ),
+            );
         } else {
             let mut needs_re_search_on_alpha = false;
             let mut needs_re_search_on_alpha_beta = false;
@@ -923,22 +926,39 @@ where
                 reduced_depth -= 2;
                 needs_re_search_on_alpha = true;
             }
-            let mut next_beta = -alpha;
-            let mut bonus = 0;
+            let next_beta = -alpha;
             if PV_SEARCH_ENABLED && depth > 1 && !data.is_root {
                 next_alpha = -(alpha + 1);
                 needs_re_search_on_alpha_beta = true;
             }
 
-            score = bonus
-                - alpha_beta(
+            score = -alpha_beta(
+                board,
+                evaluator,
+                info,
+                SearchData::new(
+                    next_alpha,
+                    next_beta,
+                    reduced_depth,
+                    true,
+                    Some(rev_move),
+                    next_extensions,
+                    tak_history,
+                    false,
+                    false,
+                ),
+            );
+
+            // re-search full depth moves and those that don't fail low
+            if needs_re_search_on_alpha && score > alpha {
+                score = -alpha_beta(
                     board,
                     evaluator,
                     info,
                     SearchData::new(
                         next_alpha,
                         next_beta,
-                        reduced_depth,
+                        next_depth,
                         true,
                         Some(rev_move),
                         next_extensions,
@@ -947,26 +967,6 @@ where
                         false,
                     ),
                 );
-
-            // re-search full depth moves and those that don't fail low
-            if needs_re_search_on_alpha && score > alpha {
-                score = bonus
-                    - alpha_beta(
-                        board,
-                        evaluator,
-                        info,
-                        SearchData::new(
-                            next_alpha,
-                            next_beta,
-                            next_depth,
-                            true,
-                            Some(rev_move),
-                            next_extensions,
-                            tak_history,
-                            false,
-                            false,
-                        ),
-                    );
             }
 
             // research with full windows if PV-Search doesn't fail
@@ -975,23 +975,22 @@ where
                 && score < beta
                 && (PV_RE_SEARCH_NON_PV || data.is_pv)
             {
-                score = bonus
-                    - alpha_beta(
-                        board,
-                        evaluator,
-                        info,
-                        SearchData::new(
-                            -beta,
-                            next_beta,
-                            next_depth,
-                            true,
-                            Some(rev_move),
-                            next_extensions,
-                            tak_history,
-                            data.is_pv,
-                            false,
-                        ),
-                    );
+                score = -alpha_beta(
+                    board,
+                    evaluator,
+                    info,
+                    SearchData::new(
+                        -beta,
+                        next_beta,
+                        next_depth,
+                        true,
+                        Some(rev_move),
+                        next_extensions,
+                        tak_history,
+                        data.is_pv,
+                        false,
+                    ),
+                );
             }
         }
 
@@ -1084,12 +1083,12 @@ fn gen_and_score<T>(
         moves.gen_score_place_moves(board, &info.hist_moves);
         moves.score_tak_threats(&tak_threats);
         if board.ply() >= 4 {
-            moves.score_stack_moves(board);
+            moves.score_stack_moves(info, board);
         }
     } else {
         if board.ply() >= 4 {
             generate_all_stack_moves(board, moves);
-            moves.score_stack_moves(board);
+            moves.score_stack_moves(info, board);
         }
         moves.gen_score_place_moves(board, &info.hist_moves);
     }
@@ -1101,117 +1100,117 @@ fn gen_and_score<T>(
     // }
 }
 
-fn q_search<T, E>(
-    board: &mut T,
-    evaluator: &mut E,
-    info: &mut SearchInfo,
-    mut alpha: i32,
-    beta: i32,
-    prev_move: Option<RevGameMove>,
-    depth_left: usize,
-) -> i32
-where
-    T: TakBoard,
-    E: Evaluator<Game = T>,
-{
-    // Todo avoid double check game over on first entering q-search?
-    // Todo limit q-search depth in case of extreme capture war?
-    match board.game_result() {
-        Some(GameResult::WhiteWin) => {
-            if let Color::White = board.side_to_move() {
-                return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
-            }
-            return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32;
-        }
-        Some(GameResult::BlackWin) => {
-            if let Color::White = board.side_to_move() {
-                return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32;
-            }
-            return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
-        }
-        Some(GameResult::Draw) => return 0,
-        None => {}
-    }
-    let ply_depth = info.ply_depth(board);
-    if depth_left == 0 {
-        return evaluator.evaluate(board, ply_depth);
-    }
-    let mut moves = SmartMoveBuffer::new(64);
-    // let src_idx = prev_move.game_move.src_index();
-    // let side = board.side_to_move();
-    // if board.board()[src_idx].is_empty() {
-    //     if board.pieces_reserve(side) > 0 {
-    //         moves.add_move(GameMove::from_placement(crate::Piece::wall(side), src_idx));
-    //         moves.add_move(GameMove::from_placement(crate::Piece::flat(side), src_idx));
-    //     }
-    //     if board.caps_reserve(side) > 0 {
-    //         moves.add_move(GameMove::from_placement(crate::Piece::cap(side), src_idx));
-    //     }
-    // }
-    generate_all_stack_moves(board, &mut moves);
-    moves.score_stack_moves(board);
-    // let target = prev_move.dest_sq;
-    // let top = board.board()[target].top().unwrap();
-    // if !(top.is_cap() || top.owner() == side) {
-    //     let stack_mask = T::Bits::index_to_bit(target).adjacent() & board.bits().all_pieces(side);
-    //     generate_masked_stack_moves(board, &mut temp, BitIndexIterator::new(stack_mask));
-    //     for mv in temp {
-    //         if mv.dest_sq(T::SIZE) == target {
-    //             moves.add_move(mv);
-    //         }
-    //     }
-    // }
-    // use crate::board::Bitboard;
-    // let mut moves = Vec::new();
-    // if board.can_make_road(&mut moves, None).is_some() {
-    //     return WIN_SCORE - 1 - board.ply() as i32 + info.start_ply as i32;
-    // }
-    // let opp_critical = board.bits().road_pieces(!board.side_to_move()) & board.bits().empty();
-    // // Opponent has two winning placements, we must move a stack
-    // let cs_count = opp_critical.pop_count();
-    // if cs_count == 0 {
-    //     // Are we attacking, if so maybe look further?
-    //     let ply_depth = info.ply_depth(board);
-    //     return evaluator.evaluate(board, ply_depth);
-    // }
-    // let mut moves = SmartMoveBuffer::new();
-    // if cs_count == 1 {
-    //     let sq = opp_critical.lowest_index();
-    //     let side = board.side_to_move();
-    //     moves.add_move(GameMove::from_placement(crate::Piece::wall(side), sq));
-    //     moves.add_move(GameMove::from_placement(crate::Piece::flat(side), sq));
-    //     if board.caps_reserve(side) > 0 {
-    //         moves.add_move(GameMove::from_placement(crate::Piece::cap(side), sq));
-    //     }
-    // }
-    // generate_all_stack_moves(board, &mut moves);
-    // moves.score_stack_moves(board);
-    moves.drop_below_score(6);
-    if moves.len() == 0 {
-        return evaluator.evaluate(board, ply_depth);
-    }
-    for _ in 0..moves.len() {
-        let mv = moves.get_best(prev_move, board);
-        let rev = board.do_move(mv);
-        let score = -q_search(
-            board,
-            evaluator,
-            info,
-            -beta,
-            -alpha,
-            Some(rev),
-            depth_left - 1,
-        );
-        board.reverse_move(rev);
-        if score >= beta {
-            return beta;
-        }
-        if score > alpha {
-            alpha = score;
-        }
-    }
-    alpha
-}
+// fn q_search<T, E>(
+//     board: &mut T,
+//     evaluator: &mut E,
+//     info: &mut SearchInfo,
+//     mut alpha: i32,
+//     beta: i32,
+//     prev_move: Option<RevGameMove>,
+//     depth_left: usize,
+// ) -> i32
+// where
+//     T: TakBoard,
+//     E: Evaluator<Game = T>,
+// {
+//     // Todo avoid double check game over on first entering q-search?
+//     // Todo limit q-search depth in case of extreme capture war?
+//     match board.game_result() {
+//         Some(GameResult::WhiteWin) => {
+//             if let Color::White = board.side_to_move() {
+//                 return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
+//             }
+//             return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32;
+//         }
+//         Some(GameResult::BlackWin) => {
+//             if let Color::White = board.side_to_move() {
+//                 return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32;
+//             }
+//             return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
+//         }
+//         Some(GameResult::Draw) => return 0,
+//         None => {}
+//     }
+//     let ply_depth = info.ply_depth(board);
+//     if depth_left == 0 {
+//         return evaluator.evaluate(board, ply_depth);
+//     }
+//     let mut moves = SmartMoveBuffer::new(64);
+//     // let src_idx = prev_move.game_move.src_index();
+//     // let side = board.side_to_move();
+//     // if board.board()[src_idx].is_empty() {
+//     //     if board.pieces_reserve(side) > 0 {
+//     //         moves.add_move(GameMove::from_placement(crate::Piece::wall(side), src_idx));
+//     //         moves.add_move(GameMove::from_placement(crate::Piece::flat(side), src_idx));
+//     //     }
+//     //     if board.caps_reserve(side) > 0 {
+//     //         moves.add_move(GameMove::from_placement(crate::Piece::cap(side), src_idx));
+//     //     }
+//     // }
+//     generate_all_stack_moves(board, &mut moves);
+//     moves.score_stack_moves(info, board);
+//     // let target = prev_move.dest_sq;
+//     // let top = board.board()[target].top().unwrap();
+//     // if !(top.is_cap() || top.owner() == side) {
+//     //     let stack_mask = T::Bits::index_to_bit(target).adjacent() & board.bits().all_pieces(side);
+//     //     generate_masked_stack_moves(board, &mut temp, BitIndexIterator::new(stack_mask));
+//     //     for mv in temp {
+//     //         if mv.dest_sq(T::SIZE) == target {
+//     //             moves.add_move(mv);
+//     //         }
+//     //     }
+//     // }
+//     // use crate::board::Bitboard;
+//     // let mut moves = Vec::new();
+//     // if board.can_make_road(&mut moves, None).is_some() {
+//     //     return WIN_SCORE - 1 - board.ply() as i32 + info.start_ply as i32;
+//     // }
+//     // let opp_critical = board.bits().road_pieces(!board.side_to_move()) & board.bits().empty();
+//     // // Opponent has two winning placements, we must move a stack
+//     // let cs_count = opp_critical.pop_count();
+//     // if cs_count == 0 {
+//     //     // Are we attacking, if so maybe look further?
+//     //     let ply_depth = info.ply_depth(board);
+//     //     return evaluator.evaluate(board, ply_depth);
+//     // }
+//     // let mut moves = SmartMoveBuffer::new();
+//     // if cs_count == 1 {
+//     //     let sq = opp_critical.lowest_index();
+//     //     let side = board.side_to_move();
+//     //     moves.add_move(GameMove::from_placement(crate::Piece::wall(side), sq));
+//     //     moves.add_move(GameMove::from_placement(crate::Piece::flat(side), sq));
+//     //     if board.caps_reserve(side) > 0 {
+//     //         moves.add_move(GameMove::from_placement(crate::Piece::cap(side), sq));
+//     //     }
+//     // }
+//     // generate_all_stack_moves(board, &mut moves);
+//     // moves.score_stack_moves(board);
+//     moves.drop_below_score(6);
+//     if moves.len() == 0 {
+//         return evaluator.evaluate(board, ply_depth);
+//     }
+//     for _ in 0..moves.len() {
+//         let mv = moves.get_best(prev_move, board);
+//         let rev = board.do_move(mv);
+//         let score = -q_search(
+//             board,
+//             evaluator,
+//             info,
+//             -beta,
+//             -alpha,
+//             Some(rev),
+//             depth_left - 1,
+//         );
+//         board.reverse_move(rev);
+//         if score >= beta {
+//             return beta;
+//         }
+//         if score > alpha {
+//             alpha = score;
+//         }
+//     }
+//     alpha
+// }
 
 /// A naive minimax function without pruning used for debugging and benchmarking
 #[cfg(test)]

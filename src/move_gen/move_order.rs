@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use super::*;
 use crate::search::SearchInfo;
 
@@ -314,12 +316,13 @@ impl SmartMoveBuffer {
     pub fn drop_below_score(&mut self, threshold: i16) {
         self.moves.retain(|x| x.score >= threshold);
     }
-    pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T) {
+    pub fn score_stack_moves<T: TakBoard>(&mut self, info: &SearchInfo, board: &T) {
         let active_side = board.side_to_move();
         let mut stack_idx = usize::MAX;
         // Moves should be grouped by src index due to generator impl
         let mut stack_data = [Piece::WhiteFlat; 8]; // Todo T::SIZE + 1 when rust figures out this valid
         for x in self.moves.iter_mut().filter(|x| x.mv.is_stack_move()) {
+            // let mut score = info.stack_moves.score(x.mv);
             let mut score = 0;
             let src_idx = x.mv.src_index();
             // TODO figure out if this is right
@@ -476,7 +479,7 @@ impl SmartMoveBuffer {
             }
         }
     }
-    pub fn get_best<T: TakBoard>(&mut self, last_move: Option<RevGameMove>, board: &T) -> GameMove {
+    pub fn get_best(&mut self, ply: usize, info: &SearchInfo) -> GameMove {
         if self.queries <= 16 {
             self.queries += 1;
             let (idx, m) = self
@@ -484,8 +487,14 @@ impl SmartMoveBuffer {
                 .iter()
                 .enumerate()
                 .max_by_key(|(_i, &m)| {
-                    m.score // + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
-                            // - self.penalty_hist_score(m.mv)
+                    // if m.score < 3 {
+                    //     m.score + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
+                    // } else {
+                    //     m.score
+                    // }
+                    m.score
+                    // m.score // + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
+                    // - self.penalty_hist_score(m.mv)
                 })
                 .unwrap();
             let m = *m;
@@ -680,26 +689,28 @@ impl<const SIZE: usize> PlaceHistory<SIZE> {
 }
 
 #[derive(Clone)]
-pub struct HistoryMoves {
-    vec: Vec<u32>,
+pub struct HistoryMoves<const SIZE: usize> {
+    to_from: [u32; SIZE],
+    board_length: usize,
 }
 
-impl HistoryMoves {
+impl<const SIZE: usize> HistoryMoves<SIZE> {
     pub fn new(board_size: usize) -> Self {
         Self {
-            vec: vec![1; board_size * board_size * 4],
+            to_from: [1; SIZE],
+            board_length: board_size,
         }
     }
     pub fn update(&mut self, depth: usize, mv: GameMove) {
         let value = depth as u32;
-        self.vec[mv.direction() as usize + mv.src_index() * 4] += value * value;
-    }
-    pub fn square_data(&self, square: usize) -> &[u32] {
-        &self.vec[square * 4..square * 4 + 4]
+        let f = mv.src_index();
+        let t = mv.dest_sq(self.board_length);
+        self.to_from[f * self.board_length * self.board_length + t] += value;
     }
     pub fn score(&self, mv: GameMove) -> i16 {
-        // Hacky base 2 log
-        (32 - self.vec[mv.direction() as usize + mv.src_index() * 4].leading_zeros()) as i16
+        let f = mv.src_index();
+        let t = mv.dest_sq(self.board_length);
+        self.to_from[f * self.board_length * self.board_length + t].ilog2() as i16
     }
 }
 

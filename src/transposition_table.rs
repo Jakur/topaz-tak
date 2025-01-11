@@ -139,12 +139,12 @@ struct ConcurrentEntry {
 }
 
 impl ConcurrentEntry {
-    fn new(hash_and_move: AtomicU64, score_flags: AtomicU32) -> Self {
-        Self {
-            hash_and_move,
-            score_flags,
-        }
-    }
+    // fn new(hash_and_move: AtomicU64, score_flags: AtomicU32) -> Self {
+    //     Self {
+    //         hash_and_move,
+    //         score_flags,
+    //     }
+    // }
     const fn empty() -> Self {
         Self {
             hash_and_move: AtomicU64::new(0),
@@ -230,9 +230,9 @@ const BETA_FLAG: u8 = 0b01000000;
 const DEPTH_MASK: u8 = 0b00111111;
 
 impl HashEntry {
-    const fn empty() -> Self {
-        Self::new(1, GameMove::null_move(), ScoreCutoff::Alpha(0), 0, 0)
-    }
+    // const fn empty() -> Self {
+    //     Self::new(1, GameMove::null_move(), ScoreCutoff::Alpha(0), 0, 0)
+    // }
 
     pub const fn new(
         hash: u64,

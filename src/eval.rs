@@ -1,27 +1,21 @@
 use super::{Bitboard, Piece, Stack};
-use crate::board;
 use crate::board::BitIndexIterator;
 use crate::board::TakBoard;
 use crate::board::{Board5, Board6};
-use crate::eval::incremental::Incremental;
 use crate::Color;
 use crate::Position;
 
-pub use incremental::nn_repr;
-pub use incremental::NNRepr;
-
-use std::collections::HashMap;
-use std::fs::File;
-use std::thread::current;
-
-static NN6: once_cell::sync::OnceCell<incremental::Weights> = once_cell::sync::OnceCell::new();
+use incremental::BoardData;
+use incremental::PieceSquare;
+pub use incremental::NNUE6;
+// static NN6: once_cell::sync::OnceCell<incremental::Weights> = once_cell::sync::OnceCell::new();
 
 pub fn global_init_weights(f_name: &str) {
-    println!("Setting global weights!");
-    let weights = incremental::Weights::from_file(File::open(f_name).unwrap()).unwrap();
-    NN6.set(weights)
-        .ok()
-        .expect("Unable to override existing NN6 Weights!");
+    // println!("Setting global weights!");
+    // let weights = incremental::Weights::from_file(File::open(f_name).unwrap()).unwrap();
+    // NN6.set(weights)
+    //     .ok()
+    //     .expect("Unable to override existing NN6 Weights!");
 }
 
 fn nn_file() -> Option<String> {
@@ -35,147 +29,54 @@ fn nn_file() -> Option<String> {
     path
 }
 
+#[allow(dead_code)]
 mod incremental;
 mod smooth;
-pub use smooth::SmoothWeights6;
+// pub use smooth::SmoothWeights6;
 
 pub trait Evaluator {
     type Game: TakBoard + Send;
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32;
-    fn eval_stack(&self, game: &Self::Game, index: usize, stack: &Stack) -> i32;
-    fn eval_components<'a, T: EvalComponents<'a> + 'a>(&'a self, game: &Self::Game) -> T;
     fn is_quiet(&self, game: &Self::Game) -> bool;
-}
-
-pub struct NNUE6 {
-    incremental_white: incremental::Incremental,
-    incremental_black: incremental::Incremental,
-    old_white: NNRepr,
-    old_black: NNRepr,
-    classical: Weights6,
-}
-
-impl Default for NNUE6 {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl NNUE6 {
-    pub fn new() -> Self {
-        let nn = NN6.get_or_init(|| {
-            let f_name = nn_file().expect("Could not read NN variable from env");
-            incremental::Weights::from_file(File::open(f_name).unwrap()).unwrap()
-        });
-        let classical = Weights6::default();
-        Self {
-            incremental_white: nn.empty_incremental(),
-            incremental_black: nn.empty_incremental(),
-            old_white: NNRepr::empty(),
-            old_black: NNRepr::empty(),
-            classical,
-        }
-    }
-    // pub fn get_states(&mut self, game: &Board6) -> (NN_REPR, NN_REPR) {
-    //     // const OFFSETS: [u16; 39] = [
-    //     //     0, 156, 312, 468, 624, 780, 936, 1092, 1248, 1404, 1560, 1716, 1872, 2028, 2184, 2340,
-    //     //     2496, 2652, 2808, 2964, 3120, 3276, 3432, 3588, 3744, 3900, 4056, 4212, 4368, 4524,
-    //     //     4680, 4836, 4992, 5148, 5304, 5460, 5616, 5652, 5688,
-    //     // ];
-    //     // const OFFSETS: [i16; NN_REPR_SIZE] = [
-    //     //     0, 257, 514, 771, 1028, 1285, 1542, 1799, 2056, 2313, 2570, 2827, 3084, 3341, 3598,
-    //     //     3855, 4112, 4369, 4626, 4883, 5140, 5397, 5654, 5911, 6168, 6425, 6682, 6939, 7196,
-    //     //     7453, 7710, 7967, 8224, 8481, 8738, 8995, 9252, 9273, 9294, 9315, 9336, 9357, 9378,
-    //     //     9399, 9420, 9441, 9462, 9483,
-    //     // ];
-    //     // const OFFSETS: [i16; NN_REPR_SIZE] = [
-    //     //     0, 71, 142, 213, 284, 355, 426, 497, 568, 639, 710, 781, 852, 923, 994, 1065, 1136,
-    //     //     1207, 1278, 1349, 1420, 1491, 1562, 1633, 1704, 1775, 1846, 1917, 1988, 2059, 2130,
-    //     //     2201, 2272, 2343, 2414, 2485, 2556, 2577, 2598, 2619, 2640, 2661, 2682, 2703, 2724,
-    //     //     2745, 2766, 2787,
-    //     // ];
-    //     const OFFSETS: [i16; NN_REPR_SIZE] = [
-    //         0, 384, 768, 1152, 1536, 1920, 2304, 2688, 3072, 3456, 3840, 4224, 4608, 4992, 5376,
-    //         5760, 6144, 6528, 6912, 7296, 7680, 8064, 8448, 8832, 9216, 9600, 9984, 10368, 10752,
-    //         11136, 11520, 11904, 12288, 12672, 13056, 13440, 13824, 13845, 13866, 13887, 13908,
-    //         13929, 13950, 13971, 13992, 14013, 14034, 14055,
-    //     ];
-    //     let mut side = nn_repr(game);
-    //     let mut opp = side.clone();
-    //     for (idx, val) in side.into_iter().take(36).enumerate() {
-    //         if val != 0 {
-    //             // 196
-    //             if val >= 192 {
-    //                 opp[idx] -= 192;
-    //             } else {
-    //                 opp[idx] += 192;
-    //             }
-    //             let stack = val % 64;
-    //             let new_stack = incremental::flip_stack_repr(stack);
-    //             // Move out old stack
-    //             opp[idx] -= stack;
-    //             // Move in new stack
-    //             opp[idx] += new_stack;
-    //             // if val >= 196 {
-    //             //     opp[idx] -= 147;
-    //             // } else {
-    //             //     opp[idx] += 147;
-    //             // }
-    //         }
-    //     }
-    //     // if side[38] == 0 {
-    //     //     opp[38] = 1;
-    //     // } else {
-    //     //     opp[38] = 0;
-    //     // }
-    //     // Refine
-    //     for (idx, (val_a, val_b)) in side.iter_mut().zip(opp.iter_mut()).enumerate().take(36) {
-    //         *val_a = OFFSETS[idx] + *val_a; // + incremental::STACK_LOOKUP[*val_a as usize];
-    //         *val_b = OFFSETS[idx] + *val_b; // + incremental::STACK_LOOKUP[*val_b as usize];
-    //     }
-    //     for i in (36..=42).step_by(2) {
-    //         opp.swap(i, i + 1);
-    //         // std::mem::swap(&mut opp[i], &mut opp[i + 1]);
-    //         // opp[i] = side[i + 1];
-    //         // opp[i + 1] = side[i];
-    //     }
-    //     for i in 44..OFFSETS.len() {
-    //         opp[i] = -side[i];
-    //     }
-    //     for i in 36..OFFSETS.len() {
-    //         side[i] += OFFSETS[i];
-    //         opp[i] += OFFSETS[i];
-    //     }
-    //     (side, opp)
-    // }
 }
 
 impl Evaluator for NNUE6 {
     type Game = Board6;
 
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
-        const TEMPO_OFFSET: i32 = 50;
-        // // let (mut side, mut opp) = self.get_states(game);
-        let side = game.side_to_move();
-        let nn = NN6.get().unwrap();
-        let mut current_state = nn_repr(game);
-        // if !current_state.is_sorted() {
-        //     dbg!(&game);
-        //     dbg!(&current_state);
-        //     assert!(false);
-        // }
-        let win_score = if let Color::White = side {
-            self.incremental_white
-                .update_diff(&self.old_white, &current_state, &nn, side);
-            std::mem::swap(&mut current_state, &mut self.old_white);
-            nn.incremental_forward(&self.incremental_white)
-        } else {
-            self.incremental_black
-                .update_diff(&self.old_black, &current_state, &nn, side);
-            std::mem::swap(&mut current_state, &mut self.old_black);
-            nn.incremental_forward(&self.incremental_black)
-        };
-        let eval = (win_score * 150.0) as i32;
+        const TEMPO_OFFSET: i32 = 0; // -100
+
+        // Build TakBoard abstraction
+        let mut caps = [255, 255];
+        let mut data = [PieceSquare(255); 62];
+        let mut idx = 0;
+        let mut cap_idx = 0;
+        for sq in game
+            .active_stacks(Color::White)
+            .chain(game.active_stacks(Color::Black))
+        {
+            let stack = &game.board()[sq];
+            let top = stack.top().unwrap();
+            if top.is_cap() {
+                caps[cap_idx] = sq as u8;
+                cap_idx += 1;
+            }
+            data[idx] = build_piece_square(sq, top);
+            idx += 1;
+            for i in 1..10 {
+                if let Some(p) = stack.from_top(i) {
+                    data[idx] = build_piece_square(sq, p);
+                    idx += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        let takboard = BoardData::minimal(caps, data, game.side_to_move() == Color::White);
+        let eval = self.incremental_eval(takboard);
+        // Evaluate
+        // let eval =
+        //     self.incremental_eval(takboard) / 4 + self.classical.evaluate(game, depth) * 3 / 4;
         if depth % 2 == 0 {
             eval
         } else {
@@ -183,17 +84,21 @@ impl Evaluator for NNUE6 {
         }
     }
 
-    fn eval_stack(&self, _game: &Self::Game, _index: usize, _stack: &Stack) -> i32 {
-        unimplemented!()
-    }
-
-    fn eval_components<'a, T: EvalComponents<'a>>(&'a self, _game: &Self::Game) -> T {
-        unimplemented!()
-    }
-
     fn is_quiet(&self, game: &Self::Game) -> bool {
         true
     }
+}
+
+fn build_piece_square(sq: usize, piece: Piece) -> PieceSquare {
+    let p = match piece {
+        Piece::WhiteFlat => incremental::WHITE_FLAT,
+        Piece::WhiteWall => incremental::WHITE_WALL,
+        Piece::WhiteCap => incremental::WHITE_FLAT, // This is intentional
+        Piece::BlackFlat => incremental::BLACK_FLAT,
+        Piece::BlackWall => incremental::BLACK_WALL,
+        Piece::BlackCap => incremental::BLACK_FLAT, // This is intentional
+    };
+    PieceSquare::new(sq, p.0)
 }
 
 pub struct Evaluator6 {}
@@ -293,6 +198,113 @@ fn endgame_calc<T: TakBoard>(game: &T) -> (i32, i32) {
 
 macro_rules! eval_impl {
     ($board: ty, $weights: ty) => {
+        impl $weights {
+            const SIZE: usize = <Self as Evaluator>::Game::SIZE;
+            fn eval_stack(
+                &self,
+                game: &<Self as Evaluator>::Game,
+                idx: usize,
+                stack: &Stack,
+            ) -> (i32, bool) {
+                let top = stack.top().unwrap();
+                let mut pw = self.piece_weight(top) + self.location[idx];
+                // let (mut captive, mut friendly) = stack.captive_friendly();
+                let (mut captive, mut friendly) = stack.limited_captive_friendly();
+                // let (c_mul, f_mul) = self.stack_top_multiplier(top);
+                let mut mobility = 0;
+                let mut safety = 0;
+                match top {
+                    Piece::WhiteFlat | Piece::BlackFlat => {}
+                    Piece::WhiteWall | Piece::BlackWall => {
+                        safety += 16;
+                    }
+                    Piece::WhiteCap => {
+                        safety += 64;
+                        mobility += 1;
+                        if let Some(Piece::WhiteFlat) = stack.under_top() {
+                            pw += 30;
+                        }
+                    }
+                    Piece::BlackCap => {
+                        safety += 64;
+                        mobility += 1;
+                        if let Some(Piece::BlackFlat) = stack.under_top() {
+                            pw += 30;
+                        }
+                    }
+                }
+                let neighbors =
+                    <<Self as Evaluator>::Game as TakBoard>::Bits::index_to_bit(idx).adjacent();
+                for sq in BitIndexIterator::new(neighbors) {
+                    let stack = &game.board[sq];
+                    if let Some(piece) = stack.top() {
+                        if piece.owner() == top.owner() {
+                            match piece {
+                                Piece::WhiteFlat | Piece::BlackFlat => {
+                                    safety += 1;
+                                    mobility += 1;
+                                }
+                                Piece::WhiteWall | Piece::BlackWall => {
+                                    if stack.len() < Self::SIZE {
+                                        safety += 4;
+                                    }
+                                }
+                                Piece::WhiteCap | Piece::BlackCap => {
+                                    if stack.len() < Self::SIZE {
+                                        safety += 32;
+                                    }
+                                    mobility += 1;
+                                }
+                            }
+                        } else {
+                            match piece {
+                                Piece::WhiteFlat | Piece::BlackFlat => {
+                                    mobility += 2;
+                                }
+                                Piece::WhiteWall | Piece::BlackWall => {
+                                    if stack.len() < Self::SIZE {
+                                        safety -= 4;
+                                    }
+                                }
+                                Piece::WhiteCap | Piece::BlackCap => {
+                                    if stack.len() < Self::SIZE {
+                                        safety -= 32;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        mobility += 2;
+                    }
+                }
+                // Todo reconsider these with new method?
+                if mobility < 2 && !top.is_blocker() {
+                    friendly /= 2;
+                }
+                if safety < 0 {
+                    captive *= 2;
+                }
+                let mut stack_score =
+                    pw + self.stack_eval.eval_cap_friendly(top, captive, friendly);
+                // let friendly_flats = game.bits().flat & game.bits().all_pieces(top.owner());
+                let enemy_flats = game.bits().flat & game.bits().all_pieces(!top.owner());
+                let orth = <<Self as Evaluator>::Game as TakBoard>::Bits::orthogonal(idx);
+                let count = (orth & enemy_flats).pop_count() as i32;
+                let all_friendly = friendly + 1;
+                if count >= all_friendly {
+                    stack_score += std::cmp::min(75, 5 * all_friendly * all_friendly);
+                }
+                // let friendly_score = friendly * f_mul;
+                // // let friendly_score = std::cmp::min(friendly * f_mul, 300);
+                // let stack_score = captive * c_mul + friendly_score + pw;
+                let has_weakness = captive > 0 && top.is_flat();
+                if let Color::White = top.owner() {
+                    return (stack_score, has_weakness);
+                } else {
+                    return (-stack_score, has_weakness);
+                }
+            }
+        }
         impl Evaluator for $weights {
             type Game = $board;
             #[inline(never)]
@@ -300,6 +312,22 @@ macro_rules! eval_impl {
                 let mut score = 0;
                 let white_r = game.bits.road_pieces(Color::White);
                 let black_r = game.bits.road_pieces(Color::Black);
+                let white_cs = white_r.critical_squares();
+                let black_cs = black_r.critical_squares();
+                // let mut white_weakness = 0;
+                // let mut black_weakness = 0;
+                match game.side_to_move() {
+                    Color::White => {
+                        if (white_cs & game.bits.empty()).nonzero() {
+                            return WIN_SCORE - depth as i32 - 1;
+                        }
+                    }
+                    Color::Black => {
+                        if (black_cs & game.bits.empty()).nonzero() {
+                            return WIN_SCORE - depth as i32 - 1;
+                        }
+                    }
+                }
                 // let blockers =
                 //     game.bits.blocker_pieces(Color::White) | game.bits.blocker_pieces(Color::Black);
                 for (idx, stack) in game.board.iter().enumerate() {
@@ -323,7 +351,14 @@ macro_rules! eval_impl {
                             score -= pw;
                         }
                     } else if stack.len() > 1 {
-                        score += self.eval_stack(game, idx, stack);
+                        let (s, weakness) = self.eval_stack(game, idx, stack);
+                        // let top = stack.top().unwrap();
+                        // if top.owner() == Color::White {
+                        //     white_weakness += weakness as i32;
+                        // } else {
+                        //     black_weakness += weakness as i32;
+                        // }
+                        score += s;
                     }
                 }
                 let black_cap = game.bits.cap & game.bits.black;
@@ -342,8 +377,13 @@ macro_rules! eval_impl {
                         score -= 30;
                     }
                 }
-                score += self.cs_threat * attackable_cs(Color::White, game);
-                score -= self.cs_threat * attackable_cs(Color::Black, game);
+                // if white_weakness > black_weakness {
+                //     score -= 40;
+                // } else if black_weakness > white_weakness {
+                //     score += 40;
+                // }
+                score += self.cs_threat * attackable_cs(Color::White, white_cs, game);
+                score -= self.cs_threat * attackable_cs(Color::Black, black_cs, game);
                 let (loose_white_pc, white_comp) =
                     flat_placement_road_short(white_r, game.bits.empty());
                 let (loose_black_pc, black_comp) =
@@ -423,105 +463,6 @@ macro_rules! eval_impl {
                 //     score
                 // }
             }
-            fn eval_stack(&self, game: &Self::Game, idx: usize, stack: &Stack) -> i32 {
-                let top = stack.top().unwrap();
-                let mut pw = self.piece_weight(top) + self.location[idx];
-                let (mut captive, mut friendly) = stack.captive_friendly();
-                // let (c_mul, f_mul) = self.stack_top_multiplier(top);
-                let mut mobility = 0;
-                let mut safety = 0;
-                match top {
-                    Piece::WhiteFlat | Piece::BlackFlat => {}
-                    Piece::WhiteWall | Piece::BlackWall => {
-                        safety += 16;
-                    }
-                    Piece::WhiteCap => {
-                        safety += 64;
-                        mobility += 1;
-                        if let Some(Piece::WhiteFlat) = stack.under_top() {
-                            pw += 30;
-                        }
-                    }
-                    Piece::BlackCap => {
-                        safety += 64;
-                        mobility += 1;
-                        if let Some(Piece::BlackFlat) = stack.under_top() {
-                            pw += 30;
-                        }
-                    }
-                }
-                let neighbors = <Self::Game as TakBoard>::Bits::index_to_bit(idx).adjacent();
-                for sq in BitIndexIterator::new(neighbors) {
-                    let stack = &game.board[sq];
-                    if let Some(piece) = stack.top() {
-                        if piece.owner() == top.owner() {
-                            match piece {
-                                Piece::WhiteFlat | Piece::BlackFlat => {
-                                    safety += 1;
-                                    mobility += 1;
-                                }
-                                Piece::WhiteWall | Piece::BlackWall => {
-                                    if stack.len() < Self::Game::SIZE {
-                                        safety += 4;
-                                    }
-                                }
-                                Piece::WhiteCap | Piece::BlackCap => {
-                                    if stack.len() < Self::Game::SIZE {
-                                        safety += 32;
-                                    }
-                                    mobility += 1;
-                                }
-                            }
-                        } else {
-                            match piece {
-                                Piece::WhiteFlat | Piece::BlackFlat => {
-                                    mobility += 2;
-                                }
-                                Piece::WhiteWall | Piece::BlackWall => {
-                                    if stack.len() < Self::Game::SIZE {
-                                        safety -= 4;
-                                    }
-                                }
-                                Piece::WhiteCap | Piece::BlackCap => {
-                                    if stack.len() < Self::Game::SIZE {
-                                        safety -= 32;
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        mobility += 2;
-                    }
-                }
-                // Todo reconsider these with new method?
-                if mobility < 2 && !top.is_blocker() {
-                    friendly /= 2;
-                }
-                if safety < 0 {
-                    captive *= 2;
-                }
-                let mut stack_score =
-                    pw + self.stack_eval.eval_cap_friendly(top, captive, friendly);
-                // let friendly_flats = game.bits().flat & game.bits().all_pieces(top.owner());
-                let enemy_flats = game.bits().flat & game.bits().all_pieces(!top.owner());
-                let orth = <Self::Game as TakBoard>::Bits::orthogonal(idx);
-                let count = (orth & enemy_flats).pop_count() as i32;
-                let all_friendly = friendly + 1;
-                if count >= all_friendly {
-                    stack_score += std::cmp::min(75, 5 * all_friendly * all_friendly);
-                }
-                // let friendly_score = friendly * f_mul;
-                // // let friendly_score = std::cmp::min(friendly * f_mul, 300);
-                // let stack_score = captive * c_mul + friendly_score + pw;
-                if let Color::White = top.owner() {
-                    return stack_score;
-                } else {
-                    return -stack_score;
-                }
-            }
-            fn eval_components<'a, T: EvalComponents<'a>>(&'a self, game: &Self::Game) -> T {
-                unimplemented!()
-            }
             fn is_quiet(&self, game: &Self::Game) -> bool {
                 true
             }
@@ -529,9 +470,9 @@ macro_rules! eval_impl {
     };
 }
 
-fn attackable_cs<B: TakBoard>(color: Color, game: &B) -> i32 {
+fn attackable_cs<B: TakBoard>(color: Color, cs: B::Bits, game: &B) -> i32 {
     let road_pieces = game.bits().road_pieces(color);
-    let mut cs = road_pieces.critical_squares() & !game.bits().blocker_pieces(!color);
+    let mut cs = cs & !game.bits().blocker_pieces(!color);
     let mut count = 0;
     while cs != B::Bits::ZERO {
         let lowest = cs.pop_lowest();
@@ -546,11 +487,13 @@ fn attackable_cs<B: TakBoard>(color: Color, game: &B) -> i32 {
 eval_impl![Board6, Weights6];
 eval_impl![Board5, Weights5];
 
+#[cfg(test)]
 struct BitOutcome<B> {
     bits: B,
     steps: usize,
 }
 
+#[cfg(test)]
 impl<B> BitOutcome<B> {
     fn new(bits: B, steps: usize) -> Self {
         Self { bits, steps }
@@ -651,95 +594,6 @@ fn flat_placement_road_short<B: Bitboard + std::fmt::Debug>(
     (best, count)
 }
 
-/// A heuristic for road building that approximates the number of flat placements
-/// needed to make a road. In a future version, we should link together disjoint
-/// components during the search to make the counts more accurate. Compared to
-/// earlier approaches, this more accurately values row blockades, but it lacks
-/// a way to see threats for a single decisive capture
-fn flat_placement_road_h<B: Bitboard + std::fmt::Debug>(road_bits: B, empty: B) -> (i32, usize) {
-    let mut iter = ComponentIterator::new(road_bits);
-    let mut best = 1_000;
-    let mut count = 0;
-    let north = road_bits.flood(B::top()) | B::top();
-    let south = road_bits.flood(B::bottom()) | B::bottom();
-    let east = road_bits.flood(B::right()) | B::right();
-    let west = road_bits.flood(B::left()) | B::left();
-    let safe = empty;
-    while let Some(comp) = iter.next() {
-        count += 1;
-        if comp.pop_count() >= 2 {
-            let mut steps = 0;
-            let mut n_steps = 1_000;
-            let mut s_steps = 1_000;
-            let mut e_steps = 1_000;
-            let mut w_steps = 1_000;
-            let mut explored = comp;
-            let mut prev = B::ZERO;
-            let mut other_neighbor = (!comp & road_bits).adjacent() & empty;
-            while prev != explored {
-                if (explored & north) != B::ZERO {
-                    n_steps = std::cmp::min(n_steps, steps);
-                }
-                if (explored & south) != B::ZERO {
-                    s_steps = std::cmp::min(s_steps, steps);
-                }
-                if (explored & east) != B::ZERO {
-                    e_steps = std::cmp::min(e_steps, steps);
-                }
-                if (explored & west) != B::ZERO {
-                    w_steps = std::cmp::min(w_steps, steps);
-                }
-                prev = explored;
-                explored = (explored.adjacent() | explored) & safe;
-                steps += 1;
-                if (other_neighbor & explored) != B::ZERO {
-                    // Combine components
-                    explored = (road_bits | explored).flood(explored);
-                    other_neighbor = (!explored & road_bits).adjacent() & empty;
-                    // other_neighbor = other_neighbor & !explored;
-                }
-            }
-            let score = std::cmp::min(n_steps + s_steps, e_steps + w_steps);
-            best = std::cmp::min(best, score);
-        }
-    }
-    (best, count)
-}
-
-/// A variant of the original one gap road, this one instead allows a diagonal extension
-/// from a diagonally adjacent piece, trying to simulate its capture. This outperforms
-/// the original version, but the road play still seems uninspired, extending threats
-/// that seem unlikely to be finished, while ignoring future threats simply because
-/// they haven't yet reached fruition.
-fn one_gap_road<B: Bitboard + std::fmt::Debug>(road_bits: B) -> (i32, usize) {
-    let mut iter = ComponentIterator::new(road_bits);
-    let mut best = 0;
-    let mut count = 0;
-    while let Some(comp) = iter.next() {
-        count += 1;
-        if comp.pop_count() >= 3 {
-            let (score_a, score_b) = comp.simple_road_est();
-            let score = std::cmp::max(score_a, score_b);
-            if score > best {
-                best = score;
-            }
-            let rest = road_bits & !comp;
-            let mut potential = comp.loose_adjacent() & rest;
-            while potential != B::ZERO {
-                let lowest = potential.pop_lowest();
-                let bend = (lowest.loose_adjacent() | lowest) & road_bits;
-                let fl = road_bits.flood(bend);
-                let (score_a, score_b) = fl.simple_road_est();
-                let score = std::cmp::max(score_a, score_b);
-                if score > best {
-                    best = score;
-                }
-            }
-        }
-    }
-    (best, count)
-}
-
 struct ComponentIterator<B> {
     bits: B,
 }
@@ -768,34 +622,35 @@ where
     }
 }
 
-struct LooseComponentIterator<B> {
-    bits: B,
-}
+// struct LooseComponentIterator<B> {
+//     bits: B,
+// }
 
-impl<B> LooseComponentIterator<B> {
-    fn new(bits: B) -> Self {
-        Self { bits }
-    }
-}
+// impl<B> LooseComponentIterator<B> {
+//     fn new(bits: B) -> Self {
+//         Self { bits }
+//     }
+// }
 
-impl<B> Iterator for LooseComponentIterator<B>
-where
-    B: Bitboard,
-{
-    type Item = B;
+// impl<B> Iterator for LooseComponentIterator<B>
+// where
+//     B: Bitboard,
+// {
+//     type Item = B;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.bits == B::ZERO {
-            None
-        } else {
-            let lowest = self.bits.lowest();
-            let set = B::loose_flood(self.bits, lowest);
-            self.bits = self.bits ^ set;
-            Some(set)
-        }
-    }
-}
+//     fn next(&mut self) -> Option<Self::Item> {
+//         if self.bits == B::ZERO {
+//             None
+//         } else {
+//             let lowest = self.bits.lowest();
+//             let set = B::loose_flood(self.bits, lowest);
+//             self.bits = self.bits ^ set;
+//             Some(set)
+//         }
+//     }
+// }
 
+#[cfg(test)]
 fn connected_components<B: Bitboard, F: Fn(B, B) -> B>(mut bits: B, flood_fn: F) -> BitOutcome<B> {
     let mut count = 0;
     let mut largest = B::ZERO;
@@ -811,11 +666,11 @@ fn connected_components<B: Bitboard, F: Fn(B, B) -> B>(mut bits: B, flood_fn: F)
     BitOutcome::new(largest, count)
 }
 
-#[derive(Default, Debug)]
-struct MomentumCounter {
-    white_road_diff: i32,
-    black_road_diff: i32,
-}
+// #[derive(Default, Debug)]
+// struct MomentumCounter {
+//     white_road_diff: i32,
+//     black_road_diff: i32,
+// }
 
 pub struct Weights5 {
     location: [i32; 25],
@@ -827,7 +682,6 @@ pub struct Weights5 {
     cs_threat: i32,
     flat_advantage: [i32; 11],
     reserve_diff: [i32; 11],
-    mom: MomentumCounter,
 }
 
 impl Weights5 {
@@ -850,7 +704,6 @@ impl Weights5 {
             cs_threat,
             flat_advantage: [0; 11],
             reserve_diff: [0; 11],
-            mom: Default::default(),
         }
     }
     fn piece_weight(&self, p: Piece) -> i32 {
@@ -981,7 +834,6 @@ pub struct Weights6 {
     cs_threat: i32,
     flat_advantage: [i32; 11],
     reserve_diff: [i32; 11],
-    mom: MomentumCounter,
 }
 
 impl Weights6 {
@@ -1006,7 +858,6 @@ impl Weights6 {
             cs_threat,
             flat_advantage,
             reserve_diff,
-            mom: Default::default(),
         }
     }
 
@@ -1187,6 +1038,7 @@ fn build_weights(w: &WeightBuilder) -> Weights6 {
     weights
 }
 
+#[allow(dead_code)]
 pub struct Weights7 {
     location: [i32; 49],
     connectivity: i32,
@@ -1196,7 +1048,6 @@ pub struct Weights7 {
     // stack_top: [i32; 6],
     flat_road: [i32; 4],
     cs_threat: i32,
-    mom: MomentumCounter,
 }
 
 impl Weights7 {
@@ -1217,7 +1068,6 @@ impl Weights7 {
             stack_eval,
             flat_road,
             cs_threat,
-            mom: Default::default(),
         }
     }
     fn piece_weight(&self, p: Piece) -> i32 {
@@ -1239,19 +1089,18 @@ impl Default for Weights7 {
             stack_eval: StackEval::build_simple([-61, 85, -29, 99, -20, 116]),
             flat_road: [40, 22, 13, 8],
             cs_threat: 64,
-            mom: Default::default(),
         }
     }
 }
 
-pub trait EvalComponents<'a> {
-    fn create(weights: &'a SmoothWeights6) -> Self
-    where
-        Self: 'a;
-    fn score(&self) -> i32;
-    fn mark(&mut self, index: usize);
-    fn set_phase(&mut self, phase: usize);
-}
+// pub trait EvalComponents<'a> {
+//     fn create(weights: &'a SmoothWeights6) -> Self
+//     where
+//         Self: 'a;
+//     fn score(&self) -> i32;
+//     fn mark(&mut self, index: usize);
+//     fn set_phase(&mut self, phase: usize);
+// }
 
 #[allow(clippy::zero_prefixed_literal)]
 #[rustfmt::skip]

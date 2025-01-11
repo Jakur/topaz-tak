@@ -137,10 +137,25 @@ impl Stack {
             None
         }
     }
+    pub fn limited_captive_friendly(&self) -> (i32, i32) {
+        if self.length <= 1 {
+            return (0, 0);
+        }
+        let vals = self.white_black_deep();
+        if self
+            .top()
+            .map(|x| x.owner() == super::Color::White)
+            .unwrap_or(true)
+        {
+            (vals[1], vals[0])
+        } else {
+            (vals[0], vals[1])
+        }
+    }
     pub fn white_black_deep(&self) -> [i32; 4] {
         // Todo variable cutoff, checks?
-        let black = (self.data >> 2).count_ones() as i32;
-        let white = std::cmp::max(0, self.length as i32 - 2 - black);
+        let black = (self.data >> 1).count_ones() as i32;
+        let white = self.length as i32 - 1 - black;
         let black_deep = (self.data >> 7).count_ones() as i32;
         let white_deep = std::cmp::max(0, self.length as i32 - 7 - black_deep);
         [

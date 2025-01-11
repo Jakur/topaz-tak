@@ -5,7 +5,9 @@ use crate::{Bitboard, BitboardStorage};
 use std::fmt;
 
 mod move_order;
-pub use move_order::{KillerMoves, MoveBufferHyper, PlaceHistory, SmartMoveBuffer, TestMoveBuffer};
+pub use move_order::{
+    HistoryMoves, KillerMoves, MoveBufferHyper, PlaceHistory, SmartMoveBuffer, TestMoveBuffer,
+};
 #[allow(dead_code)]
 pub mod magic;
 pub mod ptn;

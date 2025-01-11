@@ -9,13 +9,11 @@ use std::collections::HashMap;
 use std::env;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufWriter, Write};
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
 use topaz_tak::eval::{Evaluator, Weights5, Weights6, NNUE6};
-use topaz_tak::search::book;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::transposition_table::HashTable;
 use topaz_tak::*;
@@ -73,7 +71,7 @@ pub fn main() {
                     }
                     TakGame::Standard6(board) => {
                         // let mut eval = Weights6::default();
-                        let mut eval = eval::NNUE6::new();
+                        let mut eval = eval::NNUE6::default();
                         // let mut eval = eval::SmoothWeights6::empty();
                         // let mut eval = eval::PST6::default();
                         // dbg!(&eval);
@@ -93,7 +91,7 @@ pub fn main() {
                         // }
                         // dbg!(opp_comp);
                         dbg!(score0);
-                        dbg!(topaz_tak::eval::nn_repr(&board));
+                        // dbg!(topaz_tak::eval::nn_repr(&board));
                         // dbg!(null_move_score);
                         dbg!(&board);
                         dbg!(board.hash());
@@ -115,7 +113,7 @@ pub fn main() {
                 let mut active_player = Color::White;
                 let mut info = SearchInfo::new(20, &table).time_bank(TimeBank::flat(MILLIS));
                 // let mut eval = eval::Weights6::default();
-                let mut eval = eval::NNUE6::new();
+                let mut eval = eval::NNUE6::default();
                 let mvs: Vec<_> = data
                     .split_whitespace()
                     .filter_map(|x| {
@@ -739,8 +737,8 @@ fn tei_loop() {
                 let init = init.small_clone();
                 thread::spawn(move || match size {
                     5 => play_game_tei::<Weights5>(recv, init).unwrap(),
-                    // 6 => play_game_tei::<eval::SmoothWeights6>(recv, init).unwrap(),
                     6 => play_game_tei::<NNUE6>(recv, init).unwrap(),
+                    // 6 => play_game_tei::<Weights6>(recv, init).unwrap(),
                     _ => unimplemented!(),
                 });
             }
@@ -773,7 +771,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
     let table = HashTable::new(2 << 24);
     let mut info = SearchInfo::new(MAX_DEPTH, &table);
     let book = playtak_book();
-    // let mut eval = Weights5::default();
+    // let mut eval = Weights6::default();
     let mut eval = crate::eval::NNUE6::default();
     // eval.add_noise();
     // let eval = Evaluator6 {};
@@ -802,7 +800,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                 info = SearchInfo::new(MAX_DEPTH, &table)
                     .time_bank(TimeBank::flat(use_time))
                     .abort_depth(50);
-                let res = topaz_tak::search::multi_search(&mut board, &mut eval, &mut info, 4);
+                let res = topaz_tak::search::multi_search(&mut board, &mut eval, &mut info, 1);
                 if let Some(outcome) = res {
                     server_send
                         .send(outcome.best_move().expect("could not find best move!"))
@@ -856,7 +854,8 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
 
 fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) {
     // let mut opp = "Tiltak_Bot";
-    let mut opp = "WilemBot";
+    let mut opp = "Foo";
+    // let mut opp = "WilemBot";
     let login_s = if let Some((user, pass)) = playtak_auth() {
         format!("Login {} {}\n", user, pass)
     } else {
