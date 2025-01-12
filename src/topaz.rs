@@ -177,17 +177,8 @@ pub fn main() {
             gen_magics();
             return;
         } else if arg1 == "order" {
-            let vals: Vec<_> = SAVED_TPS
-                .values()
-                .filter_map(|tps| {
-                    if Board6::try_from_tps(tps).is_ok() {
-                        Some((*tps, 12))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let nodes = search_efficiency(&vals, true).unwrap();
+            let positions = "/home/justin/Code/rust/topaz-eval/positions.txt";
+            let nodes = search_efficiency(positions, 6, false).unwrap();
             dbg!(nodes.into_iter().sum::<usize>());
             return;
         } else if arg1 == "selfplay" {
@@ -250,37 +241,6 @@ pub fn main() {
                 _ => todo!(),
             }
             println!("{:?}", game.game_result());
-            return;
-        } else if arg1 == "test" {
-            let time = Instant::now();
-            // let s = "2,x4,1/x4,1,x/x,2,12C,1,1,x/x,1,2,21C,x2/x,2,2,x3/x2,2,1,x2 1 10";
-            // let s = "1,1,2,21,2,2/12,1111112C,2,1S,2,121S/1,x,221C,2,212S,21/1,2,x,2,1S,x/1,112S,2,1,1,1/1,x,112,112S,2,2 1 39";
-            // let mut board = Board6::try_from_tps(s).unwrap();
-            // let eval = Weights6::default();
-            // let mut info = SearchInfo::new(4, 1_000_000);
-            // search(&mut board, &eval, &mut info);
-            // let pv_move = info.pv_move(&board).unwrap();
-            // println!("Computer Choose: {}", pv_move.to_ptn::<Board6>());
-            // info.print_cuts();
-            // let node_counts = search_efficiency(&["empty6"], 8);
-            let examine = vec![("opening1", 12)];
-            // let mut board = Board6::try_from_tps(saved_tps("start4").unwrap()).unwrap();
-            // let mut eval = Weights6::default();
-            // eval.add_noise();
-            // eval.evaluate(&board, 0);
-            // board.do_move(GameMove::try_from_ptn("d3", &board).unwrap());
-            let node_counts = search_efficiency(&examine, false).unwrap();
-            // let node_counts =
-            //     search_efficiency(&[("opening1", 8), ("opening2", 8), ("midgame1", 6)], false)
-            //         .unwrap();
-            // let node_counts = search_efficiency(&["alion1", "alion2", "alion3", "topaz1"], 6);
-            let nodes: usize = node_counts.into_iter().sum();
-            println!(
-                "Nodes: {} Nps: {}",
-                nodes,
-                1000 * nodes as u128 / time.elapsed().as_millis()
-            );
-            println!("Time: {} ms", time.elapsed().as_millis());
             return;
         } else if arg1 == "tinue" {
             let mut attacker = true;
@@ -406,55 +366,31 @@ fn saved_tps(name: &str) -> Option<&str> {
     SAVED_TPS.get(name).map(|x| *x)
 }
 
-fn search_efficiency(names: &[(&str, usize)], save: bool) -> Result<Vec<usize>> {
+fn search_efficiency(file: &str, depth: usize, save: bool) -> Result<Vec<usize>> {
     let mut vec = Vec::new();
-    let old = {
-        if let Ok(read_data) = std::fs::read_to_string("node_counts.csv") {
-            let map: HashMap<String, usize> = read_data
-                .lines()
-                .filter_map(|x| {
-                    let sp: Vec<_> = x.split(',').collect();
-                    if sp.len() == 3 {
-                        Some((sp[0].to_string(), sp[2].parse().unwrap()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            Some(map)
-        } else {
-            None
-        }
-    };
-    let table = HashTable::new(2 << 20);
-    for (name, depth) in names {
-        let tps = if let Some(tps) = saved_tps(name) {
-            tps
-        } else {
-            name
-        };
-        let mut board = Board6::try_from_tps(tps).unwrap();
+    let table = HashTable::new(2 << 18);
+    let f = io::BufReader::new(OpenOptions::new().read(true).open(file)?);
+    for line in f.lines().take(10) {
+        let tps = line?;
+        let mut board = Board6::try_from_tps(&tps).unwrap();
         let mut eval = Weights6::default();
-        let mut info = SearchInfo::new(*depth, &table);
+        let mut info = SearchInfo::new(depth, &table);
         search(&mut board, &mut eval, &mut info);
-        dbg!(info.stats);
+        dbg!(&info.stats);
         // for idx in 0..36 {
         //     let dummy_move = GameMove::from_placement(Piece::WhiteFlat, idx);
         //     let ptn_idx = dummy_move.to_ptn::<Board6>();
         //     println!("{}: {:?}", ptn_idx, info.hist_moves.square_data(idx));
         // }
-        vec.push(info.nodes);
-        if let Some(old_nodes) = old.as_ref().and_then(|x| x.get(*name)) {
-            let diff = (info.nodes as f64 - *old_nodes as f64) / *old_nodes as f64;
-            println!("{}: {}", name, diff);
-        }
+        vec.push(info.nodes());
         table.clear();
     }
     if save {
-        let mut f = std::fs::File::create("node_counts.csv")?;
-        for ((name, depth), nodes) in names.iter().zip(vec.iter()) {
-            write!(&mut f, "{},{},{}\n", name, depth, nodes)?;
-        }
+        todo!()
+        // let mut f = std::fs::File::create("node_counts.csv")?;
+        // for ((name, depth), nodes) in names.iter().zip(vec.iter()) {
+        //     write!(&mut f, "{},{},{}\n", name, depth, nodes)?;
+        // }
     }
     Ok(vec)
 }

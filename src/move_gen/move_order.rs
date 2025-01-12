@@ -299,6 +299,8 @@ impl TestMoveBuffer {
 
 pub struct SmartMoveBuffer {
     moves: Vec<ScoredMove>,
+    top_placements: [GameMove; 10],
+    top_placement_idx: usize,
     // stack_hist: Vec<i16>,
     queries: usize,
     // flat_attempts: i16,
@@ -309,8 +311,23 @@ impl SmartMoveBuffer {
         Self {
             moves: Vec::new(),
             // stack_hist: vec![0; buffer_size],
+            top_placements: [GameMove::null_move(); 10],
             queries: 0,
+            top_placement_idx: 0,
             // flat_attempts: 0,
+        }
+    }
+    pub fn apply_history_penalty<const T: usize>(
+        &self,
+        bonus: i32,
+        cut_move: GameMove,
+        hist: &mut PlaceHistory<T>,
+    ) {
+        // Todo is this too slow?
+        for mv in self.top_placements {
+            if mv.is_place_move() && mv.place_piece() == cut_move.place_piece() {
+                hist.update(bonus, mv);
+            }
         }
     }
     pub fn drop_below_score(&mut self, threshold: i16) {
@@ -498,6 +515,10 @@ impl SmartMoveBuffer {
                 })
                 .unwrap();
             let m = *m;
+            if m.mv.is_place_move() && self.top_placement_idx < self.top_placements.len() {
+                self.top_placements[self.top_placement_idx] = m.mv;
+                self.top_placement_idx += 1;
+            }
             // if m.mv.is_stack_move() {
             //     let hist_score = &mut self.stack_hist[m.mv.src_index()];
             //     if *hist_score < 10 {
@@ -607,84 +628,84 @@ impl KillerMoves {
 }
 
 pub struct PlaceHistory<const SIZE: usize> {
-    all_flat: [u32; SIZE],
-    flat_total: u32,
-    white_wall: [u32; SIZE],
-    black_wall: [u32; SIZE],
-    all_cap: [u32; SIZE],
-    cap_total: u32,
-    white_wall_total: u32,
-    black_wall_total: u32,
+    all_flat: [i32; SIZE],
+    white_wall: [i32; SIZE],
+    black_wall: [i32; SIZE],
+    all_cap: [i32; SIZE],
 }
 
 impl<const SIZE: usize> PlaceHistory<SIZE> {
     pub fn new() -> Self {
-        let sz = SIZE as u32;
         Self {
-            all_flat: [1; SIZE],
-            white_wall: [1; SIZE],
-            black_wall: [1; SIZE],
-            all_cap: [1; SIZE],
-            flat_total: sz,
-            cap_total: sz,
-            white_wall_total: sz,
-            black_wall_total: sz,
+            all_flat: [0; SIZE],
+            white_wall: [0; SIZE],
+            black_wall: [0; SIZE],
+            all_cap: [0; SIZE],
         }
     }
-    pub fn update(&mut self, depth: usize, mv: GameMove) {
-        let value = (depth * depth) as u32;
+    pub fn update(&mut self, bonus: i32, mv: GameMove) {
+        const MAX_HISTORY: i32 = 125;
+        let clamped = bonus.clamp(-MAX_HISTORY, MAX_HISTORY);
         let idx = mv.src_index();
-        match mv.place_piece() {
-            Piece::BlackFlat | Piece::WhiteFlat => {
-                self.all_flat[idx] += value;
-                self.flat_total += value;
-            }
-            Piece::WhiteCap | Piece::BlackCap => {
-                self.all_cap[idx] += value;
-                self.cap_total += value;
-            }
-            Piece::WhiteWall => {
-                self.white_wall[idx] += value;
-                self.white_wall_total += value;
-            }
-            Piece::BlackWall => {
-                self.black_wall[idx] += value;
-                self.black_wall_total += value;
-            }
-        }
+        let table = match mv.place_piece() {
+            Piece::BlackFlat | Piece::WhiteFlat => &mut self.all_flat,
+            Piece::WhiteCap | Piece::BlackCap => &mut self.all_cap,
+            Piece::WhiteWall => &mut self.white_wall,
+            Piece::BlackWall => &mut self.black_wall,
+        };
+        table[idx] += clamped - table[idx] * clamped.abs() / MAX_HISTORY;
     }
     pub fn flat_score(&self, idx: usize) -> i16 {
-        let raw_score = self.all_flat[idx];
-        (raw_score.ilog2() as i16).saturating_sub((self.flat_total.ilog2() as i16) / 2)
+        let sign = self.all_flat[idx].signum() as i16;
+        let raw_score = (1 + self.all_flat[idx].abs()).ilog2();
+
+        // let raw_score = self.all_flat[idx];
+        // (raw_score.ilog2() as i16).saturating_sub((self.flat_total.ilog2() as i16) / 2)
+        sign * raw_score as i16
     }
     pub fn cap_score(&self, idx: usize) -> i16 {
-        let raw_score = self.all_cap[idx];
-        (raw_score.ilog2() as i16).saturating_sub((self.cap_total.ilog2() as i16) / 2)
+        let sign = self.all_cap[idx].signum() as i16;
+        let raw_score = (1 + self.all_flat[idx].abs()).ilog2();
+        sign * raw_score as i16
     }
     pub fn wall_score(&self, idx: usize, color: Color) -> i16 {
-        let (raw_score, total) = match color {
-            Color::White => (self.white_wall[idx], self.white_wall_total),
-            Color::Black => (self.black_wall[idx], self.black_wall_total),
+        let table = match color {
+            Color::White => &self.white_wall,
+            Color::Black => &self.black_wall,
         };
-        (raw_score.ilog2() as i16).saturating_sub((total.ilog2() as i16) / 2)
-    }
-    pub fn score_place_move(&mut self, mv: GameMove) -> i16 {
-        let idx = mv.src_index();
-        let raw_score = {
-            match mv.place_piece() {
-                Piece::BlackFlat | Piece::WhiteFlat => self.all_flat[idx],
-                Piece::WhiteCap | Piece::BlackCap => self.all_cap[idx],
-                Piece::WhiteWall => self.white_wall[idx],
-                Piece::BlackWall => self.black_wall[idx],
-            }
-        };
-        raw_score.ilog2() as i16
+        let sign = table[idx].signum() as i16;
+        let raw_score = (1 + table[idx].abs()).ilog2();
+        sign * raw_score as i16
     }
     pub fn debug(&self) {
         dbg!(&self.all_flat);
         dbg!(&self.white_wall);
         dbg!(&self.black_wall);
         dbg!(&self.all_cap);
+    }
+}
+
+impl<const SIZE: usize> std::fmt::Debug for PlaceHistory<SIZE> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn construct_table(arr: &[i32], length: usize) -> Result<String, fmt::Error> {
+            use std::fmt::Write;
+            let mut out = String::new();
+            writeln!(&mut out, "[")?;
+            for i in 0..length {
+                for j in 0..length {
+                    write!(&mut out, "{},", arr[j + i * length])?;
+                }
+                writeln!(&mut out, "")?;
+            }
+            writeln!(&mut out, "]")?;
+            Ok(out)
+        }
+        f.debug_struct("PlaceHistory")
+            .field("all_flat", &construct_table(&self.all_flat, 7)?)
+            .field("white_wall", &construct_table(&self.white_wall, 7)?)
+            .field("black_wall", &construct_table(&self.black_wall, 7)?)
+            .field("all_cap", &construct_table(&self.all_cap, 7)?)
+            .finish()
     }
 }
 

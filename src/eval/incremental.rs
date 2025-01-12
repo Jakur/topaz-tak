@@ -18,7 +18,7 @@ const _ASS: () = assert!(
 );
 
 pub static NNUE: Network = unsafe {
-    let bytes = include_bytes!("quantised_6.bin");
+    let bytes = include_bytes!("quantised_7.bin");
     assert!(bytes.len() == std::mem::size_of::<Network>());
     std::mem::transmute(*bytes)
 };

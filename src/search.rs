@@ -52,7 +52,6 @@ const IID_DIVISION: usize = 2;
 
 pub struct SearchInfo<'a> {
     pub max_depth: usize,
-    pub nodes: usize,
     pv_table: &'a HashTable,
     pub killer_moves: Vec<KillerMoves>,
     pub hist_moves: PlaceHistory<49>, // Todo make this better generic
@@ -78,7 +77,6 @@ impl<'a> SearchInfo<'a> {
             // stack_moves: HistoryMoves::new(7), // Todo fix this
             // stack_win_kill: vec![KillerMoves::new(); depth_size],
             hist_moves: PlaceHistory::new(), // Todo init in search
-            nodes: 0,
             stopped: false,
             input: None,
             time_bank: TimeBank::flat(120_000), // Some large but not enormous default
@@ -89,12 +87,15 @@ impl<'a> SearchInfo<'a> {
             quiet: false,
         }
     }
-    pub fn print_cuts(&self) {
-        println!(
-            "Fail High: {} Fail High First: {} Transposition Hits: {} ",
-            self.stats.fail_high, self.stats.fail_high_first, self.stats.transposition_cutoffs
-        );
+    pub fn nodes(&self) -> usize {
+        self.stats.nodes
     }
+    // pub fn print_cuts(&self) {
+    //     println!(
+    //         "Fail High: {} Fail High First: {} Transposition Hits: {} ",
+    //         self.stats.fail_high, self.stats.fail_high_first, self.stats.transposition_cutoffs
+    //     );
+    // }
     pub fn set_start_ply(&mut self, start_ply: usize) {
         self.start_ply = start_ply;
     }
@@ -112,7 +113,7 @@ impl<'a> SearchInfo<'a> {
     }
     pub fn start_search(&mut self) {
         self.stopped = false;
-        self.nodes = 0;
+        self.stats = SearchStats::new(16);
         self.start_time = Instant::now();
     }
     pub fn take_input_stream(&mut self) -> Option<Receiver<TeiCommand>> {
@@ -176,8 +177,7 @@ impl<'a> SearchInfo<'a> {
 
 #[derive(Debug)]
 pub struct SearchStats {
-    fail_high: u64,
-    fail_high_first: u64,
+    nodes: usize,
     transposition_cutoffs: u64,
     ordering_cut: Vec<usize>,
     ordering_alpha: Vec<usize>,
@@ -187,8 +187,7 @@ pub struct SearchStats {
 impl SearchStats {
     pub fn new(ordering_size: usize) -> Self {
         Self {
-            fail_high: 0,
-            fail_high_first: 0,
+            nodes: 0,
             transposition_cutoffs: 0,
             ordering_cut: vec![0; ordering_size],
             ordering_alpha: vec![0; ordering_size],
@@ -226,7 +225,7 @@ where
     T: TakBoard,
 {
     pub fn new(score: i32, pv: Vec<GameMove>, depth: usize, search_info: &SearchInfo) -> Self {
-        let nodes = search_info.nodes;
+        let nodes = search_info.nodes();
         let time = search_info.start_time.elapsed().as_millis();
         // let t_cuts = search_info.transposition_cutoffs;
         let t_cuts = search_info.stats.transposition_cutoffs;
@@ -393,7 +392,9 @@ where
             if !info.quiet {
                 print!(
                     "Aborted Depth: {} Score: {} Nodes: {} PV: ",
-                    depth, best_score, info.nodes
+                    depth,
+                    best_score,
+                    info.nodes()
                 );
             }
             break;
@@ -403,7 +404,7 @@ where
                 "info depth {} score cp {} nodes {} hashfull {} pv ",
                 depth,
                 best_score,
-                info.nodes,
+                info.nodes(),
                 info.pv_table.occupancy()
             );
         }
@@ -480,7 +481,9 @@ where
             if !info.quiet {
                 print!(
                     "Aborted Depth: {} Score: {} Nodes: {} PV: ",
-                    depth, best_score, info.nodes
+                    depth,
+                    best_score,
+                    info.nodes()
                 );
             }
             break;
@@ -490,7 +493,7 @@ where
                 "info depth {} score cp {} nodes {} hashfull {} pv ",
                 depth,
                 best_score,
-                info.nodes,
+                info.nodes(),
                 info.pv_table.occupancy()
             );
         }
@@ -505,6 +508,7 @@ where
                 print!("{} ", ptn);
             }
             println!();
+            // println!("{:#?}", &info.hist_moves);
         }
         // Stop wasting time
         if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
@@ -593,9 +597,9 @@ where
         is_pv,
         is_root,
     } = data;
-    info.nodes += 1;
+    info.stats.nodes += 1;
     const FREQ: usize = (1 << 12) - 1; // Per 4k nodes
-    if (info.nodes & FREQ) == FREQ {
+    if (info.nodes() & FREQ) == FREQ {
         info.check_stop();
     }
     match board.game_result() {
@@ -834,8 +838,6 @@ where
                 }
                 if score > alpha {
                     if score >= beta {
-                        info.stats.fail_high_first += 1;
-                        info.stats.fail_high += 1;
                         info.stats.add_cut(0);
                         if m.is_stack_move() {
                             let ply_depth = info.ply_depth(board);
@@ -844,7 +846,9 @@ where
                             }
                             // info.stack_moves.update(depth, m);
                         } else {
-                            info.hist_moves.update(depth, m);
+                            let bonus = 5 * depth as i32 - 4;
+                            info.hist_moves.update(bonus, m);
+                            // Should be no bad moves, so move on
                         }
                         info.store_move(
                             board,
@@ -1000,10 +1004,6 @@ where
         }
         if score > alpha {
             if score >= beta {
-                if count == 0 {
-                    info.stats.fail_high_first += 1;
-                }
-                info.stats.fail_high += 1;
                 info.stats.add_cut(count);
                 if m.is_stack_move() {
                     let ply_depth = info.ply_depth(board);
@@ -1011,7 +1011,10 @@ where
                         info.killer_moves[ply_depth].add(m);
                     }
                 } else {
-                    info.hist_moves.update(depth, m);
+                    let bonus = 5 * depth as i32 - 4;
+                    info.hist_moves.update(bonus, m);
+                    // Negative malus bad moves
+                    moves.apply_history_penalty(-bonus, m, &mut info.hist_moves);
                 }
                 info.store_move(
                     board,

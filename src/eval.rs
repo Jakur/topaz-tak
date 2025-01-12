@@ -44,7 +44,7 @@ impl Evaluator for NNUE6 {
     type Game = Board6;
 
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
-        const TEMPO_OFFSET: i32 = 0; // -100
+        const TEMPO_OFFSET: i32 = -50; // -100
 
         // Build TakBoard abstraction
         let mut caps = [255, 255];
