@@ -7,7 +7,6 @@ use anyhow::{anyhow, Result};
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use termtree::Tree;
 
 const INFINITY: u32 = 100_000_000;
 
@@ -126,6 +125,7 @@ impl TopMoves {
     }
 }
 
+#[cfg(feature = "cli")]
 pub struct InteractiveSearch<T> {
     pub board: T,
     bounds_table: HashMap<u64, Bounds>,
@@ -134,6 +134,7 @@ pub struct InteractiveSearch<T> {
     view_hist: Vec<(GameMove, RevGameMove)>,
 }
 
+#[cfg(feature = "cli")]
 impl<T> InteractiveSearch<T>
 where
     T: TakBoard,
@@ -190,7 +191,7 @@ where
             .iter()
             .map(|(m, _)| m.to_ptn::<T>())
             .collect();
-        let mut tree = Tree::root(Solved::Root(line));
+        let mut tree = termtree::Tree::root(Solved::Root(line));
         if self.view_hist.len() % 2 == 0 {
             self.recurse_attack(&mut tree);
         } else {
@@ -198,7 +199,7 @@ where
         }
         println!("{}", tree);
     }
-    fn recurse_attack(&mut self, root: &mut Tree<Solved<T>>) {
+    fn recurse_attack(&mut self, root: &mut termtree::Tree<Solved<T>>) {
         let attempt = self.tinue_attempts.get(&self.board.hash());
         match attempt {
             Some(AttackerOutcome::TakThreats(moves)) => {
@@ -213,7 +214,7 @@ where
                     } else {
                         Solved::Unknown(m)
                     };
-                    let mut child = Tree::root(solved);
+                    let mut child = termtree::Tree::root(solved);
                     if self.expand.contains(&self.board.hash()) {
                         self.recurse_defend(&mut child);
                     }
@@ -222,19 +223,19 @@ where
                 }
             }
             Some(AttackerOutcome::NoTakThreats) => {
-                root.push(Tree::root(Solved::AttackerNoMoves(PhantomData)));
+                root.push(termtree::Tree::root(Solved::AttackerNoMoves(PhantomData)));
             }
             Some(AttackerOutcome::HasRoad(m)) => {
-                root.push(Tree::root(Solved::AttackerRoad(*m)));
+                root.push(termtree::Tree::root(Solved::AttackerRoad(*m)));
             }
             None => todo!(),
         }
     }
-    fn recurse_defend(&mut self, root: &mut Tree<Solved<T>>) {
+    fn recurse_defend(&mut self, root: &mut termtree::Tree<Solved<T>>) {
         let attempt = TinueSearch::defender_responses(&mut self.board, None);
         match attempt {
             DefenderOutcome::CanWin(m) => {
-                root.push(Tree::root(Solved::DefenderRoad(m)));
+                root.push(termtree::Tree::root(Solved::DefenderRoad(m)));
             }
             DefenderOutcome::Defenses(vec) => {
                 for m in vec {
@@ -248,7 +249,7 @@ where
                     } else {
                         Solved::Unknown(m)
                     };
-                    let mut child = Tree::root(solved);
+                    let mut child = termtree::Tree::root(solved);
                     if self.expand.contains(&self.board.hash()) {
                         self.recurse_attack(&mut child);
                     }
@@ -260,6 +261,7 @@ where
     }
 }
 
+#[cfg(feature = "cli")]
 #[derive(Debug, Clone)]
 enum Solved<T> {
     Proved(GameMove),
@@ -271,6 +273,7 @@ enum Solved<T> {
     Root(Vec<String>),
 }
 
+#[cfg(feature = "cli")]
 impl<T> std::fmt::Display for Solved<T>
 where
     T: TakBoard,

@@ -10,25 +10,6 @@ use incremental::PieceSquare;
 pub use incremental::NNUE6;
 // static NN6: once_cell::sync::OnceCell<incremental::Weights> = once_cell::sync::OnceCell::new();
 
-pub fn global_init_weights(f_name: &str) {
-    // println!("Setting global weights!");
-    // let weights = incremental::Weights::from_file(File::open(f_name).unwrap()).unwrap();
-    // NN6.set(weights)
-    //     .ok()
-    //     .expect("Unable to override existing NN6 Weights!");
-}
-
-fn nn_file() -> Option<String> {
-    let _ = dotenv::dotenv();
-    let mut path = None;
-    for (key, value) in std::env::vars() {
-        if key == "NN" {
-            path = Some(value);
-        }
-    }
-    path
-}
-
 #[allow(dead_code)]
 mod incremental;
 mod smooth;

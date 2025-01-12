@@ -52,8 +52,6 @@ lazy_static! {
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
-    // eval::global_init_weights("/home/justin/Code/rust/topaz-eval/explore/vals_perp_m21.txt");
-    eval::global_init_weights("/home/justin/Code/rust/topaz-eval/wide_net12.txt");
     if let Some(arg1) = args.get(1) {
         if arg1 == "black" {
             play_game_cmd(false);
@@ -686,8 +684,6 @@ fn tei_loop() {
             if name == "HalfKomi" {
                 init.komi = value.parse().unwrap();
                 println!("Setting komi to {}", init.komi);
-            } else if name == "NN" {
-                eval::global_init_weights(value);
             }
         } else {
             println!("Unknown Tei Command: {}", buffer);

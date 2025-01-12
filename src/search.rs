@@ -15,7 +15,7 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "cli")]
 pub mod book;
-#[cfg(feature = "cli")]
+
 pub mod proof;
 
 const NULL_REDUCTION_ENABLED: bool = true;
@@ -1276,16 +1276,6 @@ fn naive_minimax<T: TakBoard, E: Evaluator<Game = T>>(
             eval
         });
         child_evaluations.max().unwrap()
-    }
-}
-
-#[cfg(not(feature = "cli"))]
-mod book {
-    pub struct Book();
-    impl Book {
-        pub fn get<T>(&self, _: &T) -> Option<i32> {
-            return None;
-        }
     }
 }
 

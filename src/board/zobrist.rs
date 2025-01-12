@@ -59,8 +59,10 @@ impl ZobristTable {
         hash
     }
     #[allow(dead_code)]
-    #[cfg(random)]
+    #[cfg(feature = "random")]
     fn build_table() {
+        use rand_core::{RngCore, SeedableRng};
+        use rand_xoshiro::Xoshiro256PlusPlus;
         use std::fs::File;
         use std::io::{BufWriter, Write};
         const SEED: [u8; 32] = [
