@@ -16,8 +16,6 @@ use std::marker::PhantomData;
 #[cfg(feature = "cli")]
 pub mod book;
 
-pub mod proof;
-
 const NULL_REDUCTION_ENABLED: bool = true;
 const NULL_REDUCE_PV: bool = true; // probably shouldn't
 const NULL_REDUCTION: usize = 2;

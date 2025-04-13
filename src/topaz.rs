@@ -14,8 +14,8 @@ use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
 use topaz_tak::eval::{Evaluator, Weights5, Weights6, NNUE6};
-use topaz_tak::search::book;
-use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
+use topaz_tak::proof::TinueSearch;
+use topaz_tak::search::{book, search, SearchInfo};
 use topaz_tak::transposition_table::HashTable;
 use topaz_tak::*;
 
@@ -288,19 +288,19 @@ pub fn main() {
             };
             let res = match game {
                 TakGame::Standard5(board) => {
-                    let search = crate::search::proof::TinueSearch::new(board)
+                    let search = crate::proof::TinueSearch::new(board)
                         .attacker(attacker)
                         .limit(nodes);
                     proof_interactive(search, svg)
                 }
                 TakGame::Standard6(board) => {
-                    let search = crate::search::proof::TinueSearch::new(board.clone())
+                    let search = crate::proof::TinueSearch::new(board.clone())
                         .attacker(attacker)
                         .limit(nodes);
                     proof_interactive(search, svg)
                 }
                 TakGame::Standard7(board) => {
-                    let search = crate::search::proof::TinueSearch::new(board)
+                    let search = crate::proof::TinueSearch::new(board)
                         .attacker(attacker)
                         .limit(nodes);
                     proof_interactive(search, svg)
@@ -428,7 +428,7 @@ fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>, svg: bool) -> Resu
             )
             .unwrap();
     } else {
-        let mut interactive = crate::search::proof::InteractiveSearch::new(search);
+        let mut interactive = crate::proof::InteractiveSearch::new(search);
         let mut first = true;
         interactive.print_root();
         loop {

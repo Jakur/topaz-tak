@@ -1,12 +1,13 @@
 use super::*;
 use crate::board::TakBoard;
-use crate::move_gen::generate_all_moves;
+use crate::move_gen::{generate_all_moves, generate_all_stack_moves, MoveBuffer};
 use crate::Piece;
 use crate::RevGameMove;
 use anyhow::{anyhow, Result};
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
+use std::marker::PhantomData;
 
 const INFINITY: u32 = 100_000_000;
 

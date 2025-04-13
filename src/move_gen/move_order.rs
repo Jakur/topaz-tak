@@ -1,7 +1,4 @@
-use std::marker::PhantomData;
-
 use super::*;
-use crate::search::SearchInfo;
 
 // [6, 5, 2, 7, 3, 3, 2, -2, 10, 1, -1, 0, -2, -1, -2, 4, -2, 1]
 #[derive(Debug, Clone)]

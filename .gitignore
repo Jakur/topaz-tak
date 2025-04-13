@@ -3,3 +3,5 @@
 *.svg
 perf.*
 .env
+src/*.bin
+*.book

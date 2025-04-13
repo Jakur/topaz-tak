@@ -3,16 +3,20 @@
 use anyhow::{anyhow, ensure, Result};
 pub use board::{Bitboard, BitboardStorage, Piece, Stack, TakBoard};
 pub use move_gen::{generate_all_moves, GameMove, RevGameMove};
-use transposition_table::HashTable;
 
 pub mod board;
+#[cfg(feature = "evaluation")]
 pub mod eval;
 pub mod move_gen;
+pub mod proof;
+#[cfg(feature = "evaluation")]
 pub mod search;
+#[cfg(feature = "evaluation")]
 pub mod transposition_table;
 
 use crate::board::{Board5, Board6, Board7};
 
+#[cfg(feature = "evaluation")]
 pub struct GameInitializer {
     pub hash_size: usize,
     pub max_depth: usize,
@@ -20,9 +24,9 @@ pub struct GameInitializer {
     pub add_noise: bool,
     pub num_threads: usize,
     pub use_nn: bool,
-    table: Option<HashTable>,
 }
 
+#[cfg(feature = "evaluation")]
 impl GameInitializer {
     pub fn new(hash_size: usize, max_depth: usize, komi: u8, add_noise: bool) -> Self {
         Self {
@@ -32,7 +36,6 @@ impl GameInitializer {
             add_noise,
             num_threads: 1,
             use_nn: false,
-            table: None,
         }
     }
     pub fn get_board<E: eval::Evaluator + Default>(&self) -> (E::Game, E) {
@@ -45,10 +48,7 @@ impl GameInitializer {
         )
     }
     pub fn small_clone(&self) -> Self {
-        Self {
-            table: None,
-            ..*self
-        }
+        Self { ..*self }
     }
     // pub fn various_search(&mut self, g: TakGame) {
     //     match g {
@@ -69,6 +69,7 @@ impl GameInitializer {
     // }
 }
 
+#[cfg(feature = "evaluation")]
 impl std::default::Default for GameInitializer {
     fn default() -> Self {
         Self {
@@ -78,7 +79,6 @@ impl std::default::Default for GameInitializer {
             use_nn: false,
             num_threads: 1,
             add_noise: false,
-            table: None,
         }
     }
 }
