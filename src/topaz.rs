@@ -14,6 +14,7 @@ use std::time::Instant;
 use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
 use topaz_tak::eval::{Evaluator, Weights5, Weights6, NNUE6};
+use topaz_tak::search::book;
 use topaz_tak::search::{proof::TinueSearch, search, SearchInfo};
 use topaz_tak::transposition_table::HashTable;
 use topaz_tak::*;
@@ -697,12 +698,12 @@ const PLAYTAK_KOMI: u8 = 4;
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
     const MAX_DEPTH: usize = 32;
     const KOMI: u8 = PLAYTAK_KOMI;
-    const MAX_OPENING_LENGTH: usize = 0;
+    const MAX_OPENING_LENGTH: usize = 10;
     let mut move_cache = Vec::new();
     let mut board = Board6::new().with_komi(KOMI);
     let table = HashTable::new(2 << 24);
     let mut info = SearchInfo::new(MAX_DEPTH, &table);
-    let book = playtak_book();
+    let book = load_playtak_book();
     // let mut eval = Weights6::default();
     let mut eval = crate::eval::NNUE6::default();
     // eval.add_noise();
@@ -712,17 +713,21 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
         match message {
             TeiCommand::Go(_) => {
                 if let Some(ref book) = book {
+                    dbg!("Found Book");
                     if board.ply() <= MAX_OPENING_LENGTH {
-                        let symmetries = board.symmetries();
-                        for (sym_idx, pos) in symmetries.into_iter().enumerate() {
-                            if let Some(mv_str) = book.get(&pos.hash()) {
-                                let mv = GameMove::try_from_ptn(mv_str.as_str(), &pos);
-                                if let Some(mv) = mv {
-                                    let fixed_mv = mv.reverse_symmetry::<Board6>(sym_idx);
-                                    if board.legal_move(fixed_mv) {
-                                        server_send.send(fixed_mv.to_ptn::<Board6>()).unwrap();
-                                        continue 'outer;
-                                    }
+                        let move_str: Vec<_> = move_cache
+                            .iter()
+                            .copied()
+                            .map(|x: GameMove| x.to_ptn::<Board6>())
+                            .collect();
+                        let move_str = move_str.join(" ");
+                        if let Some(next_ptn) = book.lookup(&move_str) {
+                            dbg!(&next_ptn);
+                            let game_move = GameMove::try_from_ptn(&next_ptn, &board);
+                            if let Some(game_move) = game_move {
+                                if board.legal_move(game_move) {
+                                    server_send.send(game_move.to_ptn::<Board6>()).unwrap();
+                                    continue 'outer;
                                 }
                             }
                         }
@@ -939,7 +944,7 @@ fn playtak_auth() -> Option<(String, String)> {
     Some((username?, password?))
 }
 
-fn playtak_book() -> Option<HashMap<u64, String>> {
+fn load_playtak_book() -> Option<&'static book::Book> {
     use std::io::Read;
     dotenv::dotenv().ok()?;
     let mut pt_book = None;
@@ -949,17 +954,15 @@ fn playtak_book() -> Option<HashMap<u64, String>> {
         }
     }
     let pt_book = pt_book?;
-    let mut map = HashMap::new();
+    let mut vec = Vec::new();
     if let Ok(mut file) = std::fs::File::open(&pt_book) {
         let mut book_data = String::new();
         file.read_to_string(&mut book_data).ok()?;
         for line in book_data.lines() {
-            let mut split = line.split(",");
-            let hash: u64 = split.next()?.parse().ok()?;
-            let ptn = split.next()?.to_string();
-            map.insert(hash, ptn);
+            vec.push(line.to_string());
         }
-        Some(map)
+        let book = book::load_book_data(vec);
+        Some(book)
     } else {
         None
     }
@@ -968,7 +971,7 @@ fn playtak_book() -> Option<HashMap<u64, String>> {
 fn gen_magics() {
     use rand_core::SeedableRng;
     let mut seed: [u8; 32] = [0; 32];
-    getrandom::getrandom(&mut seed).unwrap();
+    getrandom::fill(&mut seed).unwrap();
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::from_seed(seed);
     topaz_tak::move_gen::magic::generate_move_magic6(&mut rng);
 }

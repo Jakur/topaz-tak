@@ -883,10 +883,10 @@ where
         }
     }
     // moves.drop_below_score(-50);
-    let ply_depth = info.ply_depth(board);
+    // let ply_depth = info.ply_depth(board);
     for c in 0..moves.len() {
         let count = if has_searched_pv { c + 1 } else { c };
-        let m = moves.get_best(ply_depth, info);
+        let m = moves.get_best();
 
         let rev_move = board.do_move(m);
         let next_extensions = extensions;
@@ -1086,12 +1086,12 @@ fn gen_and_score<T>(
         moves.gen_score_place_moves(board, &info.hist_moves);
         moves.score_tak_threats(&tak_threats);
         if board.ply() >= 4 {
-            moves.score_stack_moves(info, board);
+            moves.score_stack_moves(board);
         }
     } else {
         if board.ply() >= 4 {
             generate_all_stack_moves(board, moves);
-            moves.score_stack_moves(info, board);
+            moves.score_stack_moves(board);
         }
         moves.gen_score_place_moves(board, &info.hist_moves);
     }

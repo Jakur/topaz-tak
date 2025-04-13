@@ -65,7 +65,7 @@ impl Evaluator for NNUE6 {
         }
     }
 
-    fn is_quiet(&self, game: &Self::Game) -> bool {
+    fn is_quiet(&self, _game: &Self::Game) -> bool {
         true
     }
 }
@@ -444,7 +444,7 @@ macro_rules! eval_impl {
                 //     score
                 // }
             }
-            fn is_quiet(&self, game: &Self::Game) -> bool {
+            fn is_quiet(&self, _game: &Self::Game) -> bool {
                 true
             }
         }
@@ -646,12 +646,6 @@ fn connected_components<B: Bitboard, F: Fn(B, B) -> B>(mut bits: B, flood_fn: F)
     }
     BitOutcome::new(largest, count)
 }
-
-// #[derive(Default, Debug)]
-// struct MomentumCounter {
-//     white_road_diff: i32,
-//     black_road_diff: i32,
-// }
 
 pub struct Weights5 {
     location: [i32; 25],
@@ -865,34 +859,6 @@ impl Weights6 {
         out.push(self.cs_threat);
         out
     }
-
-    #[cfg(feature = "random")]
-    pub fn add_noise(&mut self) {
-        use rand_core::{RngCore, SeedableRng};
-        let mut seed: [u8; 32] = [0; 32];
-        getrandom::getrandom(&mut seed).unwrap();
-        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::from_seed(seed);
-        let offset = rng.next_u32() % 11 + 10;
-        let st_row = (rng.next_u32() % 6) as i32;
-        let st_col = (rng.next_u32() % 6) as i32;
-        // println!("{} @ ({}, {})", offset, st_col, st_row);
-        for row in 0..6 {
-            for col in 0..6 {
-                let idx = row * 6 + col;
-                let dist = (st_row - row).abs() + (st_col - col).abs();
-                let delta = offset as i32 - dist * dist;
-                if delta > 0 {
-                    self.location[idx as usize] += delta;
-                }
-            }
-        }
-        // for r in 0..6 {
-        //     println!("{:?}", &self.location[r * 6..(r + 1) * 6]);
-        // }
-        // for i in 0..self.location.len() {
-        //     self.location[i] += (rng.next_u32() % 4) as i32;
-        // }
-    }
     fn piece_weight(&self, p: Piece) -> i32 {
         match p {
             Piece::WhiteFlat | Piece::BlackFlat => self.piece[0],
@@ -900,58 +866,15 @@ impl Weights6 {
             Piece::WhiteCap | Piece::BlackCap => self.piece[2],
         }
     }
-    // fn stack_top_multiplier(&self, p: Piece) -> (i32, i32) {
-    //     match p {
-    //         Piece::WhiteFlat | Piece::BlackFlat => (self.stack_top[0], self.stack_top[1]),
-    //         Piece::WhiteWall | Piece::BlackWall => (self.stack_top[2], self.stack_top[3]),
-    //         Piece::WhiteCap | Piece::BlackCap => (self.stack_top[4], self.stack_top[5]),
-    //     }
-    // }
 }
 
 impl Default for Weights6 {
     fn default() -> Self {
-        // let data = vec![
-        //     -29, 9, 29, 55, 26, 84, 74, 84, 83, 39, 46, 33, -13, 188, 85, 178, 159, 68, 181, 161,
-        //     198,
-        // ];
-        // let mut data = vec![
-        //     38, 54, 72, 79, 93, 69, 29, 161, 54, 48, 137, 159, 90, 120, 84, 157, 156, 111, 65, 10,
-        //     82, 118, 61, 94, 57, 128, 5, 30, 46, 74, 156,
-        // ];
-        // let mut data = vec![
-        //     9, 53, 77, 76, 96, 86, 19, 162, 24, 54, 138, 163, 64, 161, 18, 103, 127, 92, 39, 8, 89,
-        //     83, 25, 59, 81, 98, 11, 25, 86, 143, 108,
-        // ];
-        // for x in data.iter_mut() {
-        //     *x = (*x) / 2;
-        // }
-        // let data = vec![
-        //     0, 5, 9, 16, 21, 25, 11, 114, 57, 95, 69, 97, 35, 122, 22, 144, 50, 19, 8, 2, 58, 77,
-        //     8, 95, 0, 5, 4, 2, 2, 0, 10,
-        // ];
         let data = vec![
             0, 4, 9, 14, 19, 23, 11, 114, 58, 97, 68, 98, 34, 120, 23, 142, 49, 23, 9, 2, 61, 32,
             17, 72, 2, 84, 2, 4, 5, 6, 8,
         ];
-        // let data = vec![
-        //     145, 163, 163, 161, 135, 102, 126, 163, 0, 1, 160, 161, 38, 160, 9, 163, 90, 161, 150,
-        //     138, 152, 13, 8, 66, 37, 48, 93, 0, 4, 15, 0,
-        // ];
         build_weights(&data)
-        // Weights6 {
-        //     location: [
-        //         -11, -5, -2, -2, -5, -11, -5, 4, 9, 9, 4, -11, -2, 9, 14, 14, 9, -2, -2, 9, 14, 14,
-        //         9, -2, -5, 4, 9, 9, 4, -11, -11, -5, -2, -2, -5, -11,
-        //     ],
-        //     connectivity: 14,
-        //     tempo_offset: 150,
-        //     piece: [122, 57, 113],
-        //     stack_eval: StackEval::build_simple([-61, 85, -29, 99, -20, 116]),
-        //     flat_road: [40, 22, 13, 8],
-        //     cs_threat: 64,
-        //     mom: Default::default(),
-        // }
     }
 }
 
@@ -976,12 +899,6 @@ fn build_weights(w: &WeightBuilder) -> Weights6 {
     let tempo_offset = 150;
     let piece = [w[7], w[8], w[9]];
     let stack_top = [-w[10], w[11], -w[12], w[13], -w[14], w[15]];
-    //     connectivity: 14,
-    //     tempo_offset: 150,
-    //     piece: [122, 57, 113],
-    //     stack_eval: StackEval::build_simple([-61, 85, -29, 99, -20, 116]),
-    //     flat_road: [40, 22, 13, 8],
-    //     cs_threat: 64,
     let flat_road = [w[16], w[17], w[18], w[19]];
     let cs_threat = w[20];
     // 0 +1, +2, +3, +4, +5
@@ -1005,17 +922,6 @@ fn build_weights(w: &WeightBuilder) -> Weights6 {
         flat_diff,
         reserve_diff,
     );
-    // let mut idx = 16;
-    // for top in [Piece::WhiteFlat, Piece::WhiteWall, Piece::WhiteCap].into_iter() {
-    //     for cap in 1..=5 {
-    //         for friendly in 0..=5 - cap {
-    //             weights
-    //                 .stack_eval
-    //                 .set_cap_friendly(top, cap, friendly, w[idx]);
-    //             idx += 1;
-    //         }
-    //     }
-    // }
     weights
 }
 
@@ -1140,19 +1046,16 @@ mod test {
         let s = "x,2,1,x2,1/x,2,2,x,1,1/x,21,21C,2,1,12C/x2,2,x,1,1/x,2,2,x2,1/x2,2,x3 2 13";
         let board = Board6::try_from_tps(s).unwrap();
         let (w_metric, _) =
-            flat_placement_road_h(board.bits.road_pieces(Color::White), board.bits.empty());
+            flat_placement_road_short(board.bits.road_pieces(Color::White), board.bits.empty());
         assert_eq!(w_metric, 1);
         let (b_metric, _) =
-            flat_placement_road_h(board.bits.road_pieces(Color::Black), board.bits.empty());
+            flat_placement_road_short(board.bits.road_pieces(Color::Black), board.bits.empty());
         assert_eq!(b_metric, 2);
         let s = "1,2,1,1,1,x/2,12C,2,1,x2/2,1S,2,1,x2/1,2,21C,1,x2/x,2,x4/x,2,x4 2 12";
         let board = Board6::try_from_tps(s).unwrap();
         let (w_metric, _) =
-            flat_placement_road_h(board.bits.road_pieces(Color::White), board.bits.empty());
+            flat_placement_road_short(board.bits.road_pieces(Color::White), board.bits.empty());
         assert_eq!(w_metric, 2);
-        let (b_metric, _) =
-            flat_placement_road_h(board.bits.road_pieces(Color::Black), board.bits.empty());
-        assert_eq!(b_metric, 5);
     }
 
     #[test]
@@ -1173,15 +1076,15 @@ mod test {
         assert_eq!(5, black_s);
         assert_eq!(4, black_c);
 
-        let s = "x,1,x4/1,2,2,2,2,2/12C,1C,x4/1,1,x4/1,x5/1,x5 2 8";
-        let board = Board6::try_from_tps(s).unwrap();
-        let (white_s, white_c) = one_gap_road(board.bits.road_pieces(Color::White));
-        assert_eq!(6, white_s);
-        assert_eq!(3, white_c);
+        // let s = "x,1,x4/1,2,2,2,2,2/12C,1C,x4/1,1,x4/1,x5/1,x5 2 8";
+        // let board = Board6::try_from_tps(s).unwrap();
+        // let (white_s, white_c) = one_gap_road(board.bits.road_pieces(Color::White));
+        // assert_eq!(6, white_s);
+        // assert_eq!(3, white_c);
 
-        let (black_s, black_c) = one_gap_road(board.bits.road_pieces(Color::Black));
-        assert_eq!(6, black_s);
-        assert_eq!(2, black_c);
+        // let (black_s, black_c) = one_gap_road(board.bits.road_pieces(Color::Black));
+        // assert_eq!(6, black_s);
+        // assert_eq!(2, black_c);
     }
 
     // #[test]

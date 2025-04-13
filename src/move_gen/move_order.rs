@@ -333,7 +333,7 @@ impl SmartMoveBuffer {
     pub fn drop_below_score(&mut self, threshold: i16) {
         self.moves.retain(|x| x.score >= threshold);
     }
-    pub fn score_stack_moves<T: TakBoard>(&mut self, info: &SearchInfo, board: &T) {
+    pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T) {
         let active_side = board.side_to_move();
         let mut stack_idx = usize::MAX;
         // Moves should be grouped by src index due to generator impl
@@ -496,7 +496,7 @@ impl SmartMoveBuffer {
             }
         }
     }
-    pub fn get_best(&mut self, ply: usize, info: &SearchInfo) -> GameMove {
+    pub fn get_best(&mut self) -> GameMove {
         if self.queries <= 16 {
             self.queries += 1;
             let (idx, m) = self
@@ -748,7 +748,7 @@ mod test {
         moves.score_stack_moves(&board);
         moves.moves.sort_by_key(|x| -x.score);
         assert!(moves.moves[0].score >= moves.moves.last().unwrap().score);
-        let order = (0..moves.moves.len()).map(|_| moves.get_best(None, &board));
+        let order = (0..moves.moves.len()).map(|_| moves.get_best());
         // let order: Vec<_> = moves.moves.into_iter().map(|x| *x.mv).collect();
         for m in order {
             println!("{}", m.to_ptn::<Board6>());
