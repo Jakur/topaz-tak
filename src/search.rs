@@ -4,7 +4,7 @@ use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
     generate_aggressive_place_moves, generate_all_stack_moves, generate_masked_stack_moves,
-    GameMove, HistoryMoves, KillerMoves, MoveBuffer, PlaceHistory, RevGameMove, SmartMoveBuffer,
+    CounterMoves, GameMove, MoveBuffer, PlaceHistory, RevGameMove, SmartMoveBuffer,
 };
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::{Bitboard, TeiCommand, TimeBank};
@@ -51,8 +51,8 @@ const IID_DIVISION: usize = 2;
 pub struct SearchInfo<'a> {
     pub max_depth: usize,
     pv_table: &'a HashTable,
-    pub killer_moves: Vec<KillerMoves>,
-    pub hist_moves: PlaceHistory<49>, // Todo make this better generic
+    pub counter_moves: CounterMoves<49>, // Todo make this better generic
+    pub hist_moves: PlaceHistory<49>,    // Todo make this better generic
     // pub stack_moves: HistoryMoves<2401>,
     // pub stack_win_kill: Vec<KillerMoves>,
     stopped: bool,
@@ -71,7 +71,7 @@ impl<'a> SearchInfo<'a> {
         Self {
             max_depth,
             pv_table,
-            killer_moves: vec![KillerMoves::new(); depth_size],
+            counter_moves: CounterMoves::new(),
             // stack_moves: HistoryMoves::new(7), // Todo fix this
             // stack_win_kill: vec![KillerMoves::new(); depth_size],
             hist_moves: PlaceHistory::new(), // Todo init in search
@@ -513,6 +513,8 @@ where
             return outcome;
         }
     }
+    info.hist_moves.clear();
+    info.counter_moves.clear();
     outcome
 }
 
@@ -650,7 +652,8 @@ where
         // }
         let ply_depth = info.ply_depth(board);
         // return q_search(board, evaluator, info, alpha, beta, last_move, 4);
-        return evaluator.evaluate(board, ply_depth);
+        let eval = evaluator.evaluate(board, ply_depth);
+        return eval;
         // let mut road_check = Vec::new();
         // road_move = board.can_make_road(&mut road_check);
         // if road_move.is_some() {
@@ -838,11 +841,12 @@ where
                     if score >= beta {
                         info.stats.add_cut(0);
                         if m.is_stack_move() {
-                            let ply_depth = info.ply_depth(board);
-                            if ply_depth < info.killer_moves.len() {
-                                info.killer_moves[ply_depth].add(m);
+                            if let Some(prev) = last_move {
+                                if prev.game_move.is_place_move() {
+                                    // Update countermove
+                                    info.counter_moves.update(prev.game_move, m);
+                                }
                             }
-                            // info.stack_moves.update(depth, m);
                         } else {
                             let bonus = 5 * depth as i32 - 4;
                             info.hist_moves.update(bonus, m);
@@ -880,11 +884,13 @@ where
             moves.score_pv_move(entry.game_move);
         }
     }
-    // moves.drop_below_score(-50);
+    // if depth > LMR_DEPTH_LIMIT {
+    //     moves.drop_below_score(-1);
+    // }
     // let ply_depth = info.ply_depth(board);
     for c in 0..moves.len() {
         let count = if has_searched_pv { c + 1 } else { c };
-        let m = moves.get_best();
+        let m = moves.get_best(info, last_move);
 
         let rev_move = board.do_move(m);
         let next_extensions = extensions;
@@ -1004,9 +1010,11 @@ where
             if score >= beta {
                 info.stats.add_cut(count);
                 if m.is_stack_move() {
-                    let ply_depth = info.ply_depth(board);
-                    if ply_depth < info.killer_moves.len() {
-                        info.killer_moves[ply_depth].add(m);
+                    if let Some(prev) = last_move {
+                        if prev.game_move.is_place_move() {
+                            // Update countermove
+                            info.counter_moves.update(prev.game_move, m);
+                        }
                     }
                 } else {
                     let bonus = 5 * depth as i32 - 4;
