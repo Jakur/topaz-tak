@@ -227,6 +227,16 @@ impl Stack {
         self.length += num as u8;
         self.hash_in_many(num, bits);
     }
+    // Convert the top piece of a stack into a Capstone
+    pub fn promote_top<T: Bitboard>(&mut self, bits: &mut BitboardStorage<T>) {
+        self.hash_out_top(bits);
+        let top = match self.top_piece.owner() {
+            crate::Color::Black => Piece::BlackCap,
+            crate::Color::White => Piece::WhiteCap,
+        };
+        self.top_piece = top;
+        self.hash_in_top(bits);
+    }
     pub fn uncrush_top<T: Bitboard>(&mut self, bits: &mut BitboardStorage<T>) {
         self.hash_out_top(bits);
         self.top_piece = self.top_piece.uncrush().unwrap();

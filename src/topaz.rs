@@ -318,6 +318,25 @@ pub fn main() {
             play_game_playtak(s2, r1).unwrap();
             return;
         } else {
+            let pos = "2,x5/x6/x6/x6/x6/x5,1 1 2";
+            let mut board = Board6::try_from_tps(pos).unwrap();
+            let mut eval = NNUE6::default();
+            let table = &HashTable::new(1 << 16);
+            let mut info = SearchInfo::new(16, table)
+                .quiet(true)
+                .abort_depth(4)
+                .set_max_nodes(10000, 20000);
+            // .time_bank(TimeBank::flat(1_000));
+            while board.game_result().is_none() {
+                let outcome = search(&mut board, &mut eval, &mut info).unwrap();
+                let s = outcome.pretty_string();
+                dbg!(s);
+                let best = outcome.best_move().unwrap();
+                let mv = GameMove::try_from_ptn(&best, &board).unwrap();
+                board.do_move(mv);
+                dbg!(&board);
+                info.reset_transient();
+            }
             println!("Unknown argument: {}", arg1);
         }
     }

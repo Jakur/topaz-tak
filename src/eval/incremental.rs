@@ -1,3 +1,5 @@
+use crate::Piece;
+
 use super::Weights6;
 
 pub const STACK_DEPTH: usize = 10;
@@ -39,6 +41,9 @@ impl ValidPiece {
     pub const fn is_white(self) -> bool {
         (self.0 & 1) == 0
     }
+    pub const fn color_index(self) -> usize {
+        (self.0 & 1) as usize
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -57,6 +62,17 @@ impl PieceSquare {
     }
     pub fn promote_wall(&mut self) {
         self.0 |= 128;
+    }
+    pub fn topaz_piece(self) -> Piece {
+        match self.piece() {
+            WHITE_FLAT => Piece::WhiteFlat,
+            BLACK_FLAT => Piece::BlackFlat,
+            WHITE_WALL => Piece::WhiteWall,
+            BLACK_WALL => Piece::BlackWall,
+            WHITE_CAP => Piece::WhiteCap,
+            BLACK_CAP => Piece::BlackCap,
+            _ => unimplemented!(),
+        }
     }
 }
 #[repr(C)]
@@ -257,12 +273,7 @@ impl NNUE6 {
             vec: theirs_acc,
         };
         // Output
-        let eval = NNUE.evaluate(
-            &ours.vec,
-            &theirs.vec,
-            &ours.state.piece_data,
-            &ours.state.meta,
-        );
+        let eval = NNUE.evaluate(&ours.vec, &theirs.vec, ours.state.clone().into_iter());
         if takboard.white_to_move {
             self.white = (ours, theirs);
         } else {
@@ -274,12 +285,7 @@ impl NNUE6 {
         let (ours, theirs) = build_features(takboard);
         let ours = Incremental::fresh_new(&NNUE, ours);
         let theirs = Incremental::fresh_new(&NNUE, theirs);
-        let eval = NNUE.evaluate(
-            &ours.vec,
-            &theirs.vec,
-            &ours.state.piece_data,
-            &ours.state.meta,
-        );
+        let eval = NNUE.evaluate(&ours.vec, &theirs.vec, ours.state.clone().into_iter());
         eval
     }
 }
@@ -339,13 +345,7 @@ pub struct Network {
 impl Network {
     /// Calculates the output of the network, starting from the already
     /// calculated hidden layer (done efficiently during makemoves).
-    pub fn evaluate(
-        &self,
-        us: &Accumulator,
-        them: &Accumulator,
-        original_input: &[u16],
-        original_meta: &[u16],
-    ) -> i32 {
+    pub fn evaluate(&self, us: &Accumulator, them: &Accumulator, original: BitSetIterator) -> i32 {
         // Initialise output with bias.
         let mut sum = 0;
         let mut psqt_out = 0;
@@ -362,15 +362,8 @@ impl Network {
         }
 
         // Update Piece Square Table
-        for idx in original_input {
-            if *idx == u16::MAX {
-                break;
-            }
-            psqt_out += i32::from(self.pqst[*idx as usize]);
-        }
-        // This is dumb but I'll fix it later
-        for idx in original_meta {
-            psqt_out += i32::from(self.pqst[*idx as usize]);
+        for idx in original {
+            psqt_out += i32::from(self.pqst[idx as usize]);
         }
         // Apply eval scale.
         psqt_out *= SCALE;
@@ -390,11 +383,8 @@ struct Incremental {
 
 impl Incremental {
     fn fresh_empty(net: &Network) -> Self {
-        let mut acc = Accumulator::new(net);
-        let inc = IncrementalState::from_vec(vec![0, 1, 2]); // Todo make this cleaner
-        for d in inc.meta {
-            acc.add_feature(d as usize, net);
-        }
+        let acc = Accumulator::new(net);
+        let inc = IncrementalState::empty();
         Self {
             state: inc,
             vec: acc,
@@ -402,15 +392,8 @@ impl Incremental {
     }
     fn fresh_new(net: &Network, data: IncrementalState) -> Self {
         let mut acc = Accumulator::new(net);
-        for d in data.meta {
+        for d in data.clone().into_iter() {
             acc.add_feature(d as usize, net);
-        }
-        for f in data.piece_data {
-            let f = f as usize;
-            if f > TakSimple6::SQUARE_INPUTS {
-                break;
-            }
-            acc.add_feature(f, net);
         }
         Self {
             vec: acc,
@@ -419,80 +402,198 @@ impl Incremental {
     }
 }
 
+// struct IncrementalState {
+//     pub(crate) meta: [u16; 3],
+//     pub(crate) piece_data: [u16; 62],
+// }
+
+// impl IncrementalState {
+//     pub fn from_vec(mut vec: Vec<u16>) -> Self {
+//         let mut meta = [0; 3];
+//         for i in 0..3 {
+//             meta[i] = vec.pop().unwrap();
+//         }
+//         let mut piece_data = [u16::MAX; 62];
+//         piece_data[0..vec.len()].copy_from_slice(&vec);
+//         Self { meta, piece_data }
+//     }
+//     pub fn diff(&self, old: &Self) -> (Vec<u16>, Vec<u16>) {
+//         // Todo in the real algorithm, do not allocate vecs. This is just to demonstrate the idea
+//         let mut subtract = Vec::new();
+//         let mut add = Vec::new();
+//         Self::operate(&self.meta, &old.meta, &mut add);
+//         Self::operate(&old.meta, &self.meta, &mut subtract);
+//         // Piece data is not sorted, but it is grouped by square
+//         let mut new_st = 0;
+//         let mut old_st = 0;
+//         loop {
+//             let ol = Self::get_sq(old.piece_data[old_st]);
+//             let nw = Self::get_sq(self.piece_data[new_st]);
+//             if ol >= 36 && nw >= 36 {
+//                 break;
+//             }
+//             if nw < ol {
+//                 let new_end = Self::get_end(&self.piece_data, new_st);
+//                 add.extend(self.piece_data[new_st..new_end].iter().copied());
+//                 new_st = new_end;
+//             } else if ol < nw {
+//                 let old_end = Self::get_end(&old.piece_data, old_st);
+//                 subtract.extend(old.piece_data[old_st..old_end].iter().copied());
+//                 old_st = old_end;
+//             } else {
+//                 // They are equal
+//                 let new_end = Self::get_end(&self.piece_data, new_st);
+//                 let old_end = Self::get_end(&old.piece_data, old_st);
+//                 Self::operate(
+//                     &self.piece_data[new_st..new_end],
+//                     &old.piece_data[old_st..old_end],
+//                     &mut add,
+//                 );
+//                 Self::operate(
+//                     &old.piece_data[old_st..old_end],
+//                     &self.piece_data[new_st..new_end],
+//                     &mut subtract,
+//                 );
+//                 new_st = new_end;
+//                 old_st = old_end;
+//             }
+//         }
+//         // End
+//         (subtract, add)
+//     }
+//     fn get_end(slice: &[u16], st: usize) -> usize {
+//         let st_val = Self::get_sq(slice[st]);
+//         st + slice[st..]
+//             .iter()
+//             .position(|&x| Self::get_sq(x) != st_val)
+//             .unwrap()
+//     }
+//     /// Extend out with values in left which are not present in right
+//     fn operate(left: &[u16], right: &[u16], out: &mut Vec<u16>) {
+//         out.extend(left.iter().copied().filter(|x| !right.contains(x)));
+//     }
+//     fn get_sq(val: u16) -> u16 {
+//         if val == u16::MAX {
+//             return 64;
+//         }
+//         val % 36
+//     }
+// }
+
+struct BitSetIterator {
+    bitset: [u64; Self::SIZE],
+    idx: usize,
+}
+
+impl BitSetIterator {
+    const SIZE: usize = 16;
+    const END: usize = Self::SIZE - 1;
+}
+
+impl Iterator for BitSetIterator {
+    type Item = u16;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.bitset[self.idx] == 0 {
+            if self.idx >= Self::END {
+                return None;
+            }
+            self.idx += 1
+        }
+        let b_idx = pop_lowest(&mut self.bitset[self.idx]) as u16;
+        let out = self.idx as u16 * 64 + b_idx;
+        Some(out)
+    }
+}
+
+#[derive(Clone)]
 struct IncrementalState {
-    pub(crate) meta: [u16; 3],
-    pub(crate) piece_data: [u16; 62],
+    pub(crate) bitset: [u64; 16],
+}
+
+impl IntoIterator for IncrementalState {
+    type Item = u16;
+
+    type IntoIter = BitSetIterator;
+
+    fn into_iter(self) -> Self::IntoIter {
+        BitSetIterator {
+            bitset: self.bitset,
+            idx: 0,
+        }
+    }
 }
 
 impl IncrementalState {
-    pub fn from_vec(mut vec: Vec<u16>) -> Self {
-        let mut meta = [0; 3];
-        for i in 0..3 {
-            meta[i] = vec.pop().unwrap();
+    pub fn empty() -> Self {
+        let bitset = [0; 16];
+        Self { bitset }
+    }
+    pub fn from_vec(vec: Vec<u16>) -> Self {
+        let mut bitset = [0; 16];
+        for val in vec {
+            let b_idx = (val / 64) as usize;
+            let b_val = 1 << (val % 64);
+            bitset[b_idx] |= b_val
         }
-        let mut piece_data = [u16::MAX; 62];
-        piece_data[0..vec.len()].copy_from_slice(&vec);
-        Self { meta, piece_data }
+        Self { bitset }
     }
     pub fn diff(&self, old: &Self) -> (Vec<u16>, Vec<u16>) {
         // Todo in the real algorithm, do not allocate vecs. This is just to demonstrate the idea
-        let mut subtract = Vec::new();
-        let mut add = Vec::new();
-        Self::operate(&self.meta, &old.meta, &mut add);
-        Self::operate(&old.meta, &self.meta, &mut subtract);
-        // Piece data is not sorted, but it is grouped by square
-        let mut new_st = 0;
-        let mut old_st = 0;
-        loop {
-            let ol = Self::get_sq(old.piece_data[old_st]);
-            let nw = Self::get_sq(self.piece_data[new_st]);
-            if ol >= 36 && nw >= 36 {
-                break;
-            }
-            if nw < ol {
-                let new_end = Self::get_end(&self.piece_data, new_st);
-                add.extend(self.piece_data[new_st..new_end].iter().copied());
-                new_st = new_end;
-            } else if ol < nw {
-                let old_end = Self::get_end(&old.piece_data, old_st);
-                subtract.extend(old.piece_data[old_st..old_end].iter().copied());
-                old_st = old_end;
-            } else {
-                // They are equal
-                let new_end = Self::get_end(&self.piece_data, new_st);
-                let old_end = Self::get_end(&old.piece_data, old_st);
-                Self::operate(
-                    &self.piece_data[new_st..new_end],
-                    &old.piece_data[old_st..old_end],
-                    &mut add,
-                );
-                Self::operate(
-                    &old.piece_data[old_st..old_end],
-                    &self.piece_data[new_st..new_end],
-                    &mut subtract,
-                );
-                new_st = new_end;
-                old_st = old_end;
-            }
-        }
-        // End
-        (subtract, add)
-    }
-    fn get_end(slice: &[u16], st: usize) -> usize {
-        let st_val = Self::get_sq(slice[st]);
-        st + slice[st..]
+        let mut subtract_indices = Vec::new();
+        let mut add_indices = Vec::new();
+        for (idx, (n, o)) in self
+            .bitset
             .iter()
-            .position(|&x| Self::get_sq(x) != st_val)
-            .unwrap()
-    }
-    /// Extend out with values in left which are not present in right
-    fn operate(left: &[u16], right: &[u16], out: &mut Vec<u16>) {
-        out.extend(left.iter().copied().filter(|x| !right.contains(x)));
-    }
-    fn get_sq(val: u16) -> u16 {
-        if val == u16::MAX {
-            return 64;
+            .copied()
+            .zip(old.bitset.iter().copied())
+            .enumerate()
+        {
+            let d = n ^ o; // Difference between bitsets
+            if d != 0 {
+                let mut sub = d & o; // Difference and Old
+                let mut add = d & n; // Difference and New
+                while sub != 0 {
+                    let bit_idx = pop_lowest(&mut sub);
+                    subtract_indices.push(idx as u16 * 64 + bit_idx as u16)
+                }
+                while add != 0 {
+                    let bit_idx = pop_lowest(&mut add);
+                    add_indices.push(idx as u16 * 64 + bit_idx as u16)
+                }
+            }
         }
-        val % 36
+        (subtract_indices, add_indices)
+    }
+}
+
+fn pop_lowest(x: &mut u64) -> u32 {
+    let highest_index = x.trailing_zeros();
+    if highest_index == 64 {
+        0
+    } else {
+        let value = 1 << highest_index;
+        *x ^= value;
+        highest_index
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::board::Board6;
+    use crate::board::TakBoard;
+    #[test]
+    fn check_repr() {
+        let tps = "2,x3,1,x/2,1,1,x,2112C,2/2,2,2,1S,1S,2/2,2,1,21,1,2/1,212S,1C,x,12S,1/2,x,1,1S,12,1 1 24";
+        let board = Board6::try_from_tps(tps).unwrap();
+        let (caps, pieces, white_to_move) = super::super::build_nn_repr(&board);
+        let mut rebuilt = Board6::build_from_pieces(caps, pieces, white_to_move);
+        rebuilt.set_move_number(24);
+        let tps_rebuilt = format!("{:?}", &rebuilt);
+        let tps_original = format!("{:?}", &board);
+        assert_eq!(tps_original, tps_rebuilt);
+        assert!(board.bits() == rebuilt.bits());
+        assert_eq!(board.hash(), rebuilt.hash());
+        assert_eq!(board, rebuilt);
     }
 }

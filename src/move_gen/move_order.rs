@@ -511,7 +511,7 @@ impl<const SIZE: usize> HistoryMoves<SIZE> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::Board6;
+    use crate::{transposition_table::HashTable, Board6};
     #[test]
     fn big_stack_order() {
         let tps = "21C,222222,2,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 2 31";
@@ -521,7 +521,10 @@ mod test {
         moves.score_stack_moves(&board);
         moves.moves.sort_by_key(|x| -x.score);
         assert!(moves.moves[0].score >= moves.moves.last().unwrap().score);
-        let order = (0..moves.moves.len()).map(|_| moves.get_best());
+        let table = HashTable::new(1 << 6);
+        let info = SearchInfo::new(6, &table);
+        let prev = None;
+        let order = (0..moves.moves.len()).map(|_| moves.get_best(&info, prev));
         // let order: Vec<_> = moves.moves.into_iter().map(|x| *x.mv).collect();
         for m in order {
             println!("{}", m.to_ptn::<Board6>());

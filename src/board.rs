@@ -1,3 +1,4 @@
+use crate::eval::PieceSquare;
 use crate::move_gen::{generate_all_moves, generate_masked_stack_moves};
 use crate::{Color, GameMove, GameResult, Position, RevGameMove};
 use anyhow::{anyhow, bail, ensure, Result};
@@ -126,6 +127,10 @@ macro_rules! board_impl {
             }
             fn flip_ew(&self) -> Self {
                 self.transform_board(|(row, col)| (row, Self::SIZE - 1 - col))
+            }
+            #[cfg(test)]
+            pub(crate) fn set_move_number(&mut self, move_number: usize) {
+                self.move_num = move_number;
             }
         }
 
@@ -704,6 +709,44 @@ fn parse_tps_stack(tile: &str) -> Result<Vec<Piece>> {
         }
     }
     Ok(vec)
+}
+
+// fn piece_transform(v: crate::eval::ValidPiece)
+
+impl Board6 {
+    pub fn build_from_pieces(
+        caps: [u8; 2],
+        pieces: [crate::eval::PieceSquare; 62],
+        white_to_move: bool,
+    ) -> Self {
+        // Caps: white, black
+        // Pieces: [top, next, next, bottom, top ...]
+        let mut board = Self::new();
+        for piece in pieces.into_iter().rev().skip_while(|x| x.square() >= 36) {
+            let add = piece.topaz_piece();
+            board.board[piece.square() as usize].push(add, &mut board.bits);
+            board.flats_left[piece.piece().color_index()] -= 1;
+        }
+        if caps[0] <= 35 {
+            board.board[caps[0] as usize].promote_top(&mut board.bits);
+            board.caps_left[0] -= 1;
+            board.flats_left[0] += 1;
+        }
+        if caps[1] <= 35 {
+            board.board[caps[1] as usize].promote_top(&mut board.bits);
+            board.caps_left[1] -= 1;
+            board.flats_left[1] += 1;
+        }
+        if white_to_move {
+            board.active_player = Color::White;
+        } else {
+            board.active_player = Color::Black;
+        }
+        board.move_num = 4; // Assume we are past the swap phase
+        let zobrist_hash = zobrist::TABLE.manual_build_hash(&board);
+        board.bits.set_zobrist(zobrist_hash);
+        board
+    }
 }
 
 #[cfg(test)]

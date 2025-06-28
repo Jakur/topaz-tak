@@ -6,7 +6,7 @@ use crate::Color;
 use crate::Position;
 
 use incremental::BoardData;
-use incremental::PieceSquare;
+pub use incremental::PieceSquare;
 pub use incremental::NNUE6;
 // static NN6: once_cell::sync::OnceCell<incremental::Weights> = once_cell::sync::OnceCell::new();
 
@@ -26,34 +26,8 @@ impl Evaluator for NNUE6 {
 
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
         const TEMPO_OFFSET: i32 = -50; // -100
-
-        // Build TakBoard abstraction
-        let mut caps = [255, 255];
-        let mut data = [PieceSquare(255); 62];
-        let mut idx = 0;
-        let mut cap_idx = 0;
-        for sq in game
-            .active_stacks(Color::White)
-            .chain(game.active_stacks(Color::Black))
-        {
-            let stack = &game.board()[sq];
-            let top = stack.top().unwrap();
-            if top.is_cap() {
-                caps[cap_idx] = sq as u8;
-                cap_idx += 1;
-            }
-            data[idx] = build_piece_square(sq, top);
-            idx += 1;
-            for i in 1..10 {
-                if let Some(p) = stack.from_top(i) {
-                    data[idx] = build_piece_square(sq, p);
-                    idx += 1;
-                } else {
-                    break;
-                }
-            }
-        }
-        let takboard = BoardData::minimal(caps, data, game.side_to_move() == Color::White);
+        let (caps, data, side) = build_nn_repr(game);
+        let takboard = BoardData::minimal(caps, data, side);
         let eval = self.incremental_eval(takboard);
         // Evaluate
         // let eval =
@@ -68,6 +42,35 @@ impl Evaluator for NNUE6 {
     fn is_quiet(&self, _game: &Self::Game) -> bool {
         true
     }
+}
+
+pub fn build_nn_repr(game: &Board6) -> ([u8; 2], [PieceSquare; 62], bool) {
+    let mut caps = [255, 255];
+    let mut data = [PieceSquare(255); 62];
+    let mut idx = 0;
+    let mut cap_idx = 0;
+    for sq in game
+        .active_stacks(Color::White)
+        .chain(game.active_stacks(Color::Black))
+    {
+        let stack = &game.board()[sq];
+        let top = stack.top().unwrap();
+        if top.is_cap() {
+            caps[cap_idx] = sq as u8;
+            cap_idx += 1;
+        }
+        data[idx] = build_piece_square(sq, top);
+        idx += 1;
+        for i in 1..10 {
+            if let Some(p) = stack.from_top(i) {
+                data[idx] = build_piece_square(sq, p);
+                idx += 1;
+            } else {
+                break;
+            }
+        }
+    }
+    (caps, data, game.side_to_move() == Color::White)
 }
 
 fn build_piece_square(sq: usize, piece: Piece) -> PieceSquare {

@@ -62,6 +62,8 @@ pub struct SearchInfo<'a> {
     start_ply: usize,
     pub stats: SearchStats,
     early_abort_depth: usize,
+    soft_max_nodes: u64,
+    hard_max_nodes: u64,
     quiet: bool,
 }
 
@@ -83,10 +85,23 @@ impl<'a> SearchInfo<'a> {
             stats: SearchStats::new(16),
             early_abort_depth: 6,
             quiet: false,
+            soft_max_nodes: u64::MAX,
+            hard_max_nodes: u64::MAX,
         }
+    }
+    pub fn reset_transient(&mut self) {
+        let mut new = Self::new(self.max_depth, self.pv_table)
+            .time_bank(self.time_bank.clone())
+            .set_max_nodes(self.soft_max_nodes, self.hard_max_nodes);
+        std::mem::swap(self, &mut new);
     }
     pub fn nodes(&self) -> usize {
         self.stats.nodes
+    }
+    pub fn set_max_nodes(mut self, soft: u64, hard: u64) -> Self {
+        self.soft_max_nodes = soft;
+        self.hard_max_nodes = hard;
+        self
     }
     // pub fn print_cuts(&self) {
     //     println!(
@@ -118,6 +133,10 @@ impl<'a> SearchInfo<'a> {
         self.input.take()
     }
     pub fn check_stop(&mut self) {
+        if self.nodes() as u64 > self.hard_max_nodes {
+            self.stopped = true;
+            return;
+        }
         let secs = self.start_time.elapsed().as_millis();
         if secs >= self.time_bank.goal_time as u128 {
             self.stopped = true;
@@ -441,6 +460,9 @@ where
         if depth >= info.early_abort_depth {
             let elapsed = info.start_time.elapsed().as_millis();
             if elapsed > info.time_bank.goal_time as u128 / 2 {
+                break;
+            }
+            if info.nodes() as u64 > info.soft_max_nodes {
                 break;
             }
         }
