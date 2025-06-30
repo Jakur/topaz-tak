@@ -307,17 +307,14 @@ impl Default for NNUE6 {
 }
 
 fn build_features(takboard: BoardData) -> (IncrementalState, IncrementalState) {
-    let mut ours = Vec::new();
-    let mut theirs = Vec::new();
+    let mut ours = IncrementalState::empty();
+    let mut theirs = IncrementalState::empty();
     let simple = TakSimple6 {};
     simple.handle_features(&takboard, |x, y| {
-        ours.push(x as u16);
-        theirs.push(y as u16);
+        ours.add_feature(x as u16);
+        theirs.add_feature(y as u16);
     });
-    (
-        IncrementalState::from_vec(ours),
-        IncrementalState::from_vec(theirs),
-    )
+    (ours, theirs)
 }
 
 #[inline]
@@ -537,6 +534,11 @@ impl IncrementalState {
             bitset[b_idx] |= b_val
         }
         Self { bitset }
+    }
+    pub fn add_feature(&mut self, val: u16) {
+        let b_idx = (val / 64) as usize;
+        let b_val = 1 << (val % 64);
+        self.bitset[b_idx] |= b_val
     }
     pub fn diff(&self, old: &Self) -> (Vec<u16>, Vec<u16>) {
         // Todo in the real algorithm, do not allocate vecs. This is just to demonstrate the idea
