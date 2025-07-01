@@ -508,6 +508,26 @@ impl<const SIZE: usize> HistoryMoves<SIZE> {
     }
 }
 
+#[derive(Clone)]
+pub struct EvalHistory<const SIZE: usize> {
+    evals: [i32; SIZE],
+}
+
+impl<const SIZE: usize> EvalHistory<SIZE> {
+    const EMPTY: i32 = i32::MIN;
+    pub fn new() -> Self {
+        Self {
+            evals: [Self::EMPTY; SIZE],
+        }
+    }
+    pub fn get_previous(&self, ply: usize) -> Option<i32> {
+        ply.checked_sub(2).map(|idx| self.evals[idx])
+    }
+    pub fn set_eval(&mut self, ply: usize, score: i32) {
+        self.evals[ply] = score;
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

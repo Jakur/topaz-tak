@@ -4,7 +4,7 @@ use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
     generate_aggressive_place_moves, generate_all_stack_moves, generate_masked_stack_moves,
-    CounterMoves, GameMove, MoveBuffer, PlaceHistory, RevGameMove, SmartMoveBuffer,
+    CounterMoves, EvalHistory, GameMove, MoveBuffer, PlaceHistory, RevGameMove, SmartMoveBuffer,
 };
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::{Bitboard, TeiCommand, TimeBank};
@@ -53,6 +53,7 @@ pub struct SearchInfo<'a> {
     pv_table: &'a HashTable,
     pub counter_moves: CounterMoves<49>, // Todo make this better generic
     pub hist_moves: PlaceHistory<49>,    // Todo make this better generic
+    pub eval_hist: EvalHistory<50>,      // Todo make this not crash if max depth is set higher
     // pub stack_moves: HistoryMoves<2401>,
     // pub stack_win_kill: Vec<KillerMoves>,
     stopped: bool,
@@ -77,6 +78,7 @@ impl<'a> SearchInfo<'a> {
             // stack_moves: HistoryMoves::new(7), // Todo fix this
             // stack_win_kill: vec![KillerMoves::new(); depth_size],
             hist_moves: PlaceHistory::new(), // Todo init in search
+            eval_hist: EvalHistory::new(),
             stopped: false,
             input: None,
             time_bank: TimeBank::flat(120_000), // Some large but not enormous default
@@ -688,9 +690,24 @@ where
         // Reverse futility pruning
         let ply_depth = info.ply_depth(board);
         let eval = evaluator.evaluate(board, ply_depth);
-        if eval - REVERSE_FUTILITY_MARGIN >= beta {
-            return beta;
+        let improving = if let Some(prev) = info.eval_hist.get_previous(ply_depth) {
+            eval > prev
+        } else {
+            false
+        };
+        if improving {
+            if eval - (REVERSE_FUTILITY_MARGIN - 35) >= beta {
+                return beta;
+            }
+        } else {
+            if eval - REVERSE_FUTILITY_MARGIN >= beta {
+                return beta;
+            }
         }
+    } else if depth == 3 {
+        let ply_depth = info.ply_depth(board);
+        let eval = evaluator.evaluate(board, ply_depth);
+        info.eval_hist.set_eval(ply_depth, eval);
     }
     // Investigate prevalence of null moves in the pv table. It seems to be very rare.
     let mut pv_entry: Option<HashEntry> = None;
