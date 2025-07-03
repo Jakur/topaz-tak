@@ -31,6 +31,7 @@ const PV_SEARCH_ENABLED: bool = true; // no speedup, worse playing strength
 const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF
 
 const REVERSE_FUTILITY_MARGIN: i32 = 130;
+const FUTILITY_MARGIN: i32 = 75;
 
 // aspiration window parameters
 // CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
@@ -642,6 +643,8 @@ where
         Some(GameResult::Draw) => return 0,
         None => {}
     }
+    let ply_depth = info.ply_depth(board);
+    let mut skip_quiets = false;
     // let mut road_move = None;
     if depth == 0 {
         // let critical = board.bits().road_pieces(board.side_to_move());
@@ -674,7 +677,6 @@ where
         //     let ply_depth = info.ply_depth(board);
         //     return evaluator.evaluate(board, ply_depth);
         // }
-        let ply_depth = info.ply_depth(board);
         // return q_search(board, evaluator, info, alpha, beta, last_move, 4);
         let eval = evaluator.evaluate(board, ply_depth);
         return eval;
@@ -688,24 +690,24 @@ where
         // road_check.clear();
     } else if depth == 1 && !is_pv && !tak_history.check(depth + 1) {
         // Reverse futility pruning
-        let ply_depth = info.ply_depth(board);
         let eval = evaluator.evaluate(board, ply_depth);
-        let improving = if let Some(prev) = info.eval_hist.get_previous(ply_depth) {
-            eval > prev
-        } else {
-            false
-        };
-        if improving {
+        info.eval_hist.set_eval(ply_depth, eval);
+        if info.eval_hist.is_improving(ply_depth) {
             if eval - (REVERSE_FUTILITY_MARGIN - 35) >= beta {
                 return beta;
+            }
+            if eval + FUTILITY_MARGIN < alpha {
+                skip_quiets = true;
             }
         } else {
             if eval - REVERSE_FUTILITY_MARGIN >= beta {
                 return beta;
             }
+            if eval + FUTILITY_MARGIN < alpha {
+                skip_quiets = true;
+            }
         }
     } else if depth == 3 {
-        let ply_depth = info.ply_depth(board);
         let eval = evaluator.evaluate(board, ply_depth);
         info.eval_hist.set_eval(ply_depth, eval);
     }
@@ -923,6 +925,9 @@ where
             moves.score_pv_move(entry.game_move);
         }
     }
+    if skip_quiets {
+        moves.drop_below_score(0);
+    }
     // if depth > LMR_DEPTH_LIMIT {
     //     moves.drop_below_score(-1);
     // }
@@ -961,7 +966,6 @@ where
             let mut needs_re_search_on_alpha_beta = false;
             let mut next_alpha = -beta;
             let mut reduced_depth = next_depth;
-
             // late move reduction
             if LMR_ENABLED
                 && depth > LMR_DEPTH_LIMIT

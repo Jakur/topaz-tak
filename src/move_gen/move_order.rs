@@ -523,6 +523,18 @@ impl<const SIZE: usize> EvalHistory<SIZE> {
     pub fn get_previous(&self, ply: usize) -> Option<i32> {
         ply.checked_sub(2).map(|idx| self.evals[idx])
     }
+    pub fn is_improving(&self, ply: usize) -> bool {
+        let eval = self.evals[ply];
+        if eval == Self::EMPTY {
+            return false;
+        }
+        // assert!(eval != Self::EMPTY);
+        if let Some(prev) = self.get_previous(ply) {
+            eval > prev
+        } else {
+            false
+        }
+    }
     pub fn set_eval(&mut self, ply: usize, score: i32) {
         self.evals[ply] = score;
     }
