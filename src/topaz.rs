@@ -595,9 +595,6 @@ fn play_game_tei<E: Evaluator + Default + Send>(
                 info = SearchInfo::new(init.max_depth, &table)
                     .time_bank(use_time)
                     .abort_depth(8);
-                if board.ply() == 8 || board.ply() == 9 {
-                    eval = E::default();
-                }
                 let res = topaz_tak::search::search(&mut board, &mut eval, &mut info);
                 if let Some(outcome) = res {
                     println!("info {}", outcome);

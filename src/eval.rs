@@ -25,7 +25,7 @@ impl Evaluator for NNUE6 {
     type Game = Board6;
 
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
-        const TEMPO_OFFSET: i32 = -50; // -100
+        const TEMPO_OFFSET: i32 = -100; // -100
         let (caps, data, side) = build_nn_repr(game);
         let takboard = BoardData::minimal(caps, data, side);
         let eval = self.incremental_eval(takboard);
