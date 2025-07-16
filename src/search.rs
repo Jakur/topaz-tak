@@ -32,6 +32,7 @@ const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHE
 
 const REVERSE_FUTILITY_MARGIN: i32 = 130;
 const FUTILITY_MARGIN: i32 = 75;
+// const FUTILITY_MARGIN: i32 = 42;
 
 // aspiration window parameters
 // CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
@@ -67,6 +68,7 @@ pub struct SearchInfo<'a> {
     soft_max_nodes: u64,
     hard_max_nodes: u64,
     quiet: bool,
+    hyper: SearchHyper,
 }
 
 impl<'a> SearchInfo<'a> {
@@ -90,13 +92,8 @@ impl<'a> SearchInfo<'a> {
             quiet: false,
             soft_max_nodes: u64::MAX,
             hard_max_nodes: u64::MAX,
+            hyper: SearchHyper::default(),
         }
-    }
-    pub fn reset_transient(&mut self) {
-        let mut new = Self::new(self.max_depth, self.pv_table)
-            .time_bank(self.time_bank.clone())
-            .set_max_nodes(self.soft_max_nodes, self.hard_max_nodes);
-        std::mem::swap(self, &mut new);
     }
     pub fn nodes(&self) -> usize {
         self.stats.nodes
@@ -112,9 +109,6 @@ impl<'a> SearchInfo<'a> {
     //         self.stats.fail_high, self.stats.fail_high_first, self.stats.transposition_cutoffs
     //     );
     // }
-    pub fn set_start_ply(&mut self, start_ply: usize) {
-        self.start_ply = start_ply;
-    }
     pub fn input_stream(mut self, r: Receiver<TeiCommand>) -> Self {
         self.input = Some(r);
         self
@@ -123,14 +117,22 @@ impl<'a> SearchInfo<'a> {
         self.time_bank = time_bank;
         self
     }
+    pub fn with_hyper(mut self, hyper: SearchHyper) -> Self {
+        self.hyper = hyper;
+        self
+    }
     pub fn abort_depth(mut self, depth: usize) -> Self {
         self.early_abort_depth = depth;
         self
     }
-    pub fn start_search(&mut self) {
+    pub fn start_search(&mut self, start_ply: usize) {
+        self.start_ply = start_ply;
         self.stopped = false;
         self.stats = SearchStats::new(16);
         self.start_time = Instant::now();
+        self.counter_moves = CounterMoves::new();
+        self.hist_moves = PlaceHistory::new();
+        self.eval_hist = EvalHistory::new();
     }
     pub fn take_input_stream(&mut self) -> Option<Receiver<TeiCommand>> {
         self.input.take()
@@ -194,6 +196,56 @@ impl<'a> SearchInfo<'a> {
         self
     }
 }
+
+pub struct SearchHyper {
+    pub rfp_margin: i32,
+    pub improving_rfp_offset: i32,
+    pub fp_margin: i32,
+    pub tempo_bonus: i32,
+    pub aspiration: i32,
+}
+
+impl SearchHyper {
+    pub fn new(
+        rfp_margin: i32,
+        improving_rfp_offset: i32,
+        fp_margin: i32,
+        tempo_bonus: i32,
+        aspiration: i32,
+    ) -> Self {
+        Self {
+            rfp_margin,
+            improving_rfp_offset,
+            fp_margin,
+            tempo_bonus,
+            aspiration,
+        }
+    }
+}
+
+impl std::default::Default for SearchHyper {
+    fn default() -> Self {
+        Self {
+            rfp_margin: REVERSE_FUTILITY_MARGIN,
+            improving_rfp_offset: 35,
+            fp_margin: FUTILITY_MARGIN,
+            tempo_bonus: 0, // 134 ? or 100
+            aspiration: ASPIRATION_WINDOW,
+        }
+    }
+}
+
+// impl std::default::Default for SearchHyper {
+//     fn default() -> Self {
+//         Self {
+//             rfp_margin: 115,
+//             improving_rfp_offset: 30,
+//             fp_margin: 75,
+//             tempo_bonus: 134,
+//             aspiration: 73,
+//         }
+//     }
+// }
 
 #[derive(Debug)]
 pub struct SearchStats {
@@ -265,6 +317,9 @@ where
     pub fn best_move(&self) -> Option<String> {
         self.pv.get(0).map(|m| m.to_ptn::<T>())
     }
+    pub fn search_depth(&self) -> usize {
+        self.depth
+    }
     pub fn pretty_string(&self) -> String {
         let mut string = format!(
             "info depth {} score cp {} nodes {} pv ",
@@ -321,7 +376,7 @@ where
     }
     assert!(ASPIRATION_ENABLED);
     let mut outcome = None;
-    info.set_start_ply(board.ply());
+    info.start_search(board.ply());
     let mut alpha = -1_000_000;
     let mut beta = 1_000_000;
 
@@ -332,8 +387,8 @@ where
         info,
         SearchData::new(alpha, beta, 1, true, None, 0, TakHistory(0), true, true),
     );
-    alpha = best_score - ASPIRATION_WINDOW;
-    beta = best_score + ASPIRATION_WINDOW;
+    alpha = best_score - info.hyper.aspiration;
+    beta = best_score + info.hyper.aspiration;
 
     for depth in 2..=info.max_depth {
         // Abort if we are unlikely to finish the search at this depth
@@ -399,8 +454,8 @@ where
                     ),
                 )
             }
-            alpha = best_score - ASPIRATION_WINDOW;
-            beta = best_score + ASPIRATION_WINDOW;
+            alpha = best_score - info.hyper.aspiration;
+            beta = best_score + info.hyper.aspiration;
             for _ in 0..num_threads {
                 thread_send.send(TeiCommand::Stop).unwrap();
             }
@@ -455,7 +510,8 @@ where
 {
     let mut outcome = None;
     // let mut node_counts = vec![1];
-    info.set_start_ply(board.ply());
+    info.start_search(board.ply());
+    eval.set_tempo_offset(info.hyper.tempo_bonus);
     let mut alpha = -1_000_000;
     let mut beta = 1_000_000;
     for depth in 1..=info.max_depth {
@@ -494,8 +550,8 @@ where
                     ),
                 )
             }
-            alpha = best_score - ASPIRATION_WINDOW;
-            beta = best_score + ASPIRATION_WINDOW;
+            alpha = best_score - info.hyper.aspiration;
+            beta = best_score + info.hyper.aspiration;
         }
         // node_counts.push(info.nodes);
         let pv_moves = info.full_pv(board);
@@ -693,19 +749,17 @@ where
         let eval = evaluator.evaluate(board, ply_depth);
         info.eval_hist.set_eval(ply_depth, eval);
         if info.eval_hist.is_improving(ply_depth) {
-            if eval - (REVERSE_FUTILITY_MARGIN - 35) >= beta {
+            if eval - (info.hyper.rfp_margin - info.hyper.improving_rfp_offset) >= beta {
                 return beta;
-            }
-            if eval + FUTILITY_MARGIN < alpha {
-                skip_quiets = true;
             }
         } else {
-            if eval - REVERSE_FUTILITY_MARGIN >= beta {
+            if eval - info.hyper.rfp_margin >= beta {
                 return beta;
             }
-            if eval + FUTILITY_MARGIN < alpha {
-                skip_quiets = true;
-            }
+        }
+        // Futility pruning
+        if eval + info.hyper.fp_margin < alpha {
+            skip_quiets = true;
         }
     } else if depth == 3 {
         let eval = evaluator.evaluate(board, ply_depth);

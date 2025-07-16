@@ -728,14 +728,14 @@ impl Board6 {
             board.flats_left[piece.piece().color_index()] -= 1;
         }
         if caps[0] <= 35 {
-            board.board[caps[0] as usize].promote_top(&mut board.bits);
-            board.caps_left[0] -= 1;
-            board.flats_left[0] += 1;
+            let color = board.board[caps[0] as usize].promote_top(&mut board.bits);
+            board.caps_left[color as usize] -= 1;
+            board.flats_left[color as usize] += 1;
         }
         if caps[1] <= 35 {
-            board.board[caps[1] as usize].promote_top(&mut board.bits);
-            board.caps_left[1] -= 1;
-            board.flats_left[1] += 1;
+            let color = board.board[caps[1] as usize].promote_top(&mut board.bits);
+            board.caps_left[color as usize] -= 1;
+            board.flats_left[color as usize] += 1;
         }
         if white_to_move {
             board.active_player = Color::White;
@@ -746,6 +746,13 @@ impl Board6 {
         let zobrist_hash = zobrist::TABLE.manual_build_hash(&board);
         board.bits.set_zobrist(zobrist_hash);
         board
+    }
+    #[cfg(feature = "random")]
+    pub fn do_random_move<R: rand_core::RngCore>(&mut self, rng: &mut R) {
+        let mut moves = Vec::new();
+        generate_all_moves(self, &mut moves);
+        let idx = rng.next_u32() as usize % moves.len();
+        self.do_move(moves[idx]);
     }
 }
 

@@ -335,7 +335,6 @@ pub fn main() {
                 let mv = GameMove::try_from_ptn(&best, &board).unwrap();
                 board.do_move(mv);
                 dbg!(&board);
-                info.reset_transient();
             }
             println!("Unknown argument: {}", arg1);
         }
@@ -717,7 +716,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
     const MAX_OPENING_LENGTH: usize = 10;
     let mut move_cache = Vec::new();
     let mut board = Board6::new().with_komi(KOMI);
-    let table = HashTable::new(2 << 24);
+    let table = HashTable::new(2 << 26);
     let mut info = SearchInfo::new(MAX_DEPTH, &table);
     let book = load_playtak_book();
     // let mut eval = Weights6::default();
@@ -730,7 +729,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
             TeiCommand::Go(_) => {
                 if let Some(ref book) = book {
                     dbg!("Found Book");
-                    if board.ply() <= MAX_OPENING_LENGTH {
+                    if false {
                         let move_str: Vec<_> = move_cache
                             .iter()
                             .copied()
@@ -749,10 +748,10 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                         }
                     }
                 }
-                let use_time = 10_000; // Todo better time management
+                let use_time = 55_000; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, &table)
                     .time_bank(TimeBank::flat(use_time))
-                    .abort_depth(50);
+                    .abort_depth(16);
                 let res = topaz_tak::search::multi_search(&mut board, &mut eval, &mut info, 1);
                 if let Some(outcome) = res {
                     server_send
@@ -886,7 +885,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                 com.write(s.as_bytes()).unwrap();
                                 goal = None;
                             } else if !live_seek && counter >= 5 {
-                                let s = format!("Seek 6 900 30 A {} 30 1 0 0 \n", PLAYTAK_KOMI);
+                                let s = format!("Seek 6 600 60 W {} 30 1 0 0 \n", PLAYTAK_KOMI);
                                 println!("Sending seek!");
                                 com.write(s.as_bytes()).unwrap();
                                 live_seek = true;

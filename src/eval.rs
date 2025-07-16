@@ -5,9 +5,7 @@ use crate::board::{Board5, Board6};
 use crate::Color;
 use crate::Position;
 
-use incremental::BoardData;
-pub use incremental::PieceSquare;
-pub use incremental::NNUE6;
+pub use incremental::{BoardData, PieceSquare, NNUE6};
 // static NN6: once_cell::sync::OnceCell<incremental::Weights> = once_cell::sync::OnceCell::new();
 
 #[allow(dead_code)]
@@ -18,33 +16,27 @@ mod smooth;
 pub trait Evaluator {
     type Game: TakBoard + Send;
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32;
-    fn is_quiet(&self, game: &Self::Game) -> bool;
+    fn set_tempo_offset(&mut self, tempo: i32);
 }
 
 impl Evaluator for NNUE6 {
     type Game = Board6;
 
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
-        const TEMPO_OFFSET: i32 = -100; // -100
-        let (caps, data, side) = build_nn_repr(game);
-        let takboard = BoardData::minimal(caps, data, side);
+        let takboard = build_nn_repr(game);
         let eval = self.incremental_eval(takboard);
-        // Evaluate
-        // let eval =
-        //     self.incremental_eval(takboard) / 4 + self.classical.evaluate(game, depth) * 3 / 4;
         if depth % 2 == 0 {
             eval
         } else {
-            eval - TEMPO_OFFSET
+            eval + self.tempo_offset
         }
     }
-
-    fn is_quiet(&self, _game: &Self::Game) -> bool {
-        true
+    fn set_tempo_offset(&mut self, tempo: i32) {
+        self.tempo_offset = tempo;
     }
 }
 
-pub fn build_nn_repr(game: &Board6) -> ([u8; 2], [PieceSquare; 62], bool) {
+pub fn build_nn_repr(game: &Board6) -> BoardData {
     let mut caps = [255, 255];
     let mut data = [PieceSquare(255); 62];
     let mut idx = 0;
@@ -70,10 +62,10 @@ pub fn build_nn_repr(game: &Board6) -> ([u8; 2], [PieceSquare; 62], bool) {
             }
         }
     }
-    (caps, data, game.side_to_move() == Color::White)
+    BoardData::new(caps, data, idx as u8, game.side_to_move() == Color::White)
 }
 
-fn build_piece_square(sq: usize, piece: Piece) -> PieceSquare {
+pub fn build_piece_square(sq: usize, piece: Piece) -> PieceSquare {
     let p = match piece {
         Piece::WhiteFlat => incremental::WHITE_FLAT,
         Piece::WhiteWall => incremental::WHITE_WALL,
@@ -447,8 +439,8 @@ macro_rules! eval_impl {
                 //     score
                 // }
             }
-            fn is_quiet(&self, _game: &Self::Game) -> bool {
-                true
+            fn set_tempo_offset(&mut self, tempo: i32) {
+                self.tempo_offset = tempo;
             }
         }
     };

@@ -20,7 +20,7 @@ const _ASS: () = assert!(
 );
 
 pub static NNUE: Network = unsafe {
-    let bytes = include_bytes!("../quantized.bin");
+    let bytes = include_bytes!("../quantised.bin");
     assert!(bytes.len() == std::mem::size_of::<Network>());
     std::mem::transmute(*bytes)
 };
@@ -46,7 +46,7 @@ impl ValidPiece {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PieceSquare(pub u8);
 
 impl PieceSquare {
@@ -78,22 +78,124 @@ impl PieceSquare {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct BoardData {
-    pub(crate) caps: [u8; 2],
-    pub(crate) data: [PieceSquare; 62], // Each stack must be presented from top to bottom sequentially
-    pub(crate) white_to_move: bool,
-    pub(crate) score: i16,
-    pub(crate) result: u8,
+    pub caps: [u8; 2],
+    pub data: [PieceSquare; 62], // Each stack must be presented from top to bottom sequentially
+    pub data_len: u8,
+    pub white_to_move: bool,
 }
 
 impl BoardData {
-    pub fn minimal(caps: [u8; 2], data: [PieceSquare; 62], white_to_move: bool) -> Self {
+    const SIZE: u8 = 6;
+    const SYM_TABLE: [[u8; 36]; 8] = Self::build_symmetry_table();
+    pub fn new(caps: [u8; 2], data: [PieceSquare; 62], data_len: u8, white_to_move: bool) -> Self {
         Self {
             caps,
             data,
+            data_len,
             white_to_move,
-            score: 0,
-            result: 0,
         }
+    }
+    pub fn symmetry(mut self, idx: usize) -> Self {
+        if idx == 0 {
+            return self;
+        }
+        assert!(idx < 8);
+        let table = &Self::SYM_TABLE[idx];
+        if self.caps[0] < 36 {
+            self.caps[0] = table[self.caps[0] as usize];
+        }
+        if self.caps[1] < 36 {
+            self.caps[1] = table[self.caps[1] as usize];
+        }
+        for i in 0..(self.data_len as usize) {
+            let old = self.data[i];
+            self.data[i] = PieceSquare::new(table[old.square() as usize] as usize, old.piece().0);
+        }
+        self
+    }
+    const fn build_symmetry_table() -> [[u8; 36]; 8] {
+        [
+            Self::transform(0),
+            Self::transform(1),
+            Self::transform(2),
+            Self::transform(3),
+            Self::transform(4),
+            Self::transform(5),
+            Self::transform(6),
+            Self::transform(7),
+        ]
+    }
+    const fn transform(rotation: usize) -> [u8; 36] {
+        let mut data = [(0, 0); 36];
+        let mut i = 0;
+        while i < 36 {
+            let (row, col) = Self::row_col(i as u8);
+            data[i] = (row, col);
+            i += 1;
+        }
+        match rotation {
+            1 => Self::flip_ns(&mut data),
+            2 => Self::flip_ew(&mut data),
+            3 => Self::rotate(&mut data),
+            4 => {
+                Self::rotate(&mut data);
+                Self::rotate(&mut data);
+            }
+            5 => {
+                Self::rotate(&mut data);
+                Self::rotate(&mut data);
+                Self::rotate(&mut data);
+            }
+            6 => {
+                Self::rotate(&mut data);
+                Self::flip_ns(&mut data);
+            }
+            7 => {
+                Self::rotate(&mut data);
+                Self::flip_ew(&mut data);
+            }
+            _ => {}
+        };
+        let mut out = [0; 36];
+        let mut i = 0;
+        while i < 36 {
+            let (row, col) = data[i];
+            out[i] = Self::index(row, col);
+            i += 1;
+        }
+        out
+    }
+    const fn flip_ns(arr: &mut [(u8, u8); 36]) {
+        let mut i = 0;
+        while i < 36 {
+            let (row, _col) = &mut arr[i];
+            *row = Self::SIZE - 1 - *row;
+            i += 1;
+        }
+    }
+    const fn flip_ew(arr: &mut [(u8, u8); 36]) {
+        let mut i = 0;
+        while i < 36 {
+            let (_row, col) = &mut arr[i];
+            *col = Self::SIZE - 1 - *col;
+            i += 1;
+        }
+    }
+    const fn rotate(arr: &mut [(u8, u8); 36]) {
+        let mut i = 0;
+        while i < 36 {
+            let (row, col) = &mut arr[i];
+            let new_row = Self::SIZE - 1 - *col;
+            *col = *row;
+            *row = new_row;
+            i += 1;
+        }
+    }
+    const fn row_col(index: u8) -> (u8, u8) {
+        (index / Self::SIZE, index % Self::SIZE)
+    }
+    const fn index(row: u8, col: u8) -> u8 {
+        row * Self::SIZE + col
     }
 }
 
@@ -243,7 +345,7 @@ impl Accumulator {
 pub struct NNUE6 {
     white: (Incremental, Incremental),
     black: (Incremental, Incremental),
-    pub classical: Weights6,
+    pub(crate) tempo_offset: i32,
 }
 
 impl NNUE6 {
@@ -301,7 +403,7 @@ impl Default for NNUE6 {
                 Incremental::fresh_empty(&NNUE),
                 Incremental::fresh_empty(&NNUE),
             ),
-            classical: Weights6::default(),
+            tempo_offset: 100,
         }
     }
 }
@@ -584,18 +686,40 @@ fn pop_lowest(x: &mut u64) -> u32 {
 mod tests {
     use crate::board::Board6;
     use crate::board::TakBoard;
+    use crate::eval::build_nn_repr;
     #[test]
-    fn check_repr() {
-        let tps = "2,x3,1,x/2,1,1,x,2112C,2/2,2,2,1S,1S,2/2,2,1,21,1,2/1,212S,1C,x,12S,1/2,x,1,1S,12,1 1 24";
+    fn check_rotation() {
+        let tps = "2,x3,1,x/2,1,1,x,2112C,2/2,2,2,1S,1S,2/2,2,1,21,1,2/1,212S,1C,x,12S,1/2,x,1,1S,12,1 1 4";
         let board = Board6::try_from_tps(tps).unwrap();
-        let (caps, pieces, white_to_move) = super::super::build_nn_repr(&board);
-        let mut rebuilt = Board6::build_from_pieces(caps, pieces, white_to_move);
-        rebuilt.set_move_number(24);
-        let tps_rebuilt = format!("{:?}", &rebuilt);
-        let tps_original = format!("{:?}", &board);
-        assert_eq!(tps_original, tps_rebuilt);
-        assert!(board.bits() == rebuilt.bits());
-        assert_eq!(board.hash(), rebuilt.hash());
-        assert_eq!(board, rebuilt);
+        let data = build_nn_repr(&board);
+        let syms: Vec<_> = (0..8)
+            .into_iter()
+            .map(|idx| {
+                let d = data.symmetry(idx);
+                let board = Board6::build_from_pieces(d.caps, d.data, d.white_to_move);
+                format!("{:?}", board)
+            })
+            .collect();
+        assert_eq!("2,x,1,1S,12,1/1,212S,1C,x,12S,1/2,2,1,21,1,2/2,2,2,1S,1S,2/2,1,1,x,2112C,2/2,x,x,x,1,x 1 4", &syms[1]);
+        assert_eq!("x,1,x,x,x,2/2,2112C,x,1,1,2/2,1S,1S,2,2,2/2,1,21,1,2,2/1,12S,x,1C,212S,1/1,12,1S,1,x,2 1 4", &syms[2]);
+        assert_eq!("x,2,2,2,1,1/1,2112C,1S,1,12S,12/x,x,1S,21,x,1S/x,1,2,1,1C,1/x,1,2,2,212S,x/2,2,2,2,1,2 1 4", &syms[3]);
+        assert_eq!("1,12,1S,1,x,2/1,12S,x,1C,212S,1/2,1,21,1,2,2/2,1S,1S,2,2,2/2,2112C,x,1,1,2/x,1,x,x,x,2 1 4", &syms[4]);
+        assert_eq!("2,1,2,2,2,2/x,212S,2,2,1,x/1,1C,1,2,1,x/1S,x,21,1S,x,x/12,12S,1,1S,2112C,1/1,1,2,2,2,x 1 4", &syms[5]);
+        assert_eq!("2,2,2,2,1,2/x,1,2,2,212S,x/x,1,2,1,1C,1/x,x,1S,21,x,1S/1,2112C,1S,1,12S,12/x,2,2,2,1,1 1 4", &syms[6]);
+        assert_eq!("1,1,2,2,2,x/12,12S,1,1S,2112C,1/1S,x,21,1S,x,x/1,1C,1,2,1,x/x,212S,2,2,1,x/2,1,2,2,2,2 1 4", &syms[7]);
     }
+    // #[test]
+    // fn check_repr() {
+    //     let tps = "2,x3,1,x/2,1,1,x,2112C,2/2,2,2,1S,1S,2/2,2,1,21,1,2/1,212S,1C,x,12S,1/2,x,1,1S,12,1 1 24";
+    //     let board = Board6::try_from_tps(tps).unwrap();
+    //     let (caps, pieces, white_to_move) = super::super::build_nn_repr(&board);
+    //     let mut rebuilt = Board6::build_from_pieces(caps, pieces, white_to_move);
+    //     rebuilt.set_move_number(24);
+    //     let tps_rebuilt = format!("{:?}", &rebuilt);
+    //     let tps_original = format!("{:?}", &board);
+    //     assert_eq!(tps_original, tps_rebuilt);
+    //     assert!(board.bits() == rebuilt.bits());
+    //     assert_eq!(board.hash(), rebuilt.hash());
+    //     assert_eq!(board, rebuilt);
+    // }
 }
