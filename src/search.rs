@@ -224,6 +224,9 @@ impl SearchHyper {
 }
 
 impl std::default::Default for SearchHyper {
+    // fn default() -> Self {
+    //     Self::new(139, 33, 43, 23, 59)
+    // }
     fn default() -> Self {
         Self {
             rfp_margin: REVERSE_FUTILITY_MARGIN,
@@ -744,16 +747,18 @@ where
         //     return board.evaluate();
         // }
         // road_check.clear();
-    } else if depth == 1 && !is_pv && !tak_history.check(depth + 1) {
+    } else if depth <= 2 && !is_pv && !tak_history.check(depth + 1) {
         // Reverse futility pruning
         let eval = evaluator.evaluate(board, ply_depth);
         info.eval_hist.set_eval(ply_depth, eval);
         if info.eval_hist.is_improving(ply_depth) {
-            if eval - (info.hyper.rfp_margin - info.hyper.improving_rfp_offset) >= beta {
+            if eval - (depth as i32 * info.hyper.rfp_margin - info.hyper.improving_rfp_offset)
+                >= beta
+            {
                 return beta;
             }
         } else {
-            if eval - info.hyper.rfp_margin >= beta {
+            if eval - (depth as i32 * info.hyper.rfp_margin) >= beta {
                 return beta;
             }
         }
@@ -774,7 +779,7 @@ where
     }
 
     if let Some(entry) = pv_entry {
-        if entry.depth() as usize >= depth {
+        if !is_pv && entry.depth() as usize >= depth {
             match entry.score() {
                 ScoreCutoff::Alpha(score) => {
                     if score <= alpha {
