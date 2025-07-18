@@ -31,7 +31,7 @@ const PV_SEARCH_ENABLED: bool = true; // no speedup, worse playing strength
 const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF
 
 const REVERSE_FUTILITY_MARGIN: i32 = 130;
-const FUTILITY_MARGIN: i32 = 75;
+const FUTILITY_MARGIN: i32 = 50;
 // const FUTILITY_MARGIN: i32 = 42;
 
 // aspiration window parameters
@@ -747,7 +747,7 @@ where
         //     return board.evaluate();
         // }
         // road_check.clear();
-    } else if depth <= 2 && !is_pv && !tak_history.check(depth + 1) {
+    } else if depth <= 3 && !is_pv && !tak_history.check(depth + 1) {
         // Reverse futility pruning
         let eval = evaluator.evaluate(board, ply_depth);
         info.eval_hist.set_eval(ply_depth, eval);
@@ -763,10 +763,10 @@ where
             }
         }
         // Futility pruning
-        if eval + info.hyper.fp_margin < alpha {
+        if eval + (depth as i32 * info.hyper.fp_margin) < alpha {
             skip_quiets = true;
         }
-    } else if depth == 3 {
+    } else if depth == 3 || depth == 4 {
         let eval = evaluator.evaluate(board, ply_depth);
         info.eval_hist.set_eval(ply_depth, eval);
     }
@@ -1033,7 +1033,8 @@ where
                 && (LMR_REDUCE_ROOT || !is_root)
                 && !tak_history.consecutive(info.ply_depth(board))
             {
-                reduced_depth -= 2;
+                reduced_depth = moves.get_lmr_reduced_depth(depth);
+                // reduced_depth -= 2;
                 needs_re_search_on_alpha = true;
             }
             let next_beta = -alpha;

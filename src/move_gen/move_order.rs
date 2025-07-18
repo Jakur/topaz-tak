@@ -12,6 +12,7 @@ pub struct SmartMoveBuffer {
 }
 
 impl SmartMoveBuffer {
+    const THOROUGH_MOVES: usize = 16;
     pub fn new(buffer_size: usize) -> Self {
         Self {
             moves: Vec::new(),
@@ -220,8 +221,14 @@ impl SmartMoveBuffer {
             }
         }
     }
+    pub fn get_lmr_reduced_depth(&self, depth: usize) -> usize {
+        let reduction = (depth as f32).log2()
+            + (self.queries.clamp(1, Self::THOROUGH_MOVES) as f32).log2()
+            - 2.0;
+        depth - (reduction.floor() as usize).clamp(2, depth - 1) // Reduce at minimum 2, at max to depth 1
+    }
     pub fn get_best(&mut self, info: &SearchInfo, prev: Option<RevGameMove>) -> GameMove {
-        if self.queries <= 16 {
+        if self.queries <= Self::THOROUGH_MOVES {
             self.queries += 1;
             let (idx, m) = self
                 .moves
