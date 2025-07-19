@@ -1,4 +1,3 @@
-use crate::eval::PieceSquare;
 use crate::move_gen::{generate_all_moves, generate_masked_stack_moves};
 use crate::{Color, GameMove, GameResult, Position, RevGameMove};
 use anyhow::{anyhow, bail, ensure, Result};

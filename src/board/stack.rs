@@ -447,7 +447,7 @@ impl Default for Pickup {
 
 #[cfg(test)]
 mod test {
-    use crate::{board::Board6, Position, TakBoard};
+    use crate::{board::Board6, TakBoard};
     #[test]
     fn deep_stack_counts() {
         let tps = "1,1S,2,112S,2,x/x2,1,1,1,x/x,1,x,11212211112C,21,1/x2,21,21C,1,1/x,221,1,x,1,2/2,2,1,2,2,2 1 34";

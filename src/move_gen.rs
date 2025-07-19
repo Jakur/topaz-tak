@@ -8,8 +8,8 @@ mod move_order;
 pub use move_order::{
     CounterMoves, EvalHistory, HistoryMoves, KillerMoves, PlaceHistory, SmartMoveBuffer,
 };
-#[allow(dead_code)]
-pub mod magic;
+// #[allow(dead_code)]
+// pub mod magic;
 pub mod ptn;
 
 pub trait MoveBuffer {

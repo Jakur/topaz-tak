@@ -103,7 +103,7 @@ struct MagicMoveArray<const N: usize, const FULL: usize> {
 impl<const N: usize, const FULL: usize> MagicMoveArray<N, FULL> {
     fn lookup<T: TakBoard>(&self, board: &T, idx: usize) -> MoveLimits {
         let shift = 64 - MAGIC_COUNT6[idx];
-        let real_idx = self.offsets[idx].lookup(board.bits().wall.raw_bits(), shift);
+        // let real_idx = self.offsets[idx].lookup(board.bits().wall.raw_bits(), shift);
         todo!()
     }
 }

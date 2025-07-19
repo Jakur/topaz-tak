@@ -173,8 +173,8 @@ pub fn main() {
             }
             return;
         } else if arg1 == "magic" {
-            gen_magics();
-            return;
+            unimplemented!();
+            // gen_magics();
         } else if arg1 == "order" {
             let positions = "/home/justin/Code/rust/topaz-eval/positions.txt";
             let nodes = search_efficiency(positions, 6, false).unwrap();
@@ -983,10 +983,10 @@ fn load_playtak_book() -> Option<&'static book::Book> {
     }
 }
 
-fn gen_magics() {
-    use rand_core::SeedableRng;
-    let mut seed: [u8; 32] = [0; 32];
-    getrandom::fill(&mut seed).unwrap();
-    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::from_seed(seed);
-    topaz_tak::move_gen::magic::generate_move_magic6(&mut rng);
-}
+// fn gen_magics() {
+//     use rand_core::SeedableRng;
+//     let mut seed: [u8; 32] = [0; 32];
+//     getrandom::fill(&mut seed).unwrap();
+//     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::from_seed(seed);
+//     topaz_tak::move_gen::magic::generate_move_magic6(&mut rng);
+// }

@@ -3,8 +3,8 @@ use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
-    generate_aggressive_place_moves, generate_all_stack_moves, generate_masked_stack_moves,
-    CounterMoves, EvalHistory, GameMove, MoveBuffer, PlaceHistory, RevGameMove, SmartMoveBuffer,
+    generate_aggressive_place_moves, generate_all_stack_moves, CounterMoves, EvalHistory, GameMove,
+    MoveBuffer, PlaceHistory, RevGameMove, SmartMoveBuffer,
 };
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::{Bitboard, TeiCommand, TimeBank};
@@ -703,7 +703,7 @@ where
         None => {}
     }
     let ply_depth = info.ply_depth(board);
-    let mut skip_quiets = false;
+    let mut skip_quiets = -1_000;
     // let mut road_move = None;
     if depth == 0 {
         // let critical = board.bits().road_pieces(board.side_to_move());
@@ -747,29 +747,8 @@ where
         //     return board.evaluate();
         // }
         // road_check.clear();
-    } else if depth <= 3 && !is_pv && !tak_history.check(depth + 1) {
-        // Reverse futility pruning
-        let eval = evaluator.evaluate(board, ply_depth);
-        info.eval_hist.set_eval(ply_depth, eval);
-        if info.eval_hist.is_improving(ply_depth) {
-            if eval - (depth as i32 * info.hyper.rfp_margin - info.hyper.improving_rfp_offset)
-                >= beta
-            {
-                return beta;
-            }
-        } else {
-            if eval - (depth as i32 * info.hyper.rfp_margin) >= beta {
-                return beta;
-            }
-        }
-        // Futility pruning
-        if eval + (depth as i32 * info.hyper.fp_margin) < alpha {
-            skip_quiets = true;
-        }
-    } else if depth == 3 || depth == 4 {
-        let eval = evaluator.evaluate(board, ply_depth);
-        info.eval_hist.set_eval(ply_depth, eval);
     }
+    // Transposition Table Lookup
     // Investigate prevalence of null moves in the pv table. It seems to be very rare.
     let mut pv_entry: Option<HashEntry> = None;
     let pv_entry_foreign = info.lookup_move(board);
@@ -800,6 +779,31 @@ where
             }
         }
     }
+    // (R)FP
+    if depth <= 3 && !is_pv && !tak_history.check(depth + 1) {
+        // Reverse futility pruning
+        let eval = evaluator.evaluate(board, ply_depth);
+        info.eval_hist.set_eval(ply_depth, eval);
+        if info.eval_hist.is_improving(ply_depth) {
+            if eval - (depth as i32 * info.hyper.rfp_margin - info.hyper.improving_rfp_offset)
+                >= beta
+            {
+                return beta;
+            }
+        } else {
+            if eval - (depth as i32 * info.hyper.rfp_margin) >= beta {
+                return beta;
+            }
+        }
+        // Futility pruning
+        if eval + (depth as i32 * info.hyper.fp_margin) < alpha {
+            skip_quiets = 0;
+        }
+    } else if depth == 3 || depth == 4 {
+        let eval = evaluator.evaluate(board, ply_depth);
+        info.eval_hist.set_eval(ply_depth, eval);
+    }
+
     if NULL_REDUCTION_ENABLED
         && (!data.is_pv || NULL_REDUCE_PV)
         && null_move
@@ -984,16 +988,17 @@ where
             moves.score_pv_move(entry.game_move);
         }
     }
-    if skip_quiets {
-        moves.drop_below_score(0);
+
+    if skip_quiets >= -100 {
+        moves.drop_below_score(skip_quiets);
     }
-    // if depth > LMR_DEPTH_LIMIT {
-    //     moves.drop_below_score(-1);
-    // }
-    // let ply_depth = info.ply_depth(board);
+
     for c in 0..moves.len() {
         let count = if has_searched_pv { c + 1 } else { c };
         let m = moves.get_best(info, last_move);
+        // if is_root && count <= 16 {
+        //     println!("Depth: {} MC: {} Move {}", depth, count, m.to_ptn::<T>());
+        // }
 
         let rev_move = board.do_move(m);
         let next_extensions = extensions;

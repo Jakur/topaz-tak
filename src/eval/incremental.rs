@@ -1,7 +1,5 @@
 use crate::Piece;
 
-use super::Weights6;
-
 pub const STACK_DEPTH: usize = 10;
 pub const HIDDEN_SIZE: usize = 512;
 pub const SCALE: i32 = 400;
@@ -444,7 +442,7 @@ pub struct Network {
 impl Network {
     /// Calculates the output of the network, starting from the already
     /// calculated hidden layer (done efficiently during makemoves).
-    pub fn evaluate(&self, us: &Accumulator, them: &Accumulator, original: BitSetIterator) -> i32 {
+    fn evaluate(&self, us: &Accumulator, them: &Accumulator, original: BitSetIterator) -> i32 {
         // Initialise output with bias.
         let mut sum = 0;
         let mut psqt_out = 0;

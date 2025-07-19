@@ -117,11 +117,6 @@ where
         }
         storage
     }
-    pub(crate) fn from_walls(walls: u64) -> Self {
-        let mut bits = Self::default();
-        bits.wall = T::default() | walls;
-        bits
-    }
 }
 
 // 09 10 11 12 13 14
