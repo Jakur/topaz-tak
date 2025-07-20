@@ -3,8 +3,8 @@ use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
-    generate_aggressive_place_moves, generate_all_stack_moves, CounterMoves, EvalHistory, GameMove,
-    MoveBuffer, PlaceHistory, RevGameMove, SmartMoveBuffer,
+    generate_aggressive_place_moves, generate_all_stack_moves, CaptureHistory, CounterMoves,
+    EvalHistory, GameMove, MoveBuffer, PlaceHistory, RevGameMove, ScoredMove, SmartMoveBuffer,
 };
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::{Bitboard, TeiCommand, TimeBank};
@@ -56,6 +56,7 @@ pub struct SearchInfo<'a> {
     pub counter_moves: CounterMoves<49>, // Todo make this better generic
     pub hist_moves: PlaceHistory<49>,    // Todo make this better generic
     pub eval_hist: EvalHistory<50>,      // Todo make this not crash if max depth is set higher
+    pub capture_hist: CaptureHistory<49>, // Todo make this better generic
     // pub stack_moves: HistoryMoves<2401>,
     // pub stack_win_kill: Vec<KillerMoves>,
     stopped: bool,
@@ -82,6 +83,7 @@ impl<'a> SearchInfo<'a> {
             // stack_win_kill: vec![KillerMoves::new(); depth_size],
             hist_moves: PlaceHistory::new(), // Todo init in search
             eval_hist: EvalHistory::new(),
+            capture_hist: CaptureHistory::new(),
             stopped: false,
             input: None,
             time_bank: TimeBank::flat(120_000), // Some large but not enormous default
@@ -203,6 +205,7 @@ pub struct SearchHyper {
     pub fp_margin: i32,
     pub tempo_bonus: i32,
     pub aspiration: i32,
+    pub quiet_score: i16,
 }
 
 impl SearchHyper {
@@ -212,6 +215,7 @@ impl SearchHyper {
         fp_margin: i32,
         tempo_bonus: i32,
         aspiration: i32,
+        quiet_score: i16,
     ) -> Self {
         Self {
             rfp_margin,
@@ -219,11 +223,15 @@ impl SearchHyper {
             fp_margin,
             tempo_bonus,
             aspiration,
+            quiet_score,
         }
     }
 }
 
 impl std::default::Default for SearchHyper {
+    // fn default() -> Self {
+    //     Self::new(111, 35, 40, 0, 50, 21)
+    // }
     // fn default() -> Self {
     //     Self::new(139, 33, 43, 23, 59)
     // }
@@ -234,6 +242,7 @@ impl std::default::Default for SearchHyper {
             fp_margin: FUTILITY_MARGIN,
             tempo_bonus: 0, // 134 ? or 100
             aspiration: ASPIRATION_WINDOW,
+            quiet_score: 25,
         }
     }
 }
@@ -797,7 +806,7 @@ where
         }
         // Futility pruning
         if eval + (depth as i32 * info.hyper.fp_margin) < alpha {
-            skip_quiets = 0;
+            skip_quiets = info.hyper.quiet_score;
         }
     } else if depth == 3 || depth == 4 {
         let eval = evaluator.evaluate(board, ply_depth);
@@ -995,12 +1004,23 @@ where
 
     for c in 0..moves.len() {
         let count = if has_searched_pv { c + 1 } else { c };
-        let m = moves.get_best(info, last_move);
-        // if is_root && count <= 16 {
-        //     println!("Depth: {} MC: {} Move {}", depth, count, m.to_ptn::<T>());
-        // }
+        let ScoredMove {
+            mv,
+            score: mv_order_score,
+            changed_bits,
+        } = moves.get_best_scored(info, last_move);
+        // let mv = moves.get_best(info, last_move);
+        if is_root && count <= 16 {
+            println!(
+                "Depth: {} MC: {} Move {} Move Score {}",
+                depth,
+                count,
+                mv.to_ptn::<T>(),
+                mv_order_score
+            );
+        }
 
-        let rev_move = board.do_move(m);
+        let rev_move = board.do_move(mv);
         let next_extensions = extensions;
 
         let next_depth = depth - 1;
@@ -1117,28 +1137,45 @@ where
         if score > alpha {
             if score >= beta {
                 info.stats.add_cut(count);
-                if m.is_stack_move() {
+                if mv.is_stack_move() {
                     if let Some(prev) = last_move {
                         if prev.game_move.is_place_move() {
                             // Update countermove
-                            info.counter_moves.update(prev.game_move, m);
+                            info.counter_moves.update(prev.game_move, mv);
                         }
                     }
-                } else {
                     let bonus = 5 * depth as i32 - 4;
-                    info.hist_moves.update(bonus, m);
+                    info.capture_hist
+                        .update(board.side_to_move(), bonus, changed_bits);
                     // Negative malus bad moves
-                    moves.apply_history_penalty(-bonus, m, &mut info.hist_moves);
+                    moves.apply_stack_penalty(
+                        board.side_to_move(),
+                        -bonus,
+                        changed_bits,
+                        &mut info.capture_hist,
+                    );
+                } else {
+                    // Placement
+                    let bonus = 5 * depth as i32 - 4;
+                    info.hist_moves.update(bonus, mv);
+                    // Negative malus bad moves
+                    moves.apply_history_penalty(-bonus, mv, &mut info.hist_moves);
                 }
                 info.store_move(
                     board,
-                    HashEntry::new(board.hash(), m, ScoreCutoff::Beta(beta), depth, board.ply()),
+                    HashEntry::new(
+                        board.hash(),
+                        mv,
+                        ScoreCutoff::Beta(beta),
+                        depth,
+                        board.ply(),
+                    ),
                 );
                 return beta;
             }
             info.stats.add_alpha(count);
             alpha = score;
-            best_move = Some(m);
+            best_move = Some(mv);
             best_score = Some(score);
         }
     }
@@ -1200,12 +1237,12 @@ fn gen_and_score<T>(
         moves.gen_score_place_moves(board, &info.hist_moves);
         moves.score_tak_threats(&tak_threats);
         if board.ply() >= 4 {
-            moves.score_stack_moves(board);
+            moves.score_stack_moves(board, &info.capture_hist);
         }
     } else {
         if board.ply() >= 4 {
             generate_all_stack_moves(board, moves);
-            moves.score_stack_moves(board);
+            moves.score_stack_moves(board, &info.capture_hist);
         }
         moves.gen_score_place_moves(board, &info.hist_moves);
     }

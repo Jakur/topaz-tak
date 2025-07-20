@@ -312,3 +312,14 @@ pub fn perft<P: Position>(board: &mut P, depth: u16) -> u64 {
             .sum()
     }
 }
+
+fn pop_lowest(x: &mut u64) -> u32 {
+    let highest_index = x.trailing_zeros();
+    if highest_index == 64 {
+        0
+    } else {
+        let value = 1 << highest_index;
+        *x ^= value;
+        highest_index
+    }
+}

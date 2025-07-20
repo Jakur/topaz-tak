@@ -1,4 +1,4 @@
-use crate::Piece;
+use crate::{pop_lowest, Piece};
 
 pub const STACK_DEPTH: usize = 10;
 pub const HIDDEN_SIZE: usize = 512;
@@ -669,16 +669,16 @@ impl IncrementalState {
     }
 }
 
-fn pop_lowest(x: &mut u64) -> u32 {
-    let highest_index = x.trailing_zeros();
-    if highest_index == 64 {
-        0
-    } else {
-        let value = 1 << highest_index;
-        *x ^= value;
-        highest_index
-    }
-}
+// fn pop_lowest(x: &mut u64) -> u32 {
+//     let highest_index = x.trailing_zeros();
+//     if highest_index == 64 {
+//         0
+//     } else {
+//         let value = 1 << highest_index;
+//         *x ^= value;
+//         highest_index
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

@@ -5,8 +5,10 @@ use crate::{Bitboard, BitboardStorage};
 use std::fmt;
 
 mod move_order;
+pub(crate) use move_order::ScoredMove;
 pub use move_order::{
-    CounterMoves, EvalHistory, HistoryMoves, KillerMoves, PlaceHistory, SmartMoveBuffer,
+    CaptureHistory, CounterMoves, EvalHistory, HistoryMoves, KillerMoves, PlaceHistory,
+    SmartMoveBuffer,
 };
 // #[allow(dead_code)]
 // pub mod magic;
@@ -393,6 +395,12 @@ impl GameMove {
     }
     pub(crate) fn raw(&self) -> u32 {
         self.0
+    }
+}
+
+impl std::default::Default for GameMove {
+    fn default() -> Self {
+        GameMove::null_move()
     }
 }
 
