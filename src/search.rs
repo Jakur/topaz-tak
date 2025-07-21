@@ -138,6 +138,8 @@ impl<'a> SearchInfo<'a> {
         self.counter_moves = CounterMoves::new();
         self.hist_moves = PlaceHistory::new();
         self.eval_hist = EvalHistory::new();
+        self.killers = [KillerMoves::new(); 64];
+        self.capture_hist.clear();
     }
     pub fn take_input_stream(&mut self) -> Option<Receiver<TeiCommand>> {
         self.input.take()
@@ -1002,7 +1004,7 @@ where
     }
 
     if skip_quiets >= -100 {
-        moves.drop_below_score(skip_quiets);
+        let _num_pruned = moves.drop_below_score(skip_quiets);
     }
 
     for c in 0..moves.len() {
@@ -1150,19 +1152,26 @@ where
                     let bonus = 5 * depth as i32 - 4;
                     info.capture_hist.update(board.side_to_move(), bonus, mv);
                     // info.killers[depth % 64].add(mv);
-                    // Negative malus bad moves
+                    // Penalize already searched moves
                     moves.apply_stack_penalty(
                         board.side_to_move(),
                         -bonus,
                         mv,
                         &mut info.capture_hist,
                     );
+                    moves.apply_history_penalty(-bonus, mv, &mut info.hist_moves);
                 } else {
                     // Placement
                     let bonus = 5 * depth as i32 - 4;
                     info.hist_moves.update(bonus, mv);
-                    // Negative malus bad moves
+                    // Penalize already searched moves
                     moves.apply_history_penalty(-bonus, mv, &mut info.hist_moves);
+                    moves.apply_stack_penalty(
+                        board.side_to_move(),
+                        -bonus,
+                        mv,
+                        &mut info.capture_hist,
+                    );
                     // info.capture_hist.update(depth, -bonus);
                 }
                 info.store_move(

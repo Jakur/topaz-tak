@@ -31,7 +31,9 @@ impl SmartMoveBuffer {
     ) {
         // Todo is this too slow?
         for mv in self.top_placements.iter() {
-            if mv.place_piece() == cut_move.place_piece() && mv.src_index() != cut_move.src_index()
+            if cut_move.is_stack_move()
+                || !(mv.place_piece() == cut_move.place_piece()
+                    && mv.src_index() == cut_move.src_index())
             {
                 hist.update(bonus, *mv);
             }
@@ -47,8 +49,9 @@ impl SmartMoveBuffer {
         // Todo is this too slow?
         for smv in self.top_stack_moves.iter() {
             let mv = smv.mv;
-            if !(cut_move.src_index() == mv.src_index()
-                && cut_move.unique_slide_idx() == mv.unique_slide_idx())
+            if cut_move.is_place_move()
+                || !(cut_move.src_index() == mv.src_index()
+                    && cut_move.unique_slide_idx() == mv.unique_slide_idx())
             {
                 hist.update(side_to_move, bonus, mv);
             }
@@ -58,8 +61,10 @@ impl SmartMoveBuffer {
             // let diff = smv.changed_bits & (smv.changed_bits ^ changed_bits);
         }
     }
-    pub fn drop_below_score(&mut self, threshold: i16) {
+    pub fn drop_below_score(&mut self, threshold: i16) -> usize {
+        let original = self.moves.len();
         self.moves.retain(|x| x.score >= threshold);
+        original - self.moves.len()
     }
     pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T, captures: &CaptureHistory) {
         let active_side = board.side_to_move();
@@ -515,8 +520,10 @@ impl CaptureHistory {
         }
     }
     pub fn clear(&mut self) {
-        self.white.clear();
-        self.black.clear();
+        for i in 0..self.white.len() {
+            self.white[i] = 0;
+            self.black[i] = 0;
+        }
         // let mut new = Self::new();
         // std::mem::swap(self, &mut new);
     }
@@ -537,6 +544,7 @@ impl CaptureHistory {
         };
         let sign = table[idx].signum() as i16;
         let raw_score = 5 * (1 + table[idx].abs()).isqrt();
+        // let raw_score = table[idx].abs();
         let total_score = sign * raw_score as i16;
         return total_score.clamp(-Self::MAX_HISTORY as i16, Self::MAX_HISTORY as i16);
     }
@@ -584,11 +592,13 @@ impl<const SIZE: usize> PlaceHistory<SIZE> {
         };
         let sign = table[idx].signum() as i16;
         let raw_score = 10 * (1 + table[idx].abs()).isqrt();
+        // let raw_score = table[idx].abs();
         sign * raw_score as i16
     }
     pub fn cap_score(&self, idx: usize) -> i16 {
         let sign = self.all_cap[idx].signum() as i16;
         let raw_score = 10 * (1 + self.all_cap[idx].abs()).isqrt();
+        // let raw_score = self.all_cap[idx].abs();
         sign * raw_score as i16
     }
     pub fn wall_score(&self, idx: usize, color: Color) -> i16 {
@@ -598,6 +608,7 @@ impl<const SIZE: usize> PlaceHistory<SIZE> {
         };
         let sign = table[idx].signum() as i16;
         let raw_score = 10 * (1 + table[idx].abs()).isqrt();
+        // let raw_score = table[idx].abs();
         sign * raw_score as i16
     }
     pub fn debug(&self) {
