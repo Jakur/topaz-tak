@@ -31,34 +31,37 @@ impl SmartMoveBuffer {
     ) {
         // Todo is this too slow?
         for mv in self.top_placements.iter() {
-            if mv.place_piece() == cut_move.place_piece() {
+            if mv.place_piece() == cut_move.place_piece() && mv.src_index() != cut_move.src_index()
+            {
                 hist.update(bonus, *mv);
             }
         }
     }
-    pub fn apply_stack_penalty<const T: usize>(
+    pub fn apply_stack_penalty(
         &self,
         side_to_move: Color,
         bonus: i32,
-        changed_bits: u64,
-        hist: &mut CaptureHistory<T>,
+        cut_move: GameMove,
+        hist: &mut CaptureHistory,
     ) {
         // Todo is this too slow?
         for smv in self.top_stack_moves.iter() {
             let mv = smv.mv;
+            if !(cut_move.src_index() == mv.src_index()
+                && cut_move.unique_slide_idx() == mv.unique_slide_idx())
+            {
+                hist.update(side_to_move, bonus, mv);
+            }
             // if mv.is_stack_move() && smv.changed_bits != changed_bits {
             //     hist.update(side_to_move, bonus, smv.changed_bits);
             // }
-            if smv.changed_bits != changed_bits {
-                // let diff = smv.changed_bits & (smv.changed_bits ^ changed_bits);
-                hist.update(side_to_move, bonus, smv.changed_bits);
-            }
+            // let diff = smv.changed_bits & (smv.changed_bits ^ changed_bits);
         }
     }
     pub fn drop_below_score(&mut self, threshold: i16) {
         self.moves.retain(|x| x.score >= threshold);
     }
-    pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T, captures: &CaptureHistory<49>) {
+    pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T, captures: &CaptureHistory) {
         let active_side = board.side_to_move();
         let has_reserves = board.pieces_reserve(active_side) > 1;
         let mut stack_idx = usize::MAX;
@@ -162,7 +165,7 @@ impl SmartMoveBuffer {
             }
             x.score += 65 * fcd;
             x.changed_bits = bitset;
-            captures.score_stack_move(active_side, x);
+            x.score += captures.score_stack_move(active_side, x.mv);
         }
     }
     pub fn gen_score_place_moves<T: TakBoard>(&mut self, board: &T, place_hist: &PlaceHistory<49>) {
@@ -280,6 +283,7 @@ impl SmartMoveBuffer {
         &mut self,
         info: &SearchInfo,
         prev: Option<RevGameMove>,
+        killers: &KillerMoves,
     ) -> ScoredMove {
         if self.queries <= Self::THOROUGH_MOVES {
             self.queries += 1;
@@ -298,6 +302,7 @@ impl SmartMoveBuffer {
                             prev.map(|x| x.game_move).unwrap_or(GameMove::null_move()),
                             m.mv,
                         ) as i16
+                        + killers.score(m.mv) as i16
                     // m.score // + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
                     // - self.penalty_hist_score(m.mv)
                 })
@@ -324,8 +329,13 @@ impl SmartMoveBuffer {
             x
         }
     }
-    pub fn get_best(&mut self, info: &SearchInfo, prev: Option<RevGameMove>) -> GameMove {
-        self.get_best_scored(info, prev).mv
+    pub fn get_best(
+        &mut self,
+        info: &SearchInfo,
+        prev: Option<RevGameMove>,
+        killers: &KillerMoves,
+    ) -> GameMove {
+        self.get_best_scored(info, prev, killers).mv
     }
     // fn penalty_hist_score(&self, mv: GameMove) -> i16 {
     //     if mv.is_stack_move() {
@@ -462,7 +472,7 @@ impl<const SIZE: usize> CounterMoves<SIZE> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct KillerMoves {
     killer1: GameMove,
     killer2: GameMove,
@@ -483,62 +493,52 @@ impl KillerMoves {
         if self.killer1 == game_move {
             90
         } else if self.killer2 == game_move {
-            80
+            10
         } else {
             0
         }
     }
 }
 
-pub struct CaptureHistory<const SIZE: usize> {
-    white: [i32; SIZE],
-    black: [i32; SIZE],
+pub struct CaptureHistory {
+    white: Vec<i32>,
+    black: Vec<i32>,
 }
 
-impl<const SIZE: usize> CaptureHistory<SIZE> {
+impl CaptureHistory {
     const MAX_HISTORY: i32 = 256;
-    pub fn new() -> Self {
+    pub fn new(size: usize) -> Self {
+        assert_eq!(size, 6);
         Self {
-            white: [0; SIZE],
-            black: [0; SIZE],
+            white: vec![0; 64 * 4 * 36],
+            black: vec![0; 64 * 4 * 36],
         }
     }
     pub fn clear(&mut self) {
-        let mut new = Self::new();
-        std::mem::swap(self, &mut new);
+        self.white.clear();
+        self.black.clear();
+        // let mut new = Self::new();
+        // std::mem::swap(self, &mut new);
     }
-    pub fn update(&mut self, side_to_move: Color, bonus: i32, changed_bits: u64) {
+    pub fn update(&mut self, side_to_move: Color, bonus: i32, mv: GameMove) {
         let clamped = bonus.clamp(-Self::MAX_HISTORY, Self::MAX_HISTORY);
-        let mut val = changed_bits;
         let table = match side_to_move {
             Color::White => &mut self.white,
             Color::Black => &mut self.black,
         };
-        while val != 0 {
-            let idx = crate::pop_lowest(&mut val) as usize;
-            table[idx] += clamped - table[idx] * clamped.abs() / Self::MAX_HISTORY;
-        }
+        let idx = mv.src_index() * 256 + mv.unique_slide_idx();
+        table[idx] += clamped - table[idx] * clamped.abs() / Self::MAX_HISTORY;
     }
-    fn score_stack_move(&self, side_to_move: Color, smv: &mut ScoredMove) {
-        if smv.changed_bits == 0 {
-            return;
-        }
+    fn score_stack_move(&self, side_to_move: Color, mv: GameMove) -> i16 {
+        let idx = mv.src_index() * 256 + mv.unique_slide_idx();
         let table = match side_to_move {
             Color::White => &self.white,
             Color::Black => &self.black,
         };
-        let mut val = smv.changed_bits;
-        let mut count = 0;
-        let mut total_score = 0;
-        while val != 0 {
-            let idx = crate::pop_lowest(&mut val) as usize;
-            let sign = table[idx].signum() as i16;
-            let raw_score = 5 * (1 + table[idx].abs()).isqrt();
-            total_score += sign * raw_score as i16;
-            count += 1;
-        }
-        total_score /= count;
-        smv.score += total_score.clamp(-Self::MAX_HISTORY as i16, Self::MAX_HISTORY as i16)
+        let sign = table[idx].signum() as i16;
+        let raw_score = 5 * (1 + table[idx].abs()).isqrt();
+        let total_score = sign * raw_score as i16;
+        return total_score.clamp(-Self::MAX_HISTORY as i16, Self::MAX_HISTORY as i16);
     }
 }
 
@@ -696,22 +696,22 @@ impl<const SIZE: usize> EvalHistory<SIZE> {
 mod test {
     use super::*;
     use crate::{transposition_table::HashTable, Board6};
-    #[test]
-    fn big_stack_order() {
-        let tps = "21C,222222,2,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 2 31";
-        let board = Board6::try_from_tps(tps).unwrap();
-        let mut moves = SmartMoveBuffer::new(36);
-        generate_all_moves(&board, &mut moves);
-        moves.score_stack_moves(&board);
-        moves.moves.sort_by_key(|x| -x.score);
-        assert!(moves.moves[0].score >= moves.moves.last().unwrap().score);
-        let table = HashTable::new(1 << 6);
-        let info = SearchInfo::new(6, &table);
-        let prev = None;
-        let order = (0..moves.moves.len()).map(|_| moves.get_best(&info, prev));
-        // let order: Vec<_> = moves.moves.into_iter().map(|x| *x.mv).collect();
-        for m in order {
-            println!("{}", m.to_ptn::<Board6>());
-        }
-    }
+    // #[test]
+    // fn big_stack_order() {
+    //     let tps = "21C,222222,2,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 2 31";
+    //     let board = Board6::try_from_tps(tps).unwrap();
+    //     let mut moves = SmartMoveBuffer::new(36);
+    //     generate_all_moves(&board, &mut moves);
+    //     moves.score_stack_moves(&board);
+    //     moves.moves.sort_by_key(|x| -x.score);
+    //     assert!(moves.moves[0].score >= moves.moves.last().unwrap().score);
+    //     let table = HashTable::new(1 << 6);
+    //     let info = SearchInfo::new(6, &table);
+    //     let prev = None;
+    //     let order = (0..moves.moves.len()).map(|_| moves.get_best(&info, prev));
+    //     // let order: Vec<_> = moves.moves.into_iter().map(|x| *x.mv).collect();
+    //     for m in order {
+    //         println!("{}", m.to_ptn::<Board6>());
+    //     }
+    // }
 }

@@ -199,6 +199,11 @@ impl GameMove {
             _ => unimplemented!(),
         }
     }
+    /// Determines the unique identifier from its slide bits and direction. Note this is only unique for this one square.
+    pub fn unique_slide_idx(self) -> usize {
+        let out = (self.slide_bits() << 2) + self.direction();
+        out as usize
+    }
     /// Returns the piece being placed.
     ///
     /// # Panics
@@ -702,8 +707,36 @@ pub const fn long_slide(mv: GameMove) -> u32 {
 mod test {
     use crate::board::Board6;
     use crate::Position;
+    use std::collections::HashMap;
 
     use super::*;
+
+    #[test]
+    pub fn index_move_by_bits() {
+        let board = Board6::try_from_tps("1111111,x5/x6/x6/x6/x6/x6 1 10").unwrap();
+        let mut moves = Vec::new();
+        generate_all_stack_moves(&board, &mut moves);
+        let mut set: HashMap<_, GameMove> = HashMap::new();
+        for mv in moves.iter().copied() {
+            match set.entry(mv.slide_bits()) {
+                std::collections::hash_map::Entry::Occupied(occupied_entry) => {
+                    if mv.direction() != occupied_entry.get().direction() {
+                        continue;
+                    }
+                    assert_eq!(
+                        mv.to_ptn::<Board6>(),
+                        occupied_entry.get().to_ptn::<Board6>()
+                    )
+                }
+                std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                    vacant_entry.insert(mv);
+                }
+            }
+        }
+        assert_eq!(2 * set.len(), moves.len());
+        let max_idx = set.into_iter().max_by_key(|x| x.1.slide_bits());
+        dbg!(max_idx);
+    }
     #[test]
     pub fn single_direction_move() {
         let mut moves = Vec::new();

@@ -4,7 +4,8 @@ use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
     generate_aggressive_place_moves, generate_all_stack_moves, CaptureHistory, CounterMoves,
-    EvalHistory, GameMove, MoveBuffer, PlaceHistory, RevGameMove, ScoredMove, SmartMoveBuffer,
+    EvalHistory, GameMove, KillerMoves, MoveBuffer, PlaceHistory, RevGameMove, ScoredMove,
+    SmartMoveBuffer,
 };
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::{Bitboard, TeiCommand, TimeBank};
@@ -56,7 +57,8 @@ pub struct SearchInfo<'a> {
     pub counter_moves: CounterMoves<49>, // Todo make this better generic
     pub hist_moves: PlaceHistory<49>,    // Todo make this better generic
     pub eval_hist: EvalHistory<50>,      // Todo make this not crash if max depth is set higher
-    pub capture_hist: CaptureHistory<49>, // Todo make this better generic
+    pub capture_hist: CaptureHistory,    // Todo make this better generic
+    pub killers: [KillerMoves; 64],
     // pub stack_moves: HistoryMoves<2401>,
     // pub stack_win_kill: Vec<KillerMoves>,
     stopped: bool,
@@ -83,7 +85,8 @@ impl<'a> SearchInfo<'a> {
             // stack_win_kill: vec![KillerMoves::new(); depth_size],
             hist_moves: PlaceHistory::new(), // Todo init in search
             eval_hist: EvalHistory::new(),
-            capture_hist: CaptureHistory::new(),
+            capture_hist: CaptureHistory::new(6),
+            killers: [KillerMoves::new(); 64],
             stopped: false,
             input: None,
             time_bank: TimeBank::flat(120_000), // Some large but not enormous default
@@ -1008,17 +1011,17 @@ where
             mv,
             score: mv_order_score,
             changed_bits,
-        } = moves.get_best_scored(info, last_move);
+        } = moves.get_best_scored(info, last_move, &info.killers[depth % 64]);
         // let mv = moves.get_best(info, last_move);
-        if is_root && count <= 16 {
-            println!(
-                "Depth: {} MC: {} Move {} Move Score {}",
-                depth,
-                count,
-                mv.to_ptn::<T>(),
-                mv_order_score
-            );
-        }
+        // if is_root && count <= 16 {
+        //     println!(
+        //         "Depth: {} MC: {} Move {} Move Score {}",
+        //         depth,
+        //         count,
+        //         mv.to_ptn::<T>(),
+        //         mv_order_score
+        //     );
+        // }
 
         let rev_move = board.do_move(mv);
         let next_extensions = extensions;
@@ -1145,13 +1148,13 @@ where
                         }
                     }
                     let bonus = 5 * depth as i32 - 4;
-                    info.capture_hist
-                        .update(board.side_to_move(), bonus, changed_bits);
+                    info.capture_hist.update(board.side_to_move(), bonus, mv);
+                    // info.killers[depth % 64].add(mv);
                     // Negative malus bad moves
                     moves.apply_stack_penalty(
                         board.side_to_move(),
                         -bonus,
-                        changed_bits,
+                        mv,
                         &mut info.capture_hist,
                     );
                 } else {
@@ -1160,6 +1163,7 @@ where
                     info.hist_moves.update(bonus, mv);
                     // Negative malus bad moves
                     moves.apply_history_penalty(-bonus, mv, &mut info.hist_moves);
+                    // info.capture_hist.update(depth, -bonus);
                 }
                 info.store_move(
                     board,
