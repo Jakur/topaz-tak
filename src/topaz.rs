@@ -134,7 +134,7 @@ pub fn main() {
                     }
                     evals.push(win_pct.clamp(-1.0, 1.0));
                     let best_move = outcome.best_move().unwrap();
-                    let data = outcome.pretty_string();
+                    let data = format!("{}", outcome);
                     let pv = data.split("pv ").nth(1).unwrap();
                     let num_str = if let Color::White = board.side_to_move() {
                         format!("{}. ", board.move_num().to_string())
@@ -329,7 +329,7 @@ pub fn main() {
             // .time_bank(TimeBank::flat(1_000));
             while board.game_result().is_none() {
                 let outcome = search(&mut board, &mut eval, &mut info).unwrap();
-                let s = outcome.pretty_string();
+                let s = format!("{}", outcome);
                 dbg!(s);
                 let best = outcome.best_move().unwrap();
                 let mv = GameMove::try_from_ptn(&best, &board).unwrap();

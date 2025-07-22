@@ -306,6 +306,7 @@ pub struct SearchOutcome<T> {
     nodes: usize,
     depth: usize,
     t_cuts: u64,
+    hashfull: usize,
     phantom: PhantomData<T>,
 }
 
@@ -325,6 +326,7 @@ where
             time,
             depth,
             t_cuts,
+            hashfull: search_info.pv_table.occupancy(),
             phantom: PhantomData,
         }
     }
@@ -333,21 +335,6 @@ where
     }
     pub fn best_move(&self) -> Option<String> {
         self.pv.get(0).map(|m| m.to_ptn::<T>())
-    }
-    pub fn search_depth(&self) -> usize {
-        self.depth
-    }
-    pub fn pretty_string(&self) -> String {
-        let mut string = format!(
-            "info depth {} score cp {} nodes {} pv ",
-            self.depth, self.score, self.nodes
-        );
-        for mv in self.pv.iter().map(|x| x.to_ptn::<T>()) {
-            string.push_str(&mv);
-            string.push_str(" ");
-        }
-        string.pop();
-        string
     }
     pub fn score(&self) -> i32 {
         self.score
@@ -372,15 +359,16 @@ where
         };
         write!(
             f,
-            "score cp {} time {} pv {} nodes {} nps {} depth {} tcut {}",
+            "info depth {} score cp {} time {} nodes {} nps {} hashfull {} pv {}",
+            self.depth,
             readable_eval(self.score),
             self.time,
-            pv_string,
             self.nodes,
             nps,
-            self.depth,
-            self.t_cuts
-        )
+            self.hashfull,
+            pv_string,
+        )?;
+        Ok(())
     }
 }
 
@@ -398,7 +386,7 @@ where
         return search(board, eval, info);
     }
     assert!(ASPIRATION_ENABLED);
-    let mut outcome = None;
+    let mut outcome: Option<SearchOutcome<T>> = None;
     info.start_search(board.ply());
     let mut alpha = -1_000_000;
     let mut beta = 1_000_000;
@@ -487,24 +475,11 @@ where
         let pv_moves = info.full_pv(board);
         // If we had an incomplete depth search, use the previous depth's vals
         if info.stopped {
-            if !info.quiet {
-                print!(
-                    "Aborted Depth: {} Score: {} Nodes: {} PV: ",
-                    depth,
-                    readable_eval(best_score),
-                    info.nodes()
-                );
+            if let Some(data) = outcome {
+                let updated = SearchOutcome::new(data.score, data.pv, data.depth, info);
+                outcome = Some(updated);
             }
             break;
-        }
-        if !info.quiet {
-            print!(
-                "info depth {} score cp {} nodes {} hashfull {} pv ",
-                depth,
-                readable_eval(best_score),
-                info.nodes(),
-                info.pv_table.occupancy()
-            );
         }
         outcome = Some(SearchOutcome::new(
             best_score,
@@ -513,10 +488,11 @@ where
             info,
         ));
         if !info.quiet {
-            for ptn in pv_moves.iter().map(|m| m.to_ptn::<T>()) {
-                print!("{} ", ptn);
+            if let Some(ref outcome) = outcome {
+                if !info.quiet {
+                    println!("{}", outcome);
+                }
             }
-            println!();
         }
         // Stop wasting time
         if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
@@ -531,7 +507,7 @@ where
     T: TakBoard,
     E: Evaluator<Game = T>,
 {
-    let mut outcome = None;
+    let mut outcome: Option<SearchOutcome<T>> = None;
     // let mut node_counts = vec![1];
     info.start_search(board.ply());
     eval.set_tempo_offset(info.hyper.tempo_bonus);
@@ -580,24 +556,11 @@ where
         let pv_moves = info.full_pv(board);
         // If we had an incomplete depth search, use the previous depth's vals
         if info.stopped {
-            if !info.quiet {
-                print!(
-                    "Aborted Depth: {} Score: {} Nodes: {} PV: ",
-                    depth,
-                    readable_eval(best_score),
-                    info.nodes()
-                );
+            if let Some(data) = outcome {
+                let updated = SearchOutcome::new(data.score, data.pv, data.depth, info);
+                outcome = Some(updated);
             }
             break;
-        }
-        if !info.quiet {
-            print!(
-                "info depth {} score cp {} nodes {} hashfull {} pv ",
-                depth,
-                readable_eval(best_score),
-                info.nodes(),
-                info.pv_table.occupancy()
-            );
         }
         outcome = Some(SearchOutcome::new(
             best_score,
@@ -606,11 +569,11 @@ where
             info,
         ));
         if !info.quiet {
-            for ptn in pv_moves.iter().map(|m| m.to_ptn::<T>()) {
-                print!("{} ", ptn);
+            if let Some(ref outcome) = outcome {
+                if !info.quiet {
+                    println!("{}", outcome);
+                }
             }
-            println!();
-            // println!("{:#?}", &info.hist_moves);
         }
         // Stop wasting time
         if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
