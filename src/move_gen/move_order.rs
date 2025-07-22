@@ -568,6 +568,18 @@ impl<const SIZE: usize> PlaceHistory<SIZE> {
             all_cap: [0; SIZE],
         }
     }
+    pub fn mean_flat_score(&self, side: Color) -> i16 {
+        let mut total = 0;
+        let mut count = 0;
+        for idx in 0..SIZE {
+            let score = self.flat_score(idx, side);
+            if score.abs() >= 10 {
+                total += self.flat_score(idx, side);
+                count += 1;
+            }
+        }
+        100 + (total as f32 / count as f32) as i16
+    }
     pub fn clear(&mut self) {
         let mut new = Self::new();
         std::mem::swap(self, &mut new);

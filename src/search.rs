@@ -1004,7 +1004,8 @@ where
     }
 
     if skip_quiets >= -100 {
-        let _num_pruned = moves.drop_below_score(skip_quiets);
+        let mean = info.hist_moves.mean_flat_score(board.side_to_move());
+        let _num_pruned = moves.drop_below_score(mean - 40);
     }
 
     for c in 0..moves.len() {
@@ -1023,6 +1024,11 @@ where
         //         mv.to_ptn::<T>(),
         //         mv_order_score
         //     );
+        //     if count == 16 {
+        //         let mean = info.hist_moves.mean_flat_score(board.side_to_move());
+        //         println!("Mean Flat Score: {mean}");
+        //         // info.hist_moves.debug();
+        //     }
         // }
 
         let rev_move = board.do_move(mv);
