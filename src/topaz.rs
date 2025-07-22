@@ -543,26 +543,13 @@ struct TimeLeft {
 }
 
 impl TimeLeft {
-    pub fn new(tei_str: &str) -> Self {
-        let mut ret = Self {
-            wtime: 1000,
-            btime: 1000,
-            winc: 0,
-            binc: 0,
-        };
-        for (field, val) in tei_str
-            .split_whitespace()
-            .zip(tei_str.split_whitespace().skip(1))
-        {
-            match (field, val.parse()) {
-                ("wtime", Ok(val)) => ret.wtime = val,
-                ("btime", Ok(val)) => ret.btime = val,
-                ("winc", Ok(val)) => ret.winc = val,
-                ("binc", Ok(val)) => ret.binc = val,
-                _ => {}
-            }
+    pub fn new(tei_go: &TeiGo) -> Self {
+        Self {
+            wtime: tei_go.wtime.unwrap_or(1000),
+            btime: tei_go.btime.unwrap_or(1000),
+            winc: tei_go.winc.unwrap_or(0),
+            binc: tei_go.binc.unwrap_or(0),
         }
-        ret
     }
     fn has_time(&self, color: Color) -> (u64, u64) {
         let (time_bank, inc) = match color {
@@ -585,15 +572,37 @@ fn play_game_tei<E: Evaluator + Default + Send>(
     loop {
         let message = receiver.recv()?;
         match message {
-            TeiCommand::Go(s) => {
-                let flats_left =
-                    board.pieces_reserve(Color::White) + board.pieces_reserve(Color::Black);
-                let time_left = TimeLeft::new(&s);
-                let (clock_time, clock_inc) = time_left.has_time(board.side_to_move());
-                let use_time = TimeBank::init(flats_left as u64, clock_time, clock_inc);
-                info = SearchInfo::new(init.max_depth, &table)
-                    .time_bank(use_time)
-                    .abort_depth(8);
+            TeiCommand::Go(go) => {
+                let mut info = if let Some(max_depth) = go.depth {
+                    SearchInfo::new(max_depth, &table)
+                } else {
+                    SearchInfo::new(init.max_depth, &table)
+                };
+                info = info.input_stream(receiver.clone());
+                if let Some(mv_time) = go.movetime {
+                    info = info.time_bank(TimeBank::flat(mv_time));
+                } else if go.btime.is_some() || go.wtime.is_some() {
+                    let flats_left =
+                        board.pieces_reserve(Color::White) + board.pieces_reserve(Color::Black);
+                    let time_left = TimeLeft::new(&go);
+                    let (clock_time, clock_inc) = time_left.has_time(board.side_to_move());
+                    let use_time = TimeBank::init(flats_left as u64, clock_time, clock_inc);
+                    info = info.time_bank(use_time).abort_depth(8);
+                } else {
+                    info = info.time_bank(TimeBank::flat(1_000_000_000)) // Go infinite
+                }
+                if let Some(max_nodes) = go.nodes {
+                    info = info.set_max_nodes(max_nodes, max_nodes)
+                }
+
+                // let flats_left =
+                //     board.pieces_reserve(Color::White) + board.pieces_reserve(Color::Black);
+                // let time_left = TimeLeft::new(&go);
+                // let (clock_time, clock_inc) = time_left.has_time(board.side_to_move());
+                // let use_time = TimeBank::init(flats_left as u64, clock_time, clock_inc);
+                // info = SearchInfo::new(init.max_depth, &table)
+                //     .time_bank(use_time)
+                //     .abort_depth(8);
                 let res = topaz_tak::search::search(&mut board, &mut eval, &mut info);
                 if let Some(outcome) = res {
                     println!("info {}", outcome);
@@ -675,7 +684,9 @@ fn tei_loop() {
         } else if line.starts_with("position") {
             sender.send(TeiCommand::Position(line.to_string())).unwrap();
         } else if line.starts_with("go") {
-            sender.send(TeiCommand::Go(line.to_string())).unwrap();
+            sender
+                .send(TeiCommand::Go(TeiGo::from_go_str(line)))
+                .unwrap();
         } else if line.starts_with("teinewgame") {
             let size = line
                 .split_whitespace()
@@ -924,7 +935,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                 engine_send
                                     .send(TeiCommand::Position(moves.join(",")))
                                     .unwrap();
-                                engine_send.send(TeiCommand::Go("".to_string())).unwrap();
+                                engine_send.send(TeiCommand::Go(TeiGo::default())).unwrap();
                                 waiting_for_engine = true;
                             }
                         }

@@ -271,11 +271,44 @@ impl Position for TakGame {
     }
 }
 
+#[derive(Default, Debug)]
+pub struct TeiGo {
+    pub wtime: Option<u64>,
+    pub btime: Option<u64>,
+    pub winc: Option<u64>,
+    pub binc: Option<u64>,
+    pub depth: Option<usize>,
+    pub nodes: Option<u64>,
+    pub movetime: Option<u64>,
+    pub infinite: bool,
+}
+
+impl TeiGo {
+    pub fn from_go_str(s: &str) -> Self {
+        let mut out = Self::default();
+        let mut iter = s.split_whitespace();
+        while let Some(keyword) = iter.next() {
+            match keyword {
+                "wtime" => out.wtime = iter.next().and_then(|x| x.parse::<u64>().ok()),
+                "btime" => out.btime = iter.next().and_then(|x| x.parse::<u64>().ok()),
+                "winc" => out.winc = iter.next().and_then(|x| x.parse::<u64>().ok()),
+                "binc" => out.binc = iter.next().and_then(|x| x.parse::<u64>().ok()),
+                "depth" => out.depth = iter.next().and_then(|x| x.parse::<usize>().ok()),
+                "nodes" => out.nodes = iter.next().and_then(|x| x.parse::<u64>().ok()),
+                "movetime" => out.movetime = iter.next().and_then(|x| x.parse::<u64>().ok()),
+                "infinite" => out.infinite = true,
+                _ => {}
+            }
+        }
+        out
+    }
+}
+
 #[derive(Debug)]
 pub enum TeiCommand {
     Stop,
     Quit,
-    Go(String),
+    Go(TeiGo),
     Position(String),
     NewGame(usize),
 }

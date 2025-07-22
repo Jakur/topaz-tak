@@ -278,7 +278,7 @@ impl SmartMoveBuffer {
             }
         }
     }
-    pub fn get_lmr_reduced_depth(&self, depth: usize) -> usize {
+    pub fn get_lmr_reduced_depth(&self, depth: usize, improving: bool) -> usize {
         let reduction = (depth as f32).log2()
             + (self.queries.clamp(1, Self::THOROUGH_MOVES) as f32).log2()
             - 2.0;

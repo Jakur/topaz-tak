@@ -19,7 +19,7 @@ pub mod book;
 
 const NULL_REDUCTION_ENABLED: bool = true;
 const NULL_REDUCE_PV: bool = true; // probably shouldn't
-const NULL_REDUCTION: usize = 2;
+const NULL_REDUCTION: usize = 4;
 
 // late move reduction parameters
 const LMR_ENABLED: bool = true;
@@ -247,7 +247,7 @@ impl std::default::Default for SearchHyper {
             fp_margin: FUTILITY_MARGIN,
             tempo_bonus: 0, // 134 ? or 100
             aspiration: ASPIRATION_WINDOW,
-            quiet_score: 25,
+            quiet_score: 40,
         }
     }
 }
@@ -373,7 +373,13 @@ where
         write!(
             f,
             "score cp {} time {} pv {} nodes {} nps {} depth {} tcut {}",
-            self.score, self.time, pv_string, self.nodes, nps, self.depth, self.t_cuts
+            readable_eval(self.score),
+            self.time,
+            pv_string,
+            self.nodes,
+            nps,
+            self.depth,
+            self.t_cuts
         )
     }
 }
@@ -485,7 +491,7 @@ where
                 print!(
                     "Aborted Depth: {} Score: {} Nodes: {} PV: ",
                     depth,
-                    best_score,
+                    readable_eval(best_score),
                     info.nodes()
                 );
             }
@@ -495,7 +501,7 @@ where
             print!(
                 "info depth {} score cp {} nodes {} hashfull {} pv ",
                 depth,
-                best_score,
+                readable_eval(best_score),
                 info.nodes(),
                 info.pv_table.occupancy()
             );
@@ -578,7 +584,7 @@ where
                 print!(
                     "Aborted Depth: {} Score: {} Nodes: {} PV: ",
                     depth,
-                    best_score,
+                    readable_eval(best_score),
                     info.nodes()
                 );
             }
@@ -588,7 +594,7 @@ where
             print!(
                 "info depth {} score cp {} nodes {} hashfull {} pv ",
                 depth,
-                best_score,
+                readable_eval(best_score),
                 info.nodes(),
                 info.pv_table.occupancy()
             );
@@ -717,7 +723,7 @@ where
         None => {}
     }
     let ply_depth = info.ply_depth(board);
-    let mut skip_quiets = -1_000;
+    let mut skip_quiets = false;
     // let mut road_move = None;
     if depth == 0 {
         // let critical = board.bits().road_pieces(board.side_to_move());
@@ -811,7 +817,7 @@ where
         }
         // Futility pruning
         if eval + (depth as i32 * info.hyper.fp_margin) < alpha {
-            skip_quiets = info.hyper.quiet_score;
+            skip_quiets = true;
         }
     } else if depth == 3 || depth == 4 {
         let eval = evaluator.evaluate(board, ply_depth);
@@ -1003,9 +1009,9 @@ where
         }
     }
 
-    if skip_quiets >= -100 {
+    if skip_quiets {
         let mean = info.hist_moves.mean_flat_score(board.side_to_move());
-        let _num_pruned = moves.drop_below_score(mean - 40);
+        let _num_pruned = moves.drop_below_score(mean - info.hyper.quiet_score);
     }
 
     for c in 0..moves.len() {
@@ -1065,11 +1071,13 @@ where
             if LMR_ENABLED
                 && depth > LMR_DEPTH_LIMIT
                 && count >= LMR_FULL_SEARCH_MOVES
+                && mv_order_score < 500 // Not a flat placement tak move
                 && (LMR_REDUCE_PV || !is_pv)
                 && (LMR_REDUCE_ROOT || !is_root)
-                && !tak_history.consecutive(info.ply_depth(board))
+                && !tak_history.consecutive(ply_depth)
             {
-                reduced_depth = moves.get_lmr_reduced_depth(depth);
+                reduced_depth =
+                    moves.get_lmr_reduced_depth(depth, info.eval_hist.is_improving(ply_depth));
                 // reduced_depth -= 2;
                 needs_re_search_on_alpha = true;
             }
@@ -1271,6 +1279,14 @@ fn gen_and_score<T>(
     //     // Though it should not arise from real gameplay
     //     moves.gen_score_place_moves(board);
     // }
+}
+
+fn readable_eval(eval: i32) -> i32 {
+    if eval.abs() >= (WIN_SCORE - 100) {
+        eval
+    } else {
+        eval / 4
+    }
 }
 
 // fn q_search<T, E>(
