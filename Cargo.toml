@@ -10,7 +10,7 @@ edition = "2021"
 default = ["random", "cli", "evaluation"]
 evaluation = []
 cli = ["termtree", "colorful", "getopts", "telnet", "dotenv"]
-random = ["rand_core", "rand_xoshiro", "getrandom", "bitintr", "weighted_trie"]
+random = ["rand_core", "rand_xoshiro", "getrandom", "weighted_trie"]
 
 [dependencies]
 anyhow = "1.0"
@@ -27,7 +27,6 @@ colorful = {version = "0.2", optional = true}
 getopts = {version = "0.2.21", optional = true}
 telnet = {version = "0.2", optional = true}
 dotenv = {version = "0.15.0", optional = true}
-bitintr = {version = "0.3.0", optional = true}
 weighted_trie = {version = "=0.1.4", optional = true}
 
 [profile.release]
