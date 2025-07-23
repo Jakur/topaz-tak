@@ -423,6 +423,7 @@ impl MoveBuffer for SmartMoveBuffer {
     }
 }
 
+#[derive(Clone)]
 pub struct CounterMoves<const SIZE: usize> {
     white_flat: [GameMove; SIZE],
     black_flat: [GameMove; SIZE],
@@ -505,6 +506,7 @@ impl KillerMoves {
     }
 }
 
+#[derive(Clone)]
 pub struct CaptureHistory {
     white: Vec<i32>,
     black: Vec<i32>,
@@ -550,6 +552,7 @@ impl CaptureHistory {
     }
 }
 
+#[derive(Clone)]
 pub struct PlaceHistory<const SIZE: usize> {
     white_flat: [i32; SIZE],
     black_flat: [i32; SIZE],

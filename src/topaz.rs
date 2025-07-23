@@ -318,24 +318,6 @@ pub fn main() {
             play_game_playtak(s2, r1).unwrap();
             return;
         } else {
-            let pos = "2,x5/x6/x6/x6/x6/x5,1 1 2";
-            let mut board = Board6::try_from_tps(pos).unwrap();
-            let mut eval = NNUE6::default();
-            let table = &HashTable::new(1 << 16);
-            let mut info = SearchInfo::new(16, table)
-                .quiet(true)
-                .abort_depth(4)
-                .set_max_nodes(10000, 20000);
-            // .time_bank(TimeBank::flat(1_000));
-            while board.game_result().is_none() {
-                let outcome = search(&mut board, &mut eval, &mut info).unwrap();
-                let s = format!("{}", outcome);
-                dbg!(s);
-                let best = outcome.best_move().unwrap();
-                let mv = GameMove::try_from_ptn(&best, &board).unwrap();
-                board.do_move(mv);
-                dbg!(&board);
-            }
             println!("Unknown argument: {}", arg1);
         }
     }
@@ -344,10 +326,7 @@ pub fn main() {
         .read_line(&mut buffer)
         .expect("Could not read line");
     if buffer.trim() == "tei" {
-        // let (s, r) = unbounded();
         tei_loop();
-        // identify();
-        // let _ = play_game_tei(r);
     } else if buffer == "play white" {
         play_game_cmd(true)
     } else if buffer == "play black" {
@@ -603,7 +582,13 @@ fn play_game_tei<E: Evaluator + Default + Send>(
                 // info = SearchInfo::new(init.max_depth, &table)
                 //     .time_bank(use_time)
                 //     .abort_depth(8);
-                let res = topaz_tak::search::search(&mut board, &mut eval, &mut info);
+                let res = topaz_tak::search::multi_search(
+                    &mut board,
+                    &mut eval,
+                    &mut info,
+                    init.num_threads,
+                );
+                // let res = topaz_tak::search::search(&mut board, &mut eval, &mut info);
                 if let Some(outcome) = res {
                     println!("info {}", outcome);
                     println!(
@@ -657,7 +642,7 @@ fn identify() {
     println!("id name Topaz");
     println!("id author Justin Kur");
     println!("option name HalfKomi type spin default 0 min 0 max 12");
-    println!("option name NN type string");
+    println!("option name Threads type spin default 1 min 1 max 4");
     println!("teiok");
 }
 
@@ -711,6 +696,9 @@ fn tei_loop() {
             if name == "HalfKomi" {
                 init.komi = value.parse().unwrap();
                 println!("Setting komi to {}", init.komi);
+            } else if name == "Threads" {
+                init.num_threads = value.parse().unwrap();
+                println!("Setting threads to {}", init.num_threads);
             }
         } else {
             println!("Unknown Tei Command: {}", buffer);

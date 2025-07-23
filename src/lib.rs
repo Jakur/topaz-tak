@@ -23,7 +23,6 @@ pub struct GameInitializer {
     pub komi: u8,
     pub add_noise: bool,
     pub num_threads: usize,
-    pub use_nn: bool,
 }
 
 #[cfg(feature = "evaluation")]
@@ -35,7 +34,6 @@ impl GameInitializer {
             komi,
             add_noise,
             num_threads: 1,
-            use_nn: false,
         }
     }
     pub fn get_board<E: eval::Evaluator + Default>(&self) -> (E::Game, E) {
@@ -76,7 +74,6 @@ impl std::default::Default for GameInitializer {
             hash_size: 2 << 22,
             max_depth: 128,
             komi: 0,
-            use_nn: false,
             num_threads: 1,
             add_noise: false,
         }

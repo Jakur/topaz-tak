@@ -51,6 +51,7 @@ const IID_MIN_DEPTH: usize = 5;
 const IID_REDUCTION: usize = 3;
 const IID_DIVISION: usize = 2;
 
+#[derive(Clone)]
 pub struct SearchInfo<'a> {
     pub max_depth: usize,
     pv_table: &'a HashTable,
@@ -108,7 +109,7 @@ impl<'a> SearchInfo<'a> {
         self.hard_max_nodes = hard;
         self
     }
-    // pub fn print_cuts(&self) {
+    // pub fn print_cuts(&self) {m
     //     println!(
     //         "Fail High: {} Fail High First: {} Transposition Hits: {} ",
     //         self.stats.fail_high, self.stats.fail_high_first, self.stats.transposition_cutoffs
@@ -204,6 +205,7 @@ impl<'a> SearchInfo<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct SearchHyper {
     pub rfp_margin: i32,
     pub improving_rfp_offset: i32,
@@ -264,7 +266,7 @@ impl std::default::Default for SearchHyper {
 //     }
 // }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SearchStats {
     nodes: usize,
     transposition_cutoffs: u64,
@@ -339,6 +341,9 @@ where
     pub fn score(&self) -> i32 {
         self.score
     }
+    pub fn search_depth(&self) -> usize {
+        self.depth
+    }
 }
 
 impl<T> std::fmt::Display for SearchOutcome<T>
@@ -385,120 +390,23 @@ where
     if num_threads <= 1 {
         return search(board, eval, info);
     }
-    assert!(ASPIRATION_ENABLED);
-    let mut outcome: Option<SearchOutcome<T>> = None;
-    info.start_search(board.ply());
-    let mut alpha = -1_000_000;
-    let mut beta = 1_000_000;
-
-    // Search Depth 1
-    let mut best_score = alpha_beta(
-        board,
-        eval,
-        info,
-        SearchData::new(alpha, beta, 1, true, None, 0, TakHistory(0), true, true),
-    );
-    alpha = best_score - info.hyper.aspiration;
-    beta = best_score + info.hyper.aspiration;
-
-    for depth in 2..=info.max_depth {
-        // Abort if we are unlikely to finish the search at this depth
-        if depth >= info.early_abort_depth {
-            let elapsed = info.start_time.elapsed().as_millis();
-            if elapsed > info.time_bank.goal_time as u128 / 2 {
-                break;
-            }
+    let outcome = std::thread::scope(|s| {
+        let (thread_send, thread_rc) = crossbeam_channel::bounded(num_threads);
+        for _ in 1..num_threads {
+            let rc = thread_rc.clone();
+            let mut thread_info = info.clone().input_stream(rc).quiet(true);
+            let mut eval = E::default();
+            let mut board_clone = board.clone();
+            let _ = s.spawn(move || {
+                search(&mut board_clone, &mut eval, &mut thread_info);
+            });
         }
-        std::thread::scope(|s| {
-            let (thread_send, thread_rc) = crossbeam_channel::bounded(num_threads);
-            if depth >= 4 {
-                for thread_id in 1..num_threads {
-                    {
-                        let mut board_clone = board.clone();
-                        let mut eval_clone = E::default();
-                        let data = SearchData::new(
-                            alpha,
-                            beta,
-                            depth + thread_id - 1,
-                            true,
-                            None,
-                            0,
-                            TakHistory(0),
-                            true,
-                            true,
-                        );
-                        let table = info.pv_table;
-                        let rc = thread_rc.clone();
-                        s.spawn(move || {
-                            let mut thread_info = SearchInfo::new(128, table).input_stream(rc);
-                            let _ = alpha_beta(
-                                &mut board_clone,
-                                &mut eval_clone,
-                                &mut thread_info,
-                                data,
-                            );
-                        });
-                    }
-                }
-            }
-            best_score = alpha_beta(
-                board,
-                eval,
-                info,
-                SearchData::new(alpha, beta, depth, true, None, 0, TakHistory(0), true, true),
-            );
-            if (best_score <= alpha) || (best_score >= beta) {
-                best_score = alpha_beta(
-                    board,
-                    eval,
-                    info,
-                    SearchData::new(
-                        -1_000_000,
-                        1_000_000,
-                        depth,
-                        true,
-                        None,
-                        0,
-                        TakHistory(0),
-                        true,
-                        true,
-                    ),
-                )
-            }
-            alpha = best_score - info.hyper.aspiration;
-            beta = best_score + info.hyper.aspiration;
-            for _ in 0..num_threads {
-                thread_send.send(TeiCommand::Stop).unwrap();
-            }
-        });
-        // node_counts.push(info.nodes);
-        let pv_moves = info.full_pv(board);
-        // If we had an incomplete depth search, use the previous depth's vals
-        if info.stopped {
-            if let Some(data) = outcome {
-                let updated = SearchOutcome::new(data.score, data.pv, data.depth, info);
-                outcome = Some(updated);
-            }
-            break;
+        let outcome = search(board, eval, info);
+        for _ in 1..num_threads {
+            thread_send.send(TeiCommand::Stop).unwrap();
         }
-        outcome = Some(SearchOutcome::new(
-            best_score,
-            pv_moves.clone(),
-            depth,
-            info,
-        ));
-        if !info.quiet {
-            if let Some(ref outcome) = outcome {
-                if !info.quiet {
-                    println!("{}", outcome);
-                }
-            }
-        }
-        // Stop wasting time
-        if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
-            return outcome;
-        }
-    }
+        outcome
+    });
     outcome
 }
 
