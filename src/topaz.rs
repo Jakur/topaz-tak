@@ -557,6 +557,9 @@ fn play_game_tei<E: Evaluator + Default + Send>(
                 } else {
                     SearchInfo::new(init.max_depth, &table)
                 };
+                if init.max_nodes > 0 {
+                    info = info.set_max_nodes(init.max_nodes as u64, init.max_nodes as u64);
+                }
                 info = info.input_stream(receiver.clone());
                 if let Some(mv_time) = go.movetime {
                     info = info.time_bank(TimeBank::flat(mv_time));
@@ -643,6 +646,7 @@ fn identify() {
     println!("id author Justin Kur");
     println!("option name HalfKomi type spin default 0 min 0 max 12");
     println!("option name Threads type spin default 1 min 1 max 4");
+    println!("option name MaxNodes type spin default -1 min -1 max 10000000");
     println!("teiok");
 }
 
@@ -680,7 +684,7 @@ fn tei_loop() {
                 .parse()
                 .expect("Failed to parse size!");
             if let Some(recv) = receiver.take() {
-                let init = init.small_clone();
+                let init = init.clone();
                 thread::spawn(move || match size {
                     5 => play_game_tei::<Weights5>(recv, init).unwrap(),
                     6 => play_game_tei::<NNUE6>(recv, init).unwrap(),
@@ -699,6 +703,9 @@ fn tei_loop() {
             } else if name == "Threads" {
                 init.num_threads = value.parse().unwrap();
                 println!("Setting threads to {}", init.num_threads);
+            } else if name == "MaxNodes" {
+                init.max_nodes = value.parse().unwrap();
+                println!("Setting MaxNodes to {}", init.max_nodes);
             }
         } else {
             println!("Unknown Tei Command: {}", buffer);

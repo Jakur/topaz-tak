@@ -17,12 +17,14 @@ pub mod transposition_table;
 use crate::board::{Board5, Board6, Board7};
 
 #[cfg(feature = "evaluation")]
+#[derive(Clone)]
 pub struct GameInitializer {
     pub hash_size: usize,
     pub max_depth: usize,
     pub komi: u8,
     pub add_noise: bool,
     pub num_threads: usize,
+    pub max_nodes: i64,
 }
 
 #[cfg(feature = "evaluation")]
@@ -33,6 +35,7 @@ impl GameInitializer {
             max_depth,
             komi,
             add_noise,
+            max_nodes: -1,
             num_threads: 1,
         }
     }
@@ -44,9 +47,6 @@ impl GameInitializer {
             E::Game::try_from_tps(tps).unwrap().with_komi(self.komi),
             E::default(),
         )
-    }
-    pub fn small_clone(&self) -> Self {
-        Self { ..*self }
     }
     // pub fn various_search(&mut self, g: TakGame) {
     //     match g {
@@ -76,6 +76,7 @@ impl std::default::Default for GameInitializer {
             komi: 0,
             num_threads: 1,
             add_noise: false,
+            max_nodes: -1,
         }
     }
 }

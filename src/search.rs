@@ -19,7 +19,7 @@ pub mod book;
 
 const NULL_REDUCTION_ENABLED: bool = true;
 const NULL_REDUCE_PV: bool = true; // probably shouldn't
-const NULL_REDUCTION: usize = 4;
+const NULL_REDUCTION: usize = 6;
 
 // late move reduction parameters
 const LMR_ENABLED: bool = true;
