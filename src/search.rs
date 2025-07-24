@@ -671,7 +671,7 @@ where
         }
     }
     // (R)FP
-    if depth <= 3 && !is_pv && !tak_history.check(depth + 1) {
+    if depth <= 3 && !is_pv && !tak_history.check(ply_depth.saturating_sub(1)) {
         // Reverse futility pruning
         let eval = evaluator.evaluate(board, ply_depth);
         info.eval_hist.set_eval(ply_depth, eval);
