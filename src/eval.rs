@@ -13,6 +13,11 @@ mod incremental;
 mod smooth;
 // pub use smooth::SmoothWeights6;
 
+pub const WIN_SCORE: i32 = 10_000;
+pub const LOSE_SCORE: i32 = -1 * WIN_SCORE;
+pub const WIN_FOUND: i32 = WIN_SCORE - 100;
+pub const LOSS_FOUND: i32 = LOSE_SCORE + 100;
+
 pub trait Evaluator {
     type Game: TakBoard + Send;
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32;
@@ -97,9 +102,6 @@ impl Evaluator6 {
         }
     }
 }
-
-pub const WIN_SCORE: i32 = 10_000;
-pub const LOSE_SCORE: i32 = -1 * WIN_SCORE;
 
 fn endgame_calc<T: TakBoard>(game: &T) -> (i32, i32) {
     let empty_count = game.bits().empty().pop_count() as usize;

@@ -10,7 +10,8 @@ pub struct BitboardStorage<T> {
     pub flat: T,
     pub wall: T,
     pub cap: T,
-    zobrist: u64,
+    zobrist_blocker: u64,
+    zobrist_other: u64,
 }
 
 impl<T> BitboardStorage<T>
@@ -18,20 +19,28 @@ where
     T: Bitboard,
 {
     pub fn zobrist_top(&mut self, piece: Piece, sq_index: usize) {
-        self.zobrist ^= TABLE.top_hash(piece, sq_index);
+        if piece.is_blocker() {
+            self.zobrist_blocker ^= TABLE.top_hash(piece, sq_index);
+        } else {
+            self.zobrist_other ^= TABLE.top_hash(piece, sq_index);
+        }
     }
     pub fn zobrist_middle(&mut self, piece: Piece, sq_index: usize, stack_index: usize) {
-        self.zobrist ^= TABLE.stack_hash(piece, sq_index, stack_index);
+        self.zobrist_other ^= TABLE.stack_hash(piece, sq_index, stack_index);
     }
     pub fn zobrist_color(&mut self, color: Color) {
-        self.zobrist ^= TABLE.color_hash(color); // Hash in new color
-        self.zobrist ^= TABLE.color_hash(!color); // Hash out old color
+        self.zobrist_other ^= TABLE.color_hash(color); // Hash in new color
+        self.zobrist_other ^= TABLE.color_hash(!color); // Hash out old color
     }
-    pub fn set_zobrist(&mut self, hash: u64) {
-        self.zobrist = hash;
+    pub fn set_zobrist(&mut self, hash_blocker: u64, hash_other: u64) {
+        self.zobrist_other = hash_blocker;
+        self.zobrist_other = hash_other;
     }
     pub fn zobrist(&self) -> u64 {
-        self.zobrist
+        self.zobrist_blocker ^ self.zobrist_other
+    }
+    pub fn blocker_hash(&self) -> u64 {
+        self.zobrist_other
     }
     pub fn iter_stacks(&self, color: Color) -> BitIndexIterator<T> {
         let bits = match color {
@@ -79,11 +88,12 @@ where
     pub fn check_road(&self, color: Color) -> bool {
         self.road_pieces(color).check_road()
     }
+
     pub fn build<B: TakBoard>(board: &[Stack]) -> Self {
         assert_eq!(board.len(), B::SIZE * B::SIZE);
         // Todo compare to manual build hash
         let mut storage = Self::default();
-        storage.set_zobrist(TABLE.color_hash(Color::White));
+        storage.set_zobrist(TABLE.color_hash(Color::White), 0);
         for (idx, stack) in board.iter().enumerate() {
             if let Some(piece) = stack.top() {
                 let bit_pattern = T::index_to_bit(idx);

@@ -3,14 +3,15 @@ use crate::board::TakBoard;
 use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
-    generate_aggressive_place_moves, generate_all_stack_moves, CaptureHistory, CounterMoves,
-    EvalHistory, GameMove, KillerMoves, MoveBuffer, PlaceHistory, RevGameMove, ScoredMove,
-    SmartMoveBuffer,
+    generate_aggressive_place_moves, generate_all_stack_moves, CaptureHistory, CorrHist,
+    CounterMoves, EvalHistory, GameMove, KillerMoves, MoveBuffer, PlaceHistory, RevGameMove,
+    ScoredMove, SmartMoveBuffer,
 };
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::{Bitboard, TeiCommand, TimeBank};
 use crossbeam_channel::Receiver;
 use instant::Instant;
+use std::f32::consts::E;
 use std::marker::PhantomData;
 // use std::time::Instant;
 
@@ -60,6 +61,7 @@ pub struct SearchInfo<'a> {
     pub eval_hist: EvalHistory<50>,      // Todo make this not crash if max depth is set higher
     pub capture_hist: CaptureHistory,    // Todo make this better generic
     pub killers: [KillerMoves; 64],
+    corr_hist: CorrHist,
     // pub stack_moves: HistoryMoves<2401>,
     // pub stack_win_kill: Vec<KillerMoves>,
     stopped: bool,
@@ -87,6 +89,7 @@ impl<'a> SearchInfo<'a> {
             hist_moves: PlaceHistory::new(), // Todo init in search
             eval_hist: EvalHistory::new(),
             capture_hist: CaptureHistory::new(6),
+            corr_hist: CorrHist::new(),
             killers: [KillerMoves::new(); 64],
             stopped: false,
             input: None,
@@ -139,6 +142,7 @@ impl<'a> SearchInfo<'a> {
         self.counter_moves = CounterMoves::new();
         self.hist_moves = PlaceHistory::new();
         self.eval_hist = EvalHistory::new();
+        self.corr_hist = CorrHist::new();
         self.killers = [KillerMoves::new(); 64];
         self.capture_hist.clear();
     }
@@ -160,11 +164,32 @@ impl<'a> SearchInfo<'a> {
             }
         }
     }
-    fn store_move<E: TakBoard>(&mut self, position: &E, entry: HashEntry) {
+    fn store_move<E: TakBoard>(&mut self, position: &E, static_eval: i32, entry: HashEntry) {
         self.pv_table.put(position.hash(), entry);
+        if !entry.is_forced() {
+            match entry.score() {
+                ScoreCutoff::Alpha(alpha) => {
+                    if alpha >= static_eval {
+                        return;
+                    }
+                }
+                ScoreCutoff::Beta(beta) => {
+                    if beta <= static_eval {
+                        return;
+                    }
+                }
+                ScoreCutoff::Exact(_) => {}
+            }
+            let eval_diff = entry.get_diff(static_eval);
+            self.corr_hist
+                .update(position, entry.depth() as usize, eval_diff);
+        }
     }
     fn lookup_move<E: TakBoard>(&mut self, position: &E) -> Option<HashEntry> {
-        self.pv_table.get(&position.hash())
+        self.pv_table.get(&position.hash()).map(|mut e| {
+            e.correct_score(self.corr_hist.correction(position));
+            e
+        })
     }
     pub fn pv_move<E: TakBoard>(&mut self, position: &E) -> Option<GameMove> {
         self.pv_table.get(&position.hash()).map(|e| e.game_move)
@@ -628,7 +653,7 @@ where
         //     return evaluator.evaluate(board, ply_depth);
         // }
         // return q_search(board, evaluator, info, alpha, beta, last_move, 4);
-        let eval = evaluator.evaluate(board, ply_depth);
+        let eval = evaluator.evaluate(board, ply_depth) + info.corr_hist.correction(board);
         return eval;
         // let mut road_check = Vec::new();
         // road_move = board.can_make_road(&mut road_check);
@@ -849,6 +874,9 @@ where
                         }
                         info.store_move(
                             board,
+                            info.eval_hist.get_eval(ply_depth).unwrap_or_else(|| {
+                                evaluator.evaluate(board, depth) + info.corr_hist.correction(board)
+                            }),
                             HashEntry::new(
                                 board.hash(),
                                 m,
@@ -894,16 +922,18 @@ where
         } = moves.get_best_scored(info, last_move, &info.killers[depth % 64]);
         // let mv = moves.get_best(info, last_move);
         // if is_root && count <= 16 {
-        //     println!(
-        //         "Depth: {} MC: {} Move {} Move Score {}",
-        //         depth,
-        //         count,
-        //         mv.to_ptn::<T>(),
-        //         mv_order_score
-        //     );
+        //     // println!(
+        //     //     "Depth: {} MC: {} Move {} Move Score {}",
+        //     //     depth,
+        //     //     count,
+        //     //     mv.to_ptn::<T>(),
+        //     //     mv_order_score
+        //     // );
         //     if count == 16 {
-        //         let mean = info.hist_moves.mean_flat_score(board.side_to_move());
-        //         println!("Mean Flat Score: {mean}");
+        //         // dbg!(&info.corr_hist.white.iter().max());
+        //         dbg!(&info.corr_hist.black[0..10]);
+        //         // let mean = info.hist_moves.mean_flat_score(board.side_to_move());
+        //         // println!("Mean Flat Score: {mean}");
         //         // info.hist_moves.debug();
         //     }
         // }
@@ -1061,6 +1091,9 @@ where
                 }
                 info.store_move(
                     board,
+                    info.eval_hist.get_eval(ply_depth).unwrap_or_else(|| {
+                        evaluator.evaluate(board, depth) + info.corr_hist.correction(board)
+                    }),
                     HashEntry::new(
                         board.hash(),
                         mv,
@@ -1083,6 +1116,9 @@ where
             if alpha != old_alpha {
                 info.store_move(
                     board,
+                    info.eval_hist.get_eval(ply_depth).unwrap_or_else(|| {
+                        evaluator.evaluate(board, depth) + info.corr_hist.correction(board)
+                    }),
                     HashEntry::new(
                         board.hash(),
                         best,
@@ -1094,6 +1130,9 @@ where
             } else {
                 info.store_move(
                     board,
+                    info.eval_hist.get_eval(ply_depth).unwrap_or_else(|| {
+                        evaluator.evaluate(board, depth) + info.corr_hist.correction(board)
+                    }),
                     HashEntry::new(
                         board.hash(),
                         best,

@@ -270,6 +270,21 @@ impl HashEntry {
         self.depth_flags & DEPTH_MASK
     }
 
+    pub fn get_diff(&self, static_eval: i32) -> i32 {
+        self.score_val - static_eval
+        // static_eval - self.score_val
+    }
+
+    pub fn correct_score(&mut self, corr: i32) {
+        if !self.is_forced() {
+            self.score_val += corr;
+        }
+    }
+
+    pub fn is_forced(&self) -> bool {
+        self.score_val.abs() >= crate::eval::WIN_FOUND
+    }
+
     pub fn score(&self) -> ScoreCutoff {
         if (self.depth_flags & BETA_FLAG) != 0 {
             return ScoreCutoff::Beta(self.score_val);

@@ -506,6 +506,44 @@ impl KillerMoves {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct CorrHist {
+    pub(crate) white: [i32; 512],
+    pub(crate) black: [i32; 512],
+}
+
+impl CorrHist {
+    pub fn new() -> Self {
+        Self {
+            white: [0; 512],
+            black: [0; 512],
+        }
+    }
+    pub fn update<T: TakBoard>(&mut self, board: &T, depth: usize, eval_diff: i32) {
+        const MAX_HISTORY: i32 = 1 << 14;
+        let table = match board.side_to_move() {
+            Color::White => &mut self.white,
+            Color::Black => &mut self.black,
+        };
+        let weight = depth;
+        let scaled_diff = eval_diff / 8;
+        let clamped = (scaled_diff * weight as i32).clamp(-MAX_HISTORY, MAX_HISTORY);
+        let idx = (board.bits().blocker_hash() % 512) as usize;
+        table[idx] += clamped - table[idx] * clamped.abs() / MAX_HISTORY;
+    }
+    pub fn correction<T: TakBoard>(&self, board: &T) -> i32 {
+        const CORRECTION_FACTOR: i32 = 1 << 9;
+        let table = match board.side_to_move() {
+            Color::White => &self.white,
+            Color::Black => &self.black,
+        };
+        let idx = (board.bits().blocker_hash() % 512) as usize;
+        let out = table[idx] / CORRECTION_FACTOR;
+        assert!(out.abs() <= 32);
+        out
+    }
+}
+
 #[derive(Clone)]
 pub struct CaptureHistory {
     white: Vec<i32>,
@@ -715,6 +753,14 @@ impl<const SIZE: usize> EvalHistory<SIZE> {
     }
     pub fn set_eval(&mut self, ply: usize, score: i32) {
         self.evals[ply] = score;
+    }
+    pub fn get_eval(&self, ply: usize) -> Option<i32> {
+        let eval = self.evals[ply];
+        if eval == Self::EMPTY {
+            None
+        } else {
+            Some(eval)
+        }
     }
 }
 

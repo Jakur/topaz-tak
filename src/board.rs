@@ -430,8 +430,8 @@ macro_rules! board_impl {
                 }
                 // Set zobrist
                 self.bits = BitboardStorage::build::<Self>(&self.board);
-                self.bits
-                    .set_zobrist(zobrist::TABLE.manual_build_hash(self));
+                let hash = zobrist::TABLE.manual_build_hash(self);
+                self.bits.set_zobrist(hash.0, hash.1);
             }
 
             fn try_from_tps(tps: &str) -> Result<Self> {
@@ -498,7 +498,7 @@ macro_rules! board_impl {
                 board.active_player = active_player;
                 board.move_num = data[2].parse()?;
                 let zobrist_hash = zobrist::TABLE.manual_build_hash(&board);
-                board.bits.set_zobrist(zobrist_hash);
+                board.bits.set_zobrist(zobrist_hash.0, zobrist_hash.1);
                 Ok(board.with_komi(komi))
             }
         }
@@ -743,7 +743,7 @@ impl Board6 {
         }
         board.move_num = 4; // Assume we are past the swap phase
         let zobrist_hash = zobrist::TABLE.manual_build_hash(&board);
-        board.bits.set_zobrist(zobrist_hash);
+        board.bits.set_zobrist(zobrist_hash.0, zobrist_hash.1);
         board
     }
     #[cfg(feature = "random")]

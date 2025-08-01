@@ -45,18 +45,23 @@ impl ZobristTable {
         let idx = color_offset + sq_index * MAX_PIECES + stack_index;
         self.table[TOPS + idx]
     }
-    pub fn manual_build_hash<T: TakBoard>(&self, board: &T) -> u64 {
+    pub fn manual_build_hash<T: TakBoard>(&self, board: &T) -> (u64, u64) {
         let mut hash = 0;
+        let mut hash_blocker = 0;
         for (sq, stack) in board.board().iter().enumerate() {
             for (stack_pos, piece) in stack.iter().enumerate() {
                 hash ^= self.stack_hash(piece, sq, stack_pos);
             }
             if let Some(piece) = stack.top() {
-                hash ^= self.top_hash(piece, sq);
+                if piece.is_blocker() {
+                    hash_blocker ^= self.top_hash(piece, sq);
+                } else {
+                    hash ^= self.top_hash(piece, sq);
+                }
             }
         }
         hash ^= self.color_hash(board.active_player());
-        hash
+        (hash_blocker, hash)
     }
     #[allow(dead_code)]
     #[cfg(feature = "random")]

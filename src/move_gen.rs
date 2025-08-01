@@ -7,7 +7,7 @@ use std::fmt;
 mod move_order;
 pub(crate) use move_order::ScoredMove;
 pub use move_order::{
-    CaptureHistory, CounterMoves, EvalHistory, HistoryMoves, KillerMoves, PlaceHistory,
+    CaptureHistory, CorrHist, CounterMoves, EvalHistory, HistoryMoves, KillerMoves, PlaceHistory,
     SmartMoveBuffer,
 };
 // #[allow(dead_code)]
