@@ -11,7 +11,6 @@ use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::{Bitboard, TeiCommand, TimeBank};
 use crossbeam_channel::Receiver;
 use instant::Instant;
-use std::f32::consts::E;
 use std::marker::PhantomData;
 // use std::time::Instant;
 
@@ -32,7 +31,7 @@ const LMR_REDUCE_ROOT: bool = true; // probably shouldn't
 const PV_SEARCH_ENABLED: bool = true; // no speedup, worse playing strength
 const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF
 
-const REVERSE_FUTILITY_MARGIN: i32 = 130;
+const REVERSE_FUTILITY_MARGIN: i32 = 115;
 const FUTILITY_MARGIN: i32 = 50;
 // const FUTILITY_MARGIN: i32 = 42;
 
@@ -49,8 +48,6 @@ const GEN_THOROUGH_ORDER_DEPTH: usize = 1; // where to stop bothering with accur
 const IID_ENABLED: bool = true;
 const IID_NON_PV: bool = true;
 const IID_MIN_DEPTH: usize = 5;
-const IID_REDUCTION: usize = 3;
-const IID_DIVISION: usize = 2;
 
 #[derive(Clone)]
 pub struct SearchInfo<'a> {
@@ -698,7 +695,7 @@ where
     // (R)FP
     if depth <= 3 && !is_pv && !tak_history.check(ply_depth.saturating_sub(1)) {
         // Reverse futility pruning
-        let eval = evaluator.evaluate(board, ply_depth);
+        let eval = evaluator.evaluate(board, ply_depth) + info.corr_hist.correction(board);
         info.eval_hist.set_eval(ply_depth, eval);
         if info.eval_hist.is_improving(ply_depth) {
             if eval - (depth as i32 * info.hyper.rfp_margin - info.hyper.improving_rfp_offset)
@@ -716,7 +713,7 @@ where
             skip_quiets = true;
         }
     } else if depth == 3 || depth == 4 {
-        let eval = evaluator.evaluate(board, ply_depth);
+        let eval = evaluator.evaluate(board, ply_depth) + info.corr_hist.correction(board);
         info.eval_hist.set_eval(ply_depth, eval);
     }
 
@@ -776,30 +773,11 @@ where
         }
     }
 
-    // internal iterative deepening
+    // internal iterative reduction
+    let mut reduction = 0;
     if IID_ENABLED && depth >= IID_MIN_DEPTH && (is_pv || IID_NON_PV) && pv_entry.is_none() {
-        let reduction = std::cmp::max(IID_REDUCTION, depth / IID_DIVISION);
-        alpha_beta(
-            board,
-            evaluator,
-            info,
-            SearchData::new(
-                alpha,
-                beta,
-                data.depth - reduction,
-                false,
-                data.last_move,
-                extensions,
-                tak_history,
-                data.is_pv,
-                false,
-            ),
-        );
-        let pv_entry_foreign_2 = info.lookup_move(board);
-
-        if let Some(entry) = pv_entry_foreign_2 {
-            pv_entry = Some(entry);
-        }
+        // Don't bother with the old IID stuff, if you have no pv this node sucks, so just reduce
+        reduction += 1;
     }
 
     let mut best_move = None;
@@ -843,7 +821,7 @@ where
                         SearchData::new(
                             -beta,
                             -alpha,
-                            depth - 1,
+                            depth - 1 - reduction,
                             true,
                             Some(rev_move),
                             extensions,
@@ -913,6 +891,8 @@ where
         let _num_pruned = moves.drop_below_score(mean - info.hyper.quiet_score);
     }
 
+    let mut beta_cut = false;
+
     for c in 0..moves.len() {
         let count = if has_searched_pv { c + 1 } else { c };
         let ScoredMove {
@@ -941,7 +921,7 @@ where
         let rev_move = board.do_move(mv);
         let next_extensions = extensions;
 
-        let next_depth = depth - 1;
+        let next_depth = depth - 1 - reduction;
 
         let mut score;
 
@@ -1087,22 +1067,11 @@ where
                         mv,
                         &mut info.capture_hist,
                     );
-                    // info.capture_hist.update(depth, -bonus);
                 }
-                info.store_move(
-                    board,
-                    info.eval_hist.get_eval(ply_depth).unwrap_or_else(|| {
-                        evaluator.evaluate(board, depth) + info.corr_hist.correction(board)
-                    }),
-                    HashEntry::new(
-                        board.hash(),
-                        mv,
-                        ScoreCutoff::Beta(beta),
-                        depth,
-                        board.ply(),
-                    ),
-                );
-                return beta;
+                beta_cut = true;
+                best_move = Some(mv);
+                best_score = Some(beta);
+                break;
             }
             info.stats.add_alpha(count);
             alpha = score;
@@ -1113,39 +1082,27 @@ where
 
     if let Some(best) = best_move {
         if let Some(best_score) = best_score {
-            if alpha != old_alpha {
-                info.store_move(
-                    board,
-                    info.eval_hist.get_eval(ply_depth).unwrap_or_else(|| {
-                        evaluator.evaluate(board, depth) + info.corr_hist.correction(board)
-                    }),
-                    HashEntry::new(
-                        board.hash(),
-                        best,
-                        ScoreCutoff::Exact(best_score),
-                        depth,
-                        board.ply(),
-                    ),
-                );
+            let cutoff = if beta_cut {
+                ScoreCutoff::Beta(beta)
+            } else if alpha != old_alpha {
+                ScoreCutoff::Exact(best_score)
             } else {
-                info.store_move(
-                    board,
-                    info.eval_hist.get_eval(ply_depth).unwrap_or_else(|| {
-                        evaluator.evaluate(board, depth) + info.corr_hist.correction(board)
-                    }),
-                    HashEntry::new(
-                        board.hash(),
-                        best,
-                        ScoreCutoff::Alpha(alpha),
-                        depth,
-                        board.ply(),
-                    ),
-                )
-            }
+                ScoreCutoff::Alpha(alpha)
+            };
+            info.store_move(
+                board,
+                info.eval_hist.get_eval(ply_depth).unwrap_or_else(|| {
+                    evaluator.evaluate(board, depth) + info.corr_hist.correction(board)
+                }),
+                HashEntry::new(board.hash(), best, cutoff, depth, board.ply()),
+            );
         }
     } else {
         info.stats.bad_search += 1;
         // Waste of time?
+    }
+    if beta_cut {
+        return beta;
     }
     alpha
 }
