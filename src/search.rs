@@ -456,7 +456,7 @@ where
         let winning_prob_per_mille = if self.score > WIN_SCORE - 100 {
             1000
         } else if self.score < LOSE_SCORE + 100 {
-            -1000
+            0
         } else {
             (sigmoid(self.score as f32) * 1000.0) as i32
         };
