@@ -751,6 +751,17 @@ impl<const SIZE: usize> EvalHistory<SIZE> {
             false
         }
     }
+    pub fn is_collapsing(&self, ply: usize) -> bool {
+        let eval = self.evals[ply];
+        if eval == Self::EMPTY {
+            return false;
+        }
+        if let Some(prev) = self.get_previous(ply) {
+            eval < prev + 60
+        } else {
+            false
+        }
+    }
     pub fn set_eval(&mut self, ply: usize, score: i32) {
         self.evals[ply] = score;
     }

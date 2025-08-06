@@ -603,7 +603,7 @@ impl Iterator for BitSetIterator {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct IncrementalState {
     pub(crate) bitset: [u64; 16],
 }

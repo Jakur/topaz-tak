@@ -712,7 +712,7 @@ where
         if eval + (depth as i32 * info.hyper.fp_margin) < alpha {
             skip_quiets = true;
         }
-    } else if depth == 3 || depth == 4 {
+    } else {
         let eval = evaluator.evaluate(board, ply_depth) + info.corr_hist.correction(board);
         info.eval_hist.set_eval(ply_depth, eval);
     }
@@ -778,6 +778,11 @@ where
     if IID_ENABLED && depth >= IID_MIN_DEPTH && (is_pv || IID_NON_PV) && pv_entry.is_none() {
         // Don't bother with the old IID stuff, if you have no pv this node sucks, so just reduce
         reduction += 1;
+    }
+    if depth >= IID_MIN_DEPTH {
+        if info.eval_hist.is_collapsing(ply_depth) {
+            reduction += 1;
+        }
     }
 
     let mut best_move = None;
@@ -1046,6 +1051,9 @@ where
                     }
                     let bonus = 5 * depth as i32 - 4;
                     info.capture_hist.update(board.side_to_move(), bonus, mv);
+                    // if mv_order_score < 0 {
+                    //     info.killers[depth % 64].add(mv);
+                    // }
                     // info.killers[depth % 64].add(mv);
                     // Penalize already searched moves
                     moves.apply_stack_penalty(

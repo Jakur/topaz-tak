@@ -84,7 +84,7 @@ macro_rules! board_impl {
                 for (idx, stack) in board.iter_mut().enumerate() {
                     stack.init(idx);
                 }
-                let bits = BitboardStorage::build::<Self>(&board);
+                let bits = BitboardStorage::build::<Self>(&board, Color::White);
                 Self {
                     board,
                     active_player: Color::White,
@@ -127,7 +127,6 @@ macro_rules! board_impl {
             fn flip_ew(&self) -> Self {
                 self.transform_board(|(row, col)| (row, Self::SIZE - 1 - col))
             }
-            #[cfg(test)]
             pub(crate) fn set_move_number(&mut self, move_number: usize) {
                 self.move_num = move_number;
             }
@@ -429,9 +428,7 @@ macro_rules! board_impl {
                     self.move_num = 2;
                 }
                 // Set zobrist
-                self.bits = BitboardStorage::build::<Self>(&self.board);
-                let hash = zobrist::TABLE.manual_build_hash(self);
-                self.bits.set_zobrist(hash.0, hash.1);
+                self.bits = BitboardStorage::build::<Self>(&self.board, self.side_to_move());
             }
 
             fn try_from_tps(tps: &str) -> Result<Self> {
@@ -924,8 +921,7 @@ mod test {
         for _ in 0..4 {
             rotated = rotated.rotate();
             dbg!(&rotated);
-            // dbg!(rotated.bits.flat);
-            hash.push(rotated.zobrist());
+            hash.push(rotated.hash());
         }
         dbg!(&hash);
         assert_eq!(hash[0], *hash.last().unwrap());

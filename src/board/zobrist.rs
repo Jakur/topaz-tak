@@ -45,10 +45,17 @@ impl ZobristTable {
         let idx = color_offset + sq_index * MAX_PIECES + stack_index;
         self.table[TOPS + idx]
     }
-    pub fn manual_build_hash<T: TakBoard>(&self, board: &T) -> (u64, u64) {
+    pub fn manual_hash_from_stacks(
+        &self,
+        stacks: &[crate::Stack],
+        side_to_move: Color,
+    ) -> (u64, u64) {
         let mut hash = 0;
         let mut hash_blocker = 0;
-        for (sq, stack) in board.board().iter().enumerate() {
+        for (sq, stack) in stacks.iter().enumerate() {
+            // if stack.is_empty() {
+            //     continue;
+            // }
             for (stack_pos, piece) in stack.iter().enumerate() {
                 hash ^= self.stack_hash(piece, sq, stack_pos);
             }
@@ -60,8 +67,11 @@ impl ZobristTable {
                 }
             }
         }
-        hash ^= self.color_hash(board.active_player());
+        hash ^= self.color_hash(side_to_move);
         (hash_blocker, hash)
+    }
+    pub fn manual_build_hash<T: TakBoard>(&self, board: &T) -> (u64, u64) {
+        self.manual_hash_from_stacks(board.board(), board.side_to_move())
     }
     #[allow(dead_code)]
     #[cfg(feature = "random")]
@@ -96,6 +106,7 @@ mod test {
     use super::*;
     use crate::board::Board6;
     use crate::generate_all_moves;
+    use crate::GameMove;
     use crate::Position;
     use std::collections::HashSet;
     #[test]
@@ -118,6 +129,69 @@ mod test {
         }
     }
     #[test]
+    pub fn test_consistent_zobrist_load() {
+        let tps2 = "x3,12,x2/x,1,11111221C,x,1,1111112S/1,21,x2,112S,12/2,221S,22,12,1,1/x2,212,2,21,2/2,2,1212C,1,2,12 1 47";
+        let data = "1. a1 f6
+2. e4 c3
+3. f4 e3
+4. d4 d3
+5. f3 f2
+6. Ce2 f5
+7. e5 c4
+8. d5 Cc5
+9. e6 Sd6
+10. e1 d6>
+11. f3< 2e6-11
+12. f3 f5-
+13. d2 c2
+14. f5 d3+
+15. Sd3 c6
+16. d3< c5>
+17. d3 b4
+18. b3 a3
+19. d1 2e4+
+20. e4 4e5>
+21. e5 Se6
+22. a2 b2
+23. a4 c5
+24. e2+ b1
+25. a2+ Sa2
+26. f1 a2+
+27. 3e3<21* e2
+28. d2< 2d4-
+29. c1 f2-
+30. Sa2 d2
+31. a2> 2d5-11
+32. 3c3+12 5f5+
+33. 3c5- f2
+34. f5 e6-
+35. e3 2e5-
+36. d5 2a3>
+37. e1+ c3
+38. d6 4d3+
+39. e5 6f6-
+40. c5 c6>
+41. 5c4+ 5d4+
+42. 5c5-41 6d5<
+43. c3<* c5-
+44. 4b3+13 e1
+45. 2b5> b3
+46. 2b2+ 5c4-113";
+        let board2 = Board6::try_from_tps(tps2).unwrap();
+        let hash_tps = board2.hash();
+        // let mut board = Board6::try_from_tps("x6/x6/x6/x6/x6/x6 1 1").unwrap();
+        let mut board = Board6::new();
+        for mv in data.split_whitespace() {
+            if let Some(mv) = GameMove::try_from_ptn(mv, &board) {
+                board.do_move(mv);
+            }
+        }
+        assert_eq!(format!("{:?}", &board), format!("{:?}", board2));
+        let manual = TABLE.manual_build_hash(&board2);
+        assert_eq!(manual.0 ^ manual.1, board2.zobrist());
+        assert_eq!(board.hash(), hash_tps);
+    }
+    #[test]
     pub fn test_update_zobrist() {
         let tps = "1,112S,2,2,x2/212121S,2S,2,12,2,x/1S,2,11,2122C,x2/1,1,221C,1S,1,1/x3,21,1,x/1,x,1,2,2,x 2 32";
         let mut board = Board6::try_from_tps(tps).unwrap();
@@ -127,9 +201,10 @@ mod test {
         assert!(moves.iter().any(|m| m.crush()));
         for m in moves {
             let rev = board.do_move(m);
-            assert_eq!(board.bits.zobrist(), TABLE.manual_build_hash(&board));
+            let hash = TABLE.manual_build_hash(&board);
+            assert_eq!(board.bits.zobrist(), hash.0 ^ hash.1);
             board.reverse_move(rev);
-            assert_eq!(board.bits.zobrist(), init_zobrist);
+            assert_eq!(board.bits.zobrist(), init_zobrist.0 ^ init_zobrist.1);
         }
     }
     #[test]
