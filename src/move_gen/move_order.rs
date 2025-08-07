@@ -736,6 +736,10 @@ impl<const SIZE: usize> EvalHistory<SIZE> {
             evals: [Self::EMPTY; SIZE],
         }
     }
+    /// Negative if the current depth is worse than previous ply, else positive
+    pub fn difference_from_last_move(&self, ply_depth: usize) -> Option<i32> {
+        Some(self.get_eval(ply_depth)? + self.get_eval(ply_depth - 1)?)
+    }
     pub fn get_previous(&self, ply: usize) -> Option<i32> {
         ply.checked_sub(2).map(|idx| self.evals[idx])
     }

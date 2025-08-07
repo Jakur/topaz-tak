@@ -779,9 +779,17 @@ where
         // Don't bother with the old IID stuff, if you have no pv this node sucks, so just reduce
         reduction += 1;
     }
-    if depth >= IID_MIN_DEPTH {
-        if info.eval_hist.is_collapsing(ply_depth) {
-            reduction += 1;
+    // Adjust history with static eval
+    if let Some(mv) = last_move {
+        let mv = mv.game_move;
+        if mv.is_place_move() {
+            if let Some(diff) = info.eval_hist.difference_from_last_move(ply_depth) {
+                if diff < -10 {
+                    info.hist_moves.update(1, mv);
+                } else if diff > 10 {
+                    info.hist_moves.update(-1, mv);
+                }
+            }
         }
     }
 
