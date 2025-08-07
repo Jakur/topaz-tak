@@ -356,18 +356,14 @@ impl NNUE6 {
         };
         // Ours
         let mut ours_acc = Accumulator::from_old(&old_ours.vec);
-        let (sub, add) = ours.diff(&old_ours.state);
-        ours_acc.remove_all(&sub, &NNUE);
-        ours_acc.add_all(&add, &NNUE);
+        ours.compute_diff(&old_ours.state, &mut ours_acc);
         let ours = Incremental {
             state: ours,
             vec: ours_acc,
         };
         // Theirs
         let mut theirs_acc = Accumulator::from_old(&old_theirs.vec);
-        let (sub, add) = theirs.diff(&old_theirs.state);
-        theirs_acc.remove_all(&sub, &NNUE);
-        theirs_acc.add_all(&add, &NNUE);
+        theirs.compute_diff(&old_theirs.state, &mut theirs_acc);
         let theirs = Incremental {
             state: theirs,
             vec: theirs_acc,
@@ -381,6 +377,7 @@ impl NNUE6 {
         }
         eval
     }
+    #[cfg(test)]
     pub(crate) fn manual_eval(takboard: BoardData) -> i32 {
         let (ours, theirs) = build_features(takboard);
         let ours = Incremental::fresh_new(&NNUE, ours);
@@ -449,8 +446,7 @@ impl Network {
 
         // Side-To-Move Accumulator -> Output.
         for (&input, &weight) in us.vals.iter().zip(&self.output_weights[..HIDDEN_SIZE]) {
-            let val = screlu(input) * i32::from(weight);
-            sum += val;
+            sum += screlu(input) * i32::from(weight);
         }
 
         // Not-Side-To-Move Accumulator -> Output.
@@ -498,84 +494,6 @@ impl Incremental {
         }
     }
 }
-
-// struct IncrementalState {
-//     pub(crate) meta: [u16; 3],
-//     pub(crate) piece_data: [u16; 62],
-// }
-
-// impl IncrementalState {
-//     pub fn from_vec(mut vec: Vec<u16>) -> Self {
-//         let mut meta = [0; 3];
-//         for i in 0..3 {
-//             meta[i] = vec.pop().unwrap();
-//         }
-//         let mut piece_data = [u16::MAX; 62];
-//         piece_data[0..vec.len()].copy_from_slice(&vec);
-//         Self { meta, piece_data }
-//     }
-//     pub fn diff(&self, old: &Self) -> (Vec<u16>, Vec<u16>) {
-//         // Todo in the real algorithm, do not allocate vecs. This is just to demonstrate the idea
-//         let mut subtract = Vec::new();
-//         let mut add = Vec::new();
-//         Self::operate(&self.meta, &old.meta, &mut add);
-//         Self::operate(&old.meta, &self.meta, &mut subtract);
-//         // Piece data is not sorted, but it is grouped by square
-//         let mut new_st = 0;
-//         let mut old_st = 0;
-//         loop {
-//             let ol = Self::get_sq(old.piece_data[old_st]);
-//             let nw = Self::get_sq(self.piece_data[new_st]);
-//             if ol >= 36 && nw >= 36 {
-//                 break;
-//             }
-//             if nw < ol {
-//                 let new_end = Self::get_end(&self.piece_data, new_st);
-//                 add.extend(self.piece_data[new_st..new_end].iter().copied());
-//                 new_st = new_end;
-//             } else if ol < nw {
-//                 let old_end = Self::get_end(&old.piece_data, old_st);
-//                 subtract.extend(old.piece_data[old_st..old_end].iter().copied());
-//                 old_st = old_end;
-//             } else {
-//                 // They are equal
-//                 let new_end = Self::get_end(&self.piece_data, new_st);
-//                 let old_end = Self::get_end(&old.piece_data, old_st);
-//                 Self::operate(
-//                     &self.piece_data[new_st..new_end],
-//                     &old.piece_data[old_st..old_end],
-//                     &mut add,
-//                 );
-//                 Self::operate(
-//                     &old.piece_data[old_st..old_end],
-//                     &self.piece_data[new_st..new_end],
-//                     &mut subtract,
-//                 );
-//                 new_st = new_end;
-//                 old_st = old_end;
-//             }
-//         }
-//         // End
-//         (subtract, add)
-//     }
-//     fn get_end(slice: &[u16], st: usize) -> usize {
-//         let st_val = Self::get_sq(slice[st]);
-//         st + slice[st..]
-//             .iter()
-//             .position(|&x| Self::get_sq(x) != st_val)
-//             .unwrap()
-//     }
-//     /// Extend out with values in left which are not present in right
-//     fn operate(left: &[u16], right: &[u16], out: &mut Vec<u16>) {
-//         out.extend(left.iter().copied().filter(|x| !right.contains(x)));
-//     }
-//     fn get_sq(val: u16) -> u16 {
-//         if val == u16::MAX {
-//             return 64;
-//         }
-//         val % 36
-//     }
-// }
 
 struct BitSetIterator {
     bitset: [u64; Self::SIZE],
@@ -640,6 +558,30 @@ impl IncrementalState {
         let b_val = 1 << (val % 64);
         self.bitset[b_idx] |= b_val
     }
+    pub fn compute_diff(&self, old: &Self, acc: &mut Accumulator) {
+        for (idx, (n, o)) in self
+            .bitset
+            .iter()
+            .copied()
+            .zip(old.bitset.iter().copied())
+            .enumerate()
+        {
+            let d = n ^ o; // Difference between bitsets
+            if d != 0 {
+                let mut sub = d & o; // Difference and Old
+                let mut add = d & n; // Difference and New
+                while sub != 0 {
+                    let bit_idx = pop_lowest(&mut sub);
+                    acc.remove_feature(idx * 64 + bit_idx as usize, &NNUE);
+                }
+                while add != 0 {
+                    let bit_idx = pop_lowest(&mut add);
+                    acc.add_feature(idx * 64 + bit_idx as usize, &NNUE);
+                }
+            }
+        }
+    }
+    #[cfg(test)]
     pub fn diff(&self, old: &Self) -> (Vec<u16>, Vec<u16>) {
         // Todo in the real algorithm, do not allocate vecs. This is just to demonstrate the idea
         let mut subtract_indices = Vec::new();
