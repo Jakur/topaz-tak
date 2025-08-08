@@ -645,7 +645,7 @@ fn identify() {
     println!("id name Topaz");
     println!("id author Justin Kur");
     println!("option name HalfKomi type spin default 0 min 0 max 12");
-    println!("option name Threads type spin default 1 min 1 max 4");
+    println!("option name Threads type spin default 1 min 1 max 8");
     println!("option name MaxNodes type spin default -1 min -1 max 10000000");
     println!("teiok");
 }
