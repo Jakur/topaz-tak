@@ -127,11 +127,16 @@ pub fn generate_masked_stack_moves<T: TakBoard, B: MoveBuffer>(
 pub struct RevGameMove {
     pub game_move: GameMove,
     pub dest_sq: usize,
+    pub fifty_count: u8,
 }
 
 impl RevGameMove {
-    pub fn new(game_move: GameMove, dest_sq: usize) -> Self {
-        Self { game_move, dest_sq }
+    pub fn new(game_move: GameMove, dest_sq: usize, fifty_count: u8) -> Self {
+        Self {
+            game_move,
+            dest_sq,
+            fifty_count,
+        }
     }
 }
 

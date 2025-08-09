@@ -1,4 +1,4 @@
-use crate::GameMove;
+use crate::{eval, GameMove};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 // transposition table parameters
@@ -85,7 +85,10 @@ impl HashTable {
             let cur_entry: HashEntry = (&bucket.entries[i]).into();
             // we never want 2 entries of same position!!!
             if cur_entry.check_hash(hash) {
-                if entry.depth() >= cur_entry.depth() {
+                if entry.depth() >= cur_entry.depth()
+                // && !(cur_entry.score_val.abs() >= eval::WIN_FOUND
+                //     && entry.score_val < eval::WIN_FOUND)
+                {
                     bucket.entries[i].update(entry);
                 }
                 return;

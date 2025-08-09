@@ -545,6 +545,7 @@ fn play_game_tei<E: Evaluator + Default + Send>(
 ) -> Result<()> {
     let (mut board, mut eval) = init.get_board::<E>();
     let table = HashTable::new(init.hash_size);
+    let mut position_hashes = Vec::new();
     let mut info = SearchInfo::new(init.max_depth, &table);
     // let mut eval = Box::new(crate::eval::Weights5::default());
 
@@ -576,6 +577,7 @@ fn play_game_tei<E: Evaluator + Default + Send>(
                 if let Some(max_nodes) = go.nodes {
                     info = info.set_max_nodes(max_nodes, max_nodes)
                 }
+                info.set_history(position_hashes.clone());
 
                 // let flats_left =
                 //     board.pieces_reserve(Color::White) + board.pieces_reserve(Color::Black);
@@ -613,9 +615,11 @@ fn play_game_tei<E: Evaluator + Default + Send>(
                 } else {
                     init.get_board::<E>().0
                 };
+                position_hashes = vec![board.hash()];
                 for m in s.split_whitespace() {
                     if let Some(m) = GameMove::try_from_ptn(m, &board) {
                         board.do_move(m);
+                        position_hashes.push(board.hash());
                     }
                 }
             }

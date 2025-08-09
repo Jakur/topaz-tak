@@ -72,6 +72,7 @@ pub trait TakBoard:
     /// Reset all stack indices and the zobrist hash of the position
     fn reset_stacks(&mut self);
     fn try_from_tps(tps: &str) -> Result<Self>;
+    fn fifty_move_rule(&self) -> usize;
 }
 
 macro_rules! board_impl {
@@ -93,6 +94,7 @@ macro_rules! board_impl {
                     caps_left: [Self::CAPS, Self::CAPS],
                     bits,
                     komi: 0,
+                    fifty_move: 0,
                 }
             }
             fn flat_winner(&self) -> GameResult {
@@ -167,12 +169,14 @@ macro_rules! board_impl {
                 if let Color::Black = self.side_to_move() {
                     self.move_num += 1;
                 }
+                self.fifty_move += 1;
                 self.swap_active_player();
             }
             fn rev_null_move(&mut self) {
                 if let Color::White = self.side_to_move() {
                     self.move_num -= 1
                 }
+                self.fifty_move -= 1;
                 self.swap_active_player();
             }
             fn get_tak_threats(
@@ -498,6 +502,9 @@ macro_rules! board_impl {
                 board.bits.set_zobrist(zobrist_hash.0, zobrist_hash.1);
                 Ok(board.with_komi(komi))
             }
+            fn fifty_move_rule(&self) -> usize {
+                self.fifty_move as usize
+            }
         }
         impl Position for $t {
             type Move = GameMove;
@@ -517,14 +524,18 @@ macro_rules! board_impl {
                 // If both players have a road the active player wins, but the eval will
                 // be checked after the players switch, so we check the prev player first
                 if self.road(prev_player) {
-                    return Some(GameResult::win_by(prev_player));
+                    Some(GameResult::win_by(prev_player))
                 } else if self.road(current_player) {
-                    return Some(GameResult::win_by(current_player));
+                    Some(GameResult::win_by(current_player))
                 } else {
+                    if self.fifty_move >= 50 {
+                        return Some(GameResult::Draw);
+                    }
                     self.flat_game()
                 }
             }
             fn reverse_move(&mut self, rev_m: <Self as Position>::ReverseMove) {
+                self.fifty_move = rev_m.fifty_count;
                 if let Color::White = self.active_player {
                     self.move_num -= 1;
                 }
@@ -559,12 +570,15 @@ macro_rules! board_impl {
             }
             fn do_move(&mut self, m: GameMove) -> <Self as Position>::ReverseMove {
                 let swap_pieces = self.move_num == 1;
+                let curr_fifty_move = self.fifty_move;
+                self.fifty_move += 1;
                 if let Color::Black = self.active_player {
                     self.move_num += 1;
                 }
                 self.swap_active_player();
                 let src_index = m.src_index();
                 if m.is_place_move() {
+                    self.fifty_move = 0;
                     let mut piece = m.place_piece();
                     if swap_pieces {
                         piece = piece.swap_color();
@@ -575,7 +589,7 @@ macro_rules! board_impl {
                     } else {
                         self.flats_left[piece.owner() as usize] -= 1;
                     }
-                    RevGameMove::new(m, src_index)
+                    RevGameMove::new(m, src_index, curr_fifty_move)
                 } else {
                     let num_pieces = m.number() as usize;
                     // let stack_move = m.forward_iter(Self::SIZE);
@@ -593,7 +607,10 @@ macro_rules! board_impl {
                         );
                         last_idx = q_step.index;
                     }
-                    RevGameMove::new(m, last_idx)
+                    if m.crush() {
+                        self.fifty_move = 0;
+                    }
+                    RevGameMove::new(m, last_idx, curr_fifty_move)
                 }
             }
         }
@@ -644,6 +661,7 @@ pub struct Board5 {
     caps_left: [usize; 2],
     pub bits: BitboardStorage<<Self as TakBoard>::Bits>,
     komi: u8,
+    fifty_move: u8,
 }
 
 #[derive(PartialEq, Clone)]
@@ -655,6 +673,7 @@ pub struct Board6 {
     caps_left: [usize; 2],
     pub bits: BitboardStorage<<Self as TakBoard>::Bits>,
     komi: u8,
+    fifty_move: u8,
 }
 
 #[derive(PartialEq, Clone)]
@@ -666,6 +685,7 @@ pub struct Board7 {
     caps_left: [usize; 2],
     pub bits: BitboardStorage<<Self as TakBoard>::Bits>,
     komi: u8,
+    fifty_move: u8,
 }
 
 board_impl![Board5, Bitboard5, 5, 21, 1];

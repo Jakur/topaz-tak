@@ -17,6 +17,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "cli")]
 pub mod book;
 
+const DRAW_SCORE: i32 = 0;
+
 const NULL_REDUCTION_ENABLED: bool = true;
 const NULL_REDUCE_PV: bool = true; // probably shouldn't
 const NULL_REDUCTION: usize = 6;
@@ -53,6 +55,7 @@ const IID_MIN_DEPTH: usize = 5;
 pub struct SearchInfo<'a> {
     pub max_depth: usize,
     pv_table: &'a HashTable,
+    pub hash_history: HashHistory,
     pub counter_moves: CounterMoves<49>, // Todo make this better generic
     pub hist_moves: PlaceHistory<49>,    // Todo make this better generic
     pub eval_hist: EvalHistory<50>,      // Todo make this not crash if max depth is set higher
@@ -80,6 +83,7 @@ impl<'a> SearchInfo<'a> {
         Self {
             max_depth,
             pv_table,
+            hash_history: HashHistory::new(Vec::new(), 0),
             counter_moves: CounterMoves::new(),
             // stack_moves: HistoryMoves::new(7), // Todo fix this
             // stack_win_kill: vec![KillerMoves::new(); depth_size],
@@ -134,6 +138,7 @@ impl<'a> SearchInfo<'a> {
     pub fn start_search(&mut self, start_ply: usize) {
         self.start_ply = start_ply;
         self.stopped = false;
+        self.hash_history.reset_search_start(start_ply);
         self.stats = SearchStats::new(16);
         self.start_time = Instant::now();
         self.counter_moves = CounterMoves::new();
@@ -160,6 +165,9 @@ impl<'a> SearchInfo<'a> {
                 self.stopped = true;
             }
         }
+    }
+    pub fn set_history(&mut self, hashes: Vec<u64>) {
+        self.hash_history.data = hashes;
     }
     fn store_move<E: TakBoard>(&mut self, position: &E, static_eval: i32, entry: HashEntry) {
         self.pv_table.put(position.hash(), entry);
@@ -224,6 +232,57 @@ impl<'a> SearchInfo<'a> {
     pub fn quiet(mut self, val: bool) -> Self {
         self.quiet = val;
         self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HashHistory {
+    data: Vec<u64>,
+    start_ply: usize,
+}
+
+impl HashHistory {
+    pub fn new(data: Vec<u64>, start_ply: usize) -> Self {
+        Self { data, start_ply }
+    }
+    pub fn push(&mut self, hash: u64, ply: usize) {
+        self.data.push(hash);
+        debug_assert_eq!(Some(hash), self.get(ply));
+    }
+    pub fn pop(&mut self) {
+        self.data.pop();
+    }
+    pub fn get(&self, ply: usize) -> Option<u64> {
+        self.data.get(ply.wrapping_sub(self.start_ply + 1)).copied()
+    }
+    pub fn reset_search_start(&mut self, search_start_ply: usize) {
+        self.start_ply = search_start_ply - self.data.len();
+        assert!(self.start_ply < 10_000);
+    }
+    pub fn check_repetition<T: TakBoard>(&self, search_start_ply: usize, board: &T) -> bool {
+        let board_ply = board.ply();
+        let board_hash = board.hash();
+        let fifty_count = board.fifty_move_rule();
+        let mut rep_count = 0;
+        for i in (2..=fifty_count).step_by(2) {
+            let ply = board_ply - i;
+            if let Some(hash) = self.get(ply) {
+                if hash == board_hash {
+                    // Two-fold within the search tree
+                    if ply > search_start_ply {
+                        return true;
+                    }
+                    rep_count += 1;
+                }
+                // 3-fold partially occurring before root
+                if rep_count >= 2 {
+                    return true;
+                }
+            } else {
+                return false;
+            }
+        }
+        false
     }
 }
 
@@ -612,9 +671,13 @@ where
             }
             return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
         }
-        Some(GameResult::Draw) => return 0,
+        Some(GameResult::Draw) => return DRAW_SCORE,
         None => {}
     }
+    if info.hash_history.check_repetition(info.start_ply, board) {
+        return DRAW_SCORE;
+    }
+
     let ply_depth = info.ply_depth(board);
     let mut skip_quiets = false;
     // let mut road_move = None;
@@ -665,7 +728,6 @@ where
     // Investigate prevalence of null moves in the pv table. It seems to be very rare.
     let mut pv_entry: Option<HashEntry> = None;
     let pv_entry_foreign = info.lookup_move(board);
-
     if let Some(entry) = pv_entry_foreign {
         pv_entry = Some(entry); // save for move lookup
     }
@@ -725,6 +787,7 @@ where
         // && road_move.is_none() {
 
         board.null_move();
+        info.hash_history.push(0, board.ply());
         // Check if we are in Tak
         let one_depth_score = -1
             * alpha_beta(
@@ -745,6 +808,7 @@ where
             );
         if one_depth_score <= LOSE_SCORE + 100 {
             board.rev_null_move();
+            info.hash_history.pop();
             tak_history = tak_history.add(info.ply_depth(board));
         } else {
             // Check if our position is so good that passing still gives opp a bad pos
@@ -766,6 +830,7 @@ where
                     ),
                 );
             board.rev_null_move();
+            info.hash_history.pop();
             // If we beta cutoff from the null move, then we can stop searching
             if score >= beta {
                 return beta;
@@ -825,6 +890,7 @@ where
             {
                 let m = entry.game_move;
                 let rev_move = board.do_move(m);
+                info.hash_history.push(board.hash(), board.ply());
 
                 let score = -1
                     * alpha_beta(
@@ -845,6 +911,7 @@ where
                     );
 
                 board.reverse_move(rev_move);
+                info.hash_history.pop();
                 if info.stopped {
                     return 0;
                 }
@@ -932,6 +999,7 @@ where
         // }
 
         let rev_move = board.do_move(mv);
+        info.hash_history.push(board.hash(), board.ply());
         let next_extensions = extensions;
 
         let next_depth = depth - 1 - reduction;
@@ -1044,6 +1112,8 @@ where
         }
 
         board.reverse_move(rev_move);
+        info.hash_history.pop();
+
         if info.stopped {
             return 0;
         }
@@ -1350,9 +1420,44 @@ fn naive_minimax<T: TakBoard, E: Evaluator<Game = T>>(
 
 #[cfg(test)]
 mod test {
+
     use super::*;
     use crate::board::{Board5, Board6};
     use crate::eval::{Weights5, Weights6, LOSE_SCORE};
+    use crate::{Position, TakBoard};
+    #[test]
+    fn rep_detection() {
+        let tps = "2,1,2,2,1,2/2S,1,1,1221C,1,1/112111112S,x2,112S,2,2/1,121S,112C,12,2,2/x2,2,221,2,2/1,1,2,1,1,1 1 38";
+        let mvs = "4d5> 3d4> 5e5> 3e4> 6f5< 3f4< b1> c2- 6e5> 3e4> 6f5< 3f4< 6e5> 3e4> 6f5< 3f4< 6e5> 3e4> 6f5< 3f4< 6e5> 3e4> 6f5< 3f4< 6e5> 3e4> 6f5< 3f4< 6e5> 3e4> 6f5< 3f4<";
+        let mut board = Board6::try_from_tps(tps).unwrap();
+        let search_start_ply = board.ply();
+        let mut hash_history = HashHistory::new(Vec::new(), board.ply());
+        hash_history.reset_search_start(search_start_ply);
+        let mut reps = Vec::new();
+        for ptn_mv in mvs.split_whitespace() {
+            let mv = GameMove::try_from_ptn(ptn_mv, &board).unwrap();
+            board.do_move(mv);
+            hash_history.push(board.hash(), board.ply());
+            reps.push(hash_history.check_repetition(search_start_ply, &board));
+        }
+        assert!(reps.iter().any(|x| *x));
+
+        let tps2 = "2,x,21C,x3/2S,1,2,x,1,x/112,x,1,2,2,x/1,1112S,1,12C,1,x/1,x,2,2,x2/1,1,x4 1 18";
+        let mvs = "d5 f5 e6 f6 f4 d1 2c6- f3 e3+ b4 e3 d4> e3+ Sd4 b6";
+        let mut board = Board6::try_from_tps(tps2).unwrap();
+        let search_start_ply = board.ply();
+        let mut hash_history = HashHistory::new(Vec::new(), board.ply());
+        hash_history.reset_search_start(search_start_ply);
+        let mut reps = Vec::new();
+        for ptn_mv in mvs.split_whitespace() {
+            let mv = GameMove::try_from_ptn(ptn_mv, &board).unwrap();
+            board.do_move(mv);
+            hash_history.push(board.hash(), board.ply());
+            let check = hash_history.check_repetition(search_start_ply, &board);
+            reps.push(check);
+        }
+        assert!(!reps.iter().any(|x| *x));
+    }
     #[test]
     fn small_minimax() {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
