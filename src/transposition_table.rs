@@ -86,8 +86,8 @@ impl HashTable {
             // we never want 2 entries of same position!!!
             if cur_entry.check_hash(hash) {
                 if entry.depth() >= cur_entry.depth()
-                // && !(cur_entry.score_val.abs() >= eval::WIN_FOUND
-                //     && entry.score_val < eval::WIN_FOUND)
+                    && !(cur_entry.score_val.abs() >= eval::WIN_FOUND
+                        && entry.score_val < eval::WIN_FOUND)
                 {
                     bucket.entries[i].update(entry);
                 }
