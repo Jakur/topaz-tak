@@ -4,7 +4,7 @@ use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
     generate_aggressive_place_moves, generate_all_stack_moves, CaptureHistory, CorrHist,
-    CounterMoves, EvalHistory, GameMove, KillerMoves, MoveBuffer, PlaceHistory, RevGameMove,
+    CounterMoves, EvalHist, GameMove, KillerMoves, MoveBuffer, PlaceHistory, RevGameMove,
     ScoredMove, SmartMoveBuffer,
 };
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
@@ -58,7 +58,7 @@ pub struct SearchInfo<'a> {
     pub hash_history: HashHistory,
     pub counter_moves: CounterMoves<49>, // Todo make this better generic
     pub hist_moves: PlaceHistory<49>,    // Todo make this better generic
-    pub eval_hist: EvalHistory<50>,      // Todo make this not crash if max depth is set higher
+    pub eval_hist: EvalHist<50>,         // Todo make this not crash if max depth is set higher
     pub capture_hist: CaptureHistory,    // Todo make this better generic
     pub killers: [KillerMoves; 64],
     corr_hist: CorrHist,
@@ -75,6 +75,7 @@ pub struct SearchInfo<'a> {
     hard_max_nodes: u64,
     quiet: bool,
     hyper: SearchHyper,
+    extra_move_buffer: Vec<GameMove>,
 }
 
 impl<'a> SearchInfo<'a> {
@@ -88,7 +89,7 @@ impl<'a> SearchInfo<'a> {
             // stack_moves: HistoryMoves::new(7), // Todo fix this
             // stack_win_kill: vec![KillerMoves::new(); depth_size],
             hist_moves: PlaceHistory::new(), // Todo init in search
-            eval_hist: EvalHistory::new(),
+            eval_hist: EvalHist::new(),
             capture_hist: CaptureHistory::new(6),
             corr_hist: CorrHist::new(),
             killers: [KillerMoves::new(); 64],
@@ -103,7 +104,11 @@ impl<'a> SearchInfo<'a> {
             soft_max_nodes: u64::MAX,
             hard_max_nodes: u64::MAX,
             hyper: SearchHyper::default(),
+            extra_move_buffer: Vec::with_capacity(128),
         }
+    }
+    pub fn buffer(&mut self) -> &mut Vec<GameMove> {
+        &mut self.extra_move_buffer
     }
     pub fn nodes(&self) -> usize {
         self.stats.nodes
@@ -143,7 +148,7 @@ impl<'a> SearchInfo<'a> {
         self.start_time = Instant::now();
         self.counter_moves = CounterMoves::new();
         self.hist_moves = PlaceHistory::new();
-        self.eval_hist = EvalHistory::new();
+        self.eval_hist = EvalHist::new();
         self.corr_hist = CorrHist::new();
         self.killers = [KillerMoves::new(); 64];
         self.capture_hist.clear();
@@ -502,6 +507,7 @@ where
     eval.set_tempo_offset(info.hyper.tempo_bonus);
     let mut alpha = -1_000_000;
     let mut beta = 1_000_000;
+    let mut moves: [SmartMoveBuffer; 50] = core::array::from_fn(|_| SmartMoveBuffer::new(0));
     for depth in 1..=info.max_depth {
         // Abort if we are unlikely to finish the search at this depth
         if depth >= info.early_abort_depth {
@@ -518,6 +524,7 @@ where
             eval,
             info,
             SearchData::new(alpha, beta, depth, true, None, 0, TakHistory(0), true, true),
+            &mut moves,
         );
         if ASPIRATION_ENABLED {
             if (best_score <= alpha) || (best_score >= beta) {
@@ -536,6 +543,7 @@ where
                         true,
                         true,
                     ),
+                    &mut moves,
                 )
             }
             alpha = best_score - info.hyper.aspiration;
@@ -637,6 +645,7 @@ fn alpha_beta<T, E>(
     evaluator: &mut E,
     info: &mut SearchInfo,
     data: SearchData,
+    bufs: &mut [SmartMoveBuffer],
 ) -> i32
 where
     T: TakBoard,
@@ -779,6 +788,8 @@ where
         info.eval_hist.set_eval(ply_depth, eval);
     }
 
+    let (moves, rest) = bufs.split_first_mut().unwrap();
+
     if NULL_REDUCTION_ENABLED
         && (!data.is_pv || NULL_REDUCE_PV)
         && null_move
@@ -805,6 +816,7 @@ where
                     false,
                     false,
                 ),
+                rest,
             );
         if one_depth_score <= LOSE_SCORE + 100 {
             board.rev_null_move();
@@ -828,6 +840,7 @@ where
                         false,
                         false,
                     ),
+                    rest,
                 );
             board.rev_null_move();
             info.hash_history.pop();
@@ -848,7 +861,7 @@ where
     if let Some(mv) = last_move {
         let mv = mv.game_move;
         if mv.is_place_move() {
-            if let Some(diff) = info.eval_hist.difference_from_last_move(ply_depth) {
+            if let Some(diff) = info.eval_hist.eval_diff_from_last_move(ply_depth) {
                 if diff < -10 {
                     info.hist_moves.update(1, mv);
                 } else if diff > 10 {
@@ -869,17 +882,18 @@ where
     // step 4: check for TT-Move and search it immediately
     // step 5: score spread moves, generate and score placements in gen_and_score()
     // step 6: search all moves ordered by score.
-    let mut stack_moves = Vec::new();
-    let mut moves = SmartMoveBuffer::new(T::SIZE * T::SIZE);
+    moves.clear();
+    // let mut moves = SmartMoveBuffer::new(T::SIZE * T::SIZE);
 
     if board.ply() >= 6 && depth > GEN_THOROUGH_ORDER_DEPTH {
-        if let Some(mv) = board.can_make_road(&mut stack_moves, None) {
+        if let Some(mv) = board.can_make_road(&mut info.extra_move_buffer, None) {
             // let data = &[mv];
             moves.add_scored(mv, 1000);
             // moves.add_move(mv);
             // moves.score_wins(data);
         }
     }
+    info.extra_move_buffer.clear();
 
     let mut has_searched_pv = false;
     if moves.len() == 0 {
@@ -908,6 +922,7 @@ where
                             data.is_pv,
                             false,
                         ),
+                        rest,
                     );
 
                 board.reverse_move(rev_move);
@@ -954,9 +969,7 @@ where
             }
         }
     }
-    stack_moves.clear();
-    generate_all_stack_moves(board, &mut stack_moves);
-    gen_and_score(depth, board, &mut stack_moves, &mut moves, &info);
+    moves.gen_and_score(depth, board, info);
 
     if let Some(entry) = pv_entry {
         if has_searched_pv {
@@ -1023,6 +1036,7 @@ where
                     data.is_pv,
                     false,
                 ),
+                rest,
             );
         } else {
             let mut needs_re_search_on_alpha = false;
@@ -1064,6 +1078,7 @@ where
                     false,
                     false,
                 ),
+                rest,
             );
 
             // re-search full depth moves and those that don't fail low
@@ -1083,6 +1098,7 @@ where
                         false,
                         false,
                     ),
+                    rest,
                 );
             }
 
@@ -1107,6 +1123,7 @@ where
                         data.is_pv,
                         false,
                     ),
+                    rest,
                 );
             }
         }
@@ -1193,47 +1210,6 @@ where
     alpha
 }
 
-fn gen_and_score<T>(
-    depth: usize,
-    board: &mut T,
-    stack_moves: &mut Vec<GameMove>,
-    moves: &mut SmartMoveBuffer,
-    info: &SearchInfo,
-) where
-    T: TakBoard,
-{
-    // Do a slower, more thorough move ordering near the root
-    if depth > GEN_THOROUGH_ORDER_DEPTH && board.ply() >= 6 {
-        if moves.len() > 0 {
-            // we have a road in 1, no further move generation needed!
-            return;
-        }
-        for m in stack_moves.iter().cloned() {
-            moves.add_move(m);
-        }
-        let mut check_moves = Vec::new();
-        generate_aggressive_place_moves(board, &mut check_moves);
-        let tak_threats = board.get_tak_threats(&mut check_moves, None);
-        moves.gen_score_place_moves(board, &info.hist_moves);
-        moves.score_tak_threats(&tak_threats);
-        if board.ply() >= 4 {
-            moves.score_stack_moves(board, &info.capture_hist);
-        }
-    } else {
-        if board.ply() >= 4 {
-            generate_all_stack_moves(board, moves);
-            moves.score_stack_moves(board, &info.capture_hist);
-        }
-        moves.gen_score_place_moves(board, &info.hist_moves);
-    }
-    // moves.gen_score_place_moves(board);
-    // if !must_capture {
-    //     // Note maybe it is possible to construct a situation with 0 legal moves
-    //     // Though it should not arise from real gameplay
-    //     moves.gen_score_place_moves(board);
-    // }
-}
-
 fn readable_eval(eval: i32) -> i32 {
     if eval.abs() >= (WIN_SCORE - 100) {
         eval
@@ -1241,118 +1217,6 @@ fn readable_eval(eval: i32) -> i32 {
         eval / 4
     }
 }
-
-// fn q_search<T, E>(
-//     board: &mut T,
-//     evaluator: &mut E,
-//     info: &mut SearchInfo,
-//     mut alpha: i32,
-//     beta: i32,
-//     prev_move: Option<RevGameMove>,
-//     depth_left: usize,
-// ) -> i32
-// where
-//     T: TakBoard,
-//     E: Evaluator<Game = T>,
-// {
-//     // Todo avoid double check game over on first entering q-search?
-//     // Todo limit q-search depth in case of extreme capture war?
-//     match board.game_result() {
-//         Some(GameResult::WhiteWin) => {
-//             if let Color::White = board.side_to_move() {
-//                 return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
-//             }
-//             return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32;
-//         }
-//         Some(GameResult::BlackWin) => {
-//             if let Color::White = board.side_to_move() {
-//                 return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32;
-//             }
-//             return WIN_SCORE - board.ply() as i32 + info.start_ply as i32;
-//         }
-//         Some(GameResult::Draw) => return 0,
-//         None => {}
-//     }
-//     let ply_depth = info.ply_depth(board);
-//     if depth_left == 0 {
-//         return evaluator.evaluate(board, ply_depth);
-//     }
-//     let mut moves = SmartMoveBuffer::new(64);
-//     // let src_idx = prev_move.game_move.src_index();
-//     // let side = board.side_to_move();
-//     // if board.board()[src_idx].is_empty() {
-//     //     if board.pieces_reserve(side) > 0 {
-//     //         moves.add_move(GameMove::from_placement(crate::Piece::wall(side), src_idx));
-//     //         moves.add_move(GameMove::from_placement(crate::Piece::flat(side), src_idx));
-//     //     }
-//     //     if board.caps_reserve(side) > 0 {
-//     //         moves.add_move(GameMove::from_placement(crate::Piece::cap(side), src_idx));
-//     //     }
-//     // }
-//     generate_all_stack_moves(board, &mut moves);
-//     moves.score_stack_moves(info, board);
-//     // let target = prev_move.dest_sq;
-//     // let top = board.board()[target].top().unwrap();
-//     // if !(top.is_cap() || top.owner() == side) {
-//     //     let stack_mask = T::Bits::index_to_bit(target).adjacent() & board.bits().all_pieces(side);
-//     //     generate_masked_stack_moves(board, &mut temp, BitIndexIterator::new(stack_mask));
-//     //     for mv in temp {
-//     //         if mv.dest_sq(T::SIZE) == target {
-//     //             moves.add_move(mv);
-//     //         }
-//     //     }
-//     // }
-//     // use crate::board::Bitboard;
-//     // let mut moves = Vec::new();
-//     // if board.can_make_road(&mut moves, None).is_some() {
-//     //     return WIN_SCORE - 1 - board.ply() as i32 + info.start_ply as i32;
-//     // }
-//     // let opp_critical = board.bits().road_pieces(!board.side_to_move()) & board.bits().empty();
-//     // // Opponent has two winning placements, we must move a stack
-//     // let cs_count = opp_critical.pop_count();
-//     // if cs_count == 0 {
-//     //     // Are we attacking, if so maybe look further?
-//     //     let ply_depth = info.ply_depth(board);
-//     //     return evaluator.evaluate(board, ply_depth);
-//     // }
-//     // let mut moves = SmartMoveBuffer::new();
-//     // if cs_count == 1 {
-//     //     let sq = opp_critical.lowest_index();
-//     //     let side = board.side_to_move();
-//     //     moves.add_move(GameMove::from_placement(crate::Piece::wall(side), sq));
-//     //     moves.add_move(GameMove::from_placement(crate::Piece::flat(side), sq));
-//     //     if board.caps_reserve(side) > 0 {
-//     //         moves.add_move(GameMove::from_placement(crate::Piece::cap(side), sq));
-//     //     }
-//     // }
-//     // generate_all_stack_moves(board, &mut moves);
-//     // moves.score_stack_moves(board);
-//     moves.drop_below_score(6);
-//     if moves.len() == 0 {
-//         return evaluator.evaluate(board, ply_depth);
-//     }
-//     for _ in 0..moves.len() {
-//         let mv = moves.get_best(prev_move, board);
-//         let rev = board.do_move(mv);
-//         let score = -q_search(
-//             board,
-//             evaluator,
-//             info,
-//             -beta,
-//             -alpha,
-//             Some(rev),
-//             depth_left - 1,
-//         );
-//         board.reverse_move(rev);
-//         if score >= beta {
-//             return beta;
-//         }
-//         if score > alpha {
-//             alpha = score;
-//         }
-//     }
-//     alpha
-// }
 
 /// A naive minimax function without pruning used for debugging and benchmarking
 #[cfg(test)]

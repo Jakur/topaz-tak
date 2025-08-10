@@ -195,7 +195,7 @@ mod test {
     pub fn test_update_zobrist() {
         let tps = "1,112S,2,2,x2/212121S,2S,2,12,2,x/1S,2,11,2122C,x2/1,1,221C,1S,1,1/x3,21,1,x/1,x,1,2,2,x 2 32";
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let mut moves = Vec::new();
+        let mut moves: Vec<GameMove> = Vec::new();
         let init_zobrist = TABLE.manual_build_hash(&board);
         generate_all_moves(&board, &mut moves);
         assert!(moves.iter().any(|m| m.crush()));

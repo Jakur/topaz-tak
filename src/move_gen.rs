@@ -7,7 +7,7 @@ use std::fmt;
 mod move_order;
 pub(crate) use move_order::ScoredMove;
 pub use move_order::{
-    CaptureHistory, CorrHist, CounterMoves, EvalHistory, HistoryMoves, KillerMoves, PlaceHistory,
+    CaptureHistory, CorrHist, CounterMoves, EvalHist, HistoryMoves, KillerMoves, PlaceHistory,
     SmartMoveBuffer,
 };
 // #[allow(dead_code)]
@@ -26,6 +26,24 @@ impl MoveBuffer for Vec<GameMove> {
 
     fn add_scored(&mut self, mv: GameMove, _score: i16) {
         self.push(mv);
+    }
+}
+
+impl MoveBuffer for Vec<ScoredMove> {
+    fn add_move(&mut self, mv: GameMove) {
+        self.push(ScoredMove {
+            mv,
+            score: 0,
+            changed_bits: 0,
+        });
+    }
+
+    fn add_scored(&mut self, mv: GameMove, score: i16) {
+        self.push(ScoredMove {
+            mv,
+            score,
+            changed_bits: 0,
+        });
     }
 }
 
@@ -70,7 +88,7 @@ pub fn generate_all_place_moves<T: TakBoard, B: MoveBuffer>(board: &T, moves: &m
 }
 
 /// Generates all cap or flat placement moves. Used for Tinue checking
-pub fn generate_aggressive_place_moves<T: TakBoard>(board: &T, moves: &mut Vec<GameMove>) {
+pub fn generate_aggressive_place_moves<T: TakBoard, B: MoveBuffer>(board: &T, moves: &mut B) {
     let side_to_move = board.side_to_move();
     let start_locs = board.empty_tiles();
     let (flat, cap) = match side_to_move {
@@ -79,14 +97,28 @@ pub fn generate_aggressive_place_moves<T: TakBoard>(board: &T, moves: &mut Vec<G
     };
     if board.caps_reserve(side_to_move) > 0 {
         for index in start_locs {
-            moves.push(GameMove::from_placement(cap, index));
+            moves.add_move(GameMove::from_placement(cap, index));
         }
     }
-    if board.pieces_reserve(side_to_move) > 1 {
-        // Todo should this condition be 0?
+    if board.pieces_reserve(side_to_move) > 0 {
         for index in board.empty_tiles() {
-            moves.push(GameMove::from_placement(flat, index));
+            moves.add_move(GameMove::from_placement(flat, index));
         }
+    }
+}
+
+/// Generates all cap or flat placement moves. Used for Tinue checking
+pub fn generate_passive_place_moves<T: TakBoard, B: MoveBuffer>(board: &T, moves: &mut B) {
+    let side_to_move = board.side_to_move();
+    if board.pieces_reserve(side_to_move) < 1 {
+        return;
+    }
+    let wall = match side_to_move {
+        Color::White => Piece::WhiteWall,
+        Color::Black => Piece::BlackWall,
+    };
+    for index in board.empty_tiles() {
+        moves.add_move(GameMove::from_placement(wall, index));
     }
 }
 
@@ -719,7 +751,7 @@ mod test {
     #[test]
     pub fn index_move_by_bits() {
         let board = Board6::try_from_tps("1111111,x5/x6/x6/x6/x6/x6 1 10").unwrap();
-        let mut moves = Vec::new();
+        let mut moves: Vec<GameMove> = Vec::new();
         generate_all_stack_moves(&board, &mut moves);
         let mut set: HashMap<_, GameMove> = HashMap::new();
         for mv in moves.iter().copied() {
@@ -744,7 +776,7 @@ mod test {
     }
     #[test]
     pub fn single_direction_move() {
-        let mut moves = Vec::new();
+        let mut moves: Vec<GameMove> = Vec::new();
         recursive_stack_moves(&mut moves, GameMove(0), 3, 3);
         assert_eq!(moves.len(), 4);
         recursive_stack_moves(&mut moves, GameMove(0), 3, 2);
@@ -766,7 +798,7 @@ mod test {
     pub fn four_direction_move() {
         let tps = "x6/x6/x3,12,x2/x2,1,1,x2/x6/x6 2 3";
         let board = Board6::try_from_tps(tps).unwrap();
-        let mut moves = Vec::new();
+        let mut moves: Vec<GameMove> = Vec::new();
         directional_stack_moves(&mut moves, GameMove(0), 2, 2);
         let one_dir = moves.len();
         moves.clear();

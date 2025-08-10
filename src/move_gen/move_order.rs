@@ -1,9 +1,17 @@
 use crate::search::SearchInfo;
 
+const GEN_THOROUGH_ORDER_DEPTH: usize = 1; // where to stop bothering with accurate move ordering
+
 use super::*;
 
+const WIN_SORT: i16 = 10_000;
+const PV_SORT: i16 = 5_000;
+const TAK_SORT: i16 = 500;
+
+#[derive(Clone)]
 pub struct SmartMoveBuffer {
     moves: Vec<ScoredMove>,
+    placement_start: usize,
     top_placements: SimpleMoveList<GameMove>,
     top_stack_moves: SimpleMoveList<ScoredMove>,
     // stack_hist: Vec<i16>,
@@ -15,13 +23,42 @@ impl SmartMoveBuffer {
     const THOROUGH_MOVES: usize = 16;
     pub fn new(buffer_size: usize) -> Self {
         Self {
-            moves: Vec::new(),
+            moves: Vec::with_capacity(buffer_size),
+            placement_start: 0,
             // stack_hist: vec![0; buffer_size],
             top_placements: SimpleMoveList::new(),
             top_stack_moves: SimpleMoveList::new(),
             queries: 0,
             // flat_attempts: 0,
         }
+    }
+    pub fn clear(&mut self) {
+        self.moves.clear();
+        self.placement_start = 0;
+        self.top_placements.clear();
+        self.top_stack_moves.clear();
+        self.queries = 0;
+    }
+    pub fn gen_and_score<T: TakBoard>(
+        &mut self,
+        depth: usize,
+        board: &mut T,
+        info: &mut SearchInfo,
+    ) {
+        if self.moves.len() > 0 {
+            // we have a road in 1, no further move generation needed!
+            return;
+        }
+        if board.ply() >= 4 {
+            self.gen_score_stack_moves(board, &info.capture_hist);
+        }
+        self.gen_score_place_moves(
+            board,
+            info,
+            board.ply() >= 4
+                && depth > GEN_THOROUGH_ORDER_DEPTH
+                && board.pieces_reserve(board.side_to_move()) > 1,
+        );
     }
     pub fn apply_history_penalty<const T: usize>(
         &self,
@@ -66,7 +103,9 @@ impl SmartMoveBuffer {
         self.moves.retain(|x| x.score >= threshold);
         original - self.moves.len()
     }
-    pub fn score_stack_moves<T: TakBoard>(&mut self, board: &T, captures: &CaptureHistory) {
+    pub fn gen_score_stack_moves<T: TakBoard>(&mut self, board: &T, captures: &CaptureHistory) {
+        generate_all_stack_moves(board, &mut self.moves);
+        self.placement_start = self.moves.len();
         let active_side = board.side_to_move();
         let has_reserves = board.pieces_reserve(active_side) > 1;
         let mut stack_idx = usize::MAX;
@@ -173,24 +212,22 @@ impl SmartMoveBuffer {
             x.score += captures.score_stack_move(active_side, x.mv);
         }
     }
-    pub fn gen_score_place_moves<T: TakBoard>(&mut self, board: &T, place_hist: &PlaceHistory<49>) {
+    pub fn gen_score_place_moves<T: TakBoard>(
+        &mut self,
+        board: &mut T,
+        info: &mut SearchInfo,
+        check_tak: bool,
+    ) {
         let side = board.side_to_move();
-        // [2, 3, 2, 6, 2, 3, 2, 0, 10, 1, 0, 2, 0, -1, 3, 0, 0, 2]
         for idx in board.empty_tiles() {
-            let mut flat_score = 100 + place_hist.flat_score(idx, side);
-            let mut wall_score = -50 + place_hist.wall_score(idx, side);
-            let mut cap_score = place_hist.cap_score(idx);
+            let mut flat_score = 100 + info.hist_moves.flat_score(idx, side);
+            let mut wall_score = -50 + info.hist_moves.wall_score(idx, side);
+            let mut cap_score = info.hist_moves.cap_score(idx);
             let neighbors = T::Bits::index_to_bit(idx).adjacent();
             let enemies = neighbors & board.bits().all_pieces(!side);
             let mut num_enemies = 0;
             for n_idx in BitIndexIterator::new(enemies) {
                 let n_stack = board.index(n_idx);
-                // if n_stack.len() > 3
-                //     && n_stack.last() != Some(&Piece::WhiteCap)
-                //     && n_stack.last() != Some(&Piece::BlackCap)
-                // {
-                //     wall_score += 3;
-                //     cap_score += 5;
                 if n_stack.len() > 1 {
                     wall_score += 50;
                     cap_score += 50;
@@ -212,27 +249,23 @@ impl SmartMoveBuffer {
                 cap_score -= 25;
                 flat_score -= 50;
             }
-            // match friends.pop_count() {
-            //     0 => {
-            //         flat_score -= 1;
-            //         cap_score -= 2;
-            //     }
-            //     1 | 2 => {
-            //         flat_score += 1;
-            //         cap_score += 2;
-            //     }
-            //     3 => {
-            //         flat_score += 1;
-            //     }
-            //     _ => {
-            //         wall_score -= 1;
-            //         cap_score -= 1;
-            //     }
-            // }
+            let mut tak_score = 0;
+            if check_tak {
+                let mv = GameMove::from_placement(Piece::flat(side), idx);
+                let rev = board.do_move(mv);
+                board.null_move();
+                let buffer = info.buffer();
+                if let Some(_winning) = board.can_make_road(buffer, None) {
+                    tak_score += TAK_SORT;
+                }
+                board.rev_null_move();
+                board.reverse_move(rev);
+                buffer.clear();
+            }
             if board.caps_reserve(board.side_to_move()) > 0 && board.ply() >= 4 {
                 self.moves.push(ScoredMove::new(
                     GameMove::from_placement(Piece::cap(side), idx),
-                    cap_score,
+                    cap_score + tak_score,
                     0,
                 ));
             }
@@ -246,13 +279,11 @@ impl SmartMoveBuffer {
                 }
                 self.moves.push(ScoredMove::new(
                     GameMove::from_placement(Piece::flat(side), idx),
-                    flat_score,
+                    flat_score + tak_score,
                     0,
                 ));
             }
         }
-        // let neighbors = T::Bits::index_to_bit(idx).adjacent();
-        // todo!()
     }
     pub fn remove(&mut self, mv: GameMove) {
         if let Some(pos) = self.moves.iter().position(|m| m.mv == mv) {
@@ -261,20 +292,20 @@ impl SmartMoveBuffer {
     }
     pub fn score_pv_move(&mut self, pv_move: GameMove) {
         if let Some(found) = self.moves.iter_mut().find(|m| m.mv == pv_move) {
-            found.score += 5000;
+            found.score += PV_SORT;
         }
     }
     pub fn score_tak_threats(&mut self, tak_threats: &[GameMove]) {
         for m in self.moves.iter_mut() {
             if tak_threats.contains(&m.mv) {
-                m.score += 500;
+                m.score += TAK_SORT;
             }
         }
     }
     pub fn score_wins(&mut self, winning_moves: &[GameMove]) {
         for m in self.moves.iter_mut() {
             if winning_moves.contains(&m.mv) {
-                m.score += 10000
+                m.score += WIN_SORT
             }
         }
     }
@@ -297,19 +328,12 @@ impl SmartMoveBuffer {
                 .iter()
                 .enumerate()
                 .max_by_key(|(_i, &m)| {
-                    // if m.score < 3 {
-                    //     m.score + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
-                    // } else {
-                    //     m.score
-                    // }
                     m.score
                         + info.counter_moves.score_stack_move(
                             prev.map(|x| x.game_move).unwrap_or(GameMove::null_move()),
                             m.mv,
                         ) as i16
                         + killers.score(m.mv) as i16
-                    // m.score // + info.killer_moves[ply % info.max_depth].score(m.mv) as i16
-                    // - self.penalty_hist_score(m.mv)
                 })
                 .unwrap();
             let m = *m;
@@ -318,14 +342,6 @@ impl SmartMoveBuffer {
             } else {
                 self.top_stack_moves.try_append(m);
             }
-            // if m.mv.is_stack_move() {
-            //     let hist_score = &mut self.stack_hist[m.mv.src_index()];
-            //     if *hist_score < 10 {
-            //         *hist_score += 1;
-            //     }
-            // } else if m.mv.place_piece().is_flat() {
-            //     self.flat_attempts += 1;
-            // }
             self.moves.swap_remove(idx);
             m
         } else {
@@ -342,21 +358,12 @@ impl SmartMoveBuffer {
     ) -> GameMove {
         self.get_best_scored(info, prev, killers).mv
     }
-    // fn penalty_hist_score(&self, mv: GameMove) -> i16 {
-    //     if mv.is_stack_move() {
-    //         self.stack_hist[mv.src_index()]
-    //     } else if mv.place_piece().is_flat() {
-    //         self.flat_attempts * 2
-    //     } else {
-    //         0
-    //     }
-    // }
     pub fn len(&self) -> usize {
         self.moves.len()
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SimpleMoveList<T> {
     data: [T; 10],
     idx: usize,
@@ -371,6 +378,9 @@ where
             data: [T::default(); 10],
             idx: 0,
         }
+    }
+    fn clear(&mut self) {
+        self.idx = 0;
     }
     /// Adds a new move to the list if there is sufficient capacity, else noop
     fn try_append(&mut self, mv: T) {
@@ -725,22 +735,24 @@ impl<const SIZE: usize> HistoryMoves<SIZE> {
 }
 
 #[derive(Clone)]
-pub struct EvalHistory<const SIZE: usize> {
+pub struct EvalHist<const SIZE: usize> {
     evals: [i32; SIZE],
+    tak_move_buffer: Vec<GameMove>,
 }
 
-impl<const SIZE: usize> EvalHistory<SIZE> {
+impl<const SIZE: usize> EvalHist<SIZE> {
     const EMPTY: i32 = i32::MIN;
     pub fn new() -> Self {
         Self {
             evals: [Self::EMPTY; SIZE],
+            tak_move_buffer: Vec::with_capacity(128),
         }
     }
     /// Negative if the current depth is worse than previous ply, else positive
-    pub fn difference_from_last_move(&self, ply_depth: usize) -> Option<i32> {
+    pub fn eval_diff_from_last_move(&self, ply_depth: usize) -> Option<i32> {
         Some(self.get_eval(ply_depth)? + self.get_eval(ply_depth - 1)?)
     }
-    pub fn get_previous(&self, ply: usize) -> Option<i32> {
+    pub fn get_previous_eval(&self, ply: usize) -> Option<i32> {
         ply.checked_sub(2).map(|idx| self.evals[idx])
     }
     pub fn is_improving(&self, ply: usize) -> bool {
@@ -749,19 +761,8 @@ impl<const SIZE: usize> EvalHistory<SIZE> {
             return false;
         }
         // assert!(eval != Self::EMPTY);
-        if let Some(prev) = self.get_previous(ply) {
+        if let Some(prev) = self.get_previous_eval(ply) {
             eval > prev
-        } else {
-            false
-        }
-    }
-    pub fn is_collapsing(&self, ply: usize) -> bool {
-        let eval = self.evals[ply];
-        if eval == Self::EMPTY {
-            return false;
-        }
-        if let Some(prev) = self.get_previous(ply) {
-            eval < prev + 60
         } else {
             false
         }

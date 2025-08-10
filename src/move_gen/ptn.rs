@@ -270,7 +270,7 @@ mod test {
         assert_eq!(pt.as_str(), "M B4 D4 3 2");
         let m2 = GameMove::try_from_playtak(&pt, &board).unwrap();
         assert_eq!(m, m2);
-        let mut buffer = Vec::new();
+        let mut buffer: Vec<GameMove> = Vec::new();
         generate_all_moves(&board, &mut buffer);
         for m in buffer {
             let pt = m.to_playtak::<Board6>();

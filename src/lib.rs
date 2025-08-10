@@ -312,7 +312,7 @@ pub enum TeiCommand {
 }
 
 pub fn execute_moves_check_valid(board: &mut Board6, ptn_slice: &[&str]) -> Result<Vec<GameMove>> {
-    let mut moves = Vec::new();
+    let mut moves: Vec<GameMove> = Vec::new();
     let mut made_moves = Vec::new();
     for m_str in ptn_slice {
         moves.clear();
