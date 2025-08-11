@@ -437,6 +437,10 @@ where
     T: TakBoard,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        pub fn sigmoid(x: f32) -> f32 {
+            1.0 / (1.0 + f32::exp(-x / 400.0))
+        }
+
         let mut pv_string = String::new();
         for m in self.pv.iter() {
             pv_string.push_str(&m.to_ptn::<T>());
@@ -448,11 +452,22 @@ where
         } else {
             0
         };
+
+        let winning_prob_per_mille = if self.score > WIN_SCORE - 100 {
+            1000
+        } else if self.score < LOSE_SCORE + 100 {
+            0
+        } else {
+            (sigmoid(self.score as f32) * 1000.0) as i32
+        };
+
         write!(
             f,
-            "info depth {} score cp {} time {} nodes {} nps {} hashfull {} pv {}",
+            "info depth {} score cp {} wdl {} 0 {} time {} nodes {} nps {} hashfull {} pv {}",
             self.depth,
             readable_eval(self.score),
+            winning_prob_per_mille,
+            1000 - winning_prob_per_mille,
             self.time,
             self.nodes,
             nps,
