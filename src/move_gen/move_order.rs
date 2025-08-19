@@ -131,11 +131,18 @@ where
     }
     pub(crate) fn get_best_scored(
         &mut self,
-        info: &SearchInfo,
-        prev: Option<RevGameMove>,
-        killers: &KillerMoves,
-    ) -> ScoredMove {
-        todo!()
+        board: &mut T,
+        info: &mut SearchInfo,
+    ) -> Option<ScoredMove> {
+        let next = self.moves.get_next(board, info);
+        if let Some(m) = next {
+            if m.mv.is_place_move() {
+                self.top_placements.try_append(m.mv);
+            } else {
+                self.top_stack_moves.try_append(m);
+            }
+        }
+        next
         // if self.queries <= Self::THOROUGH_MOVES {
         //     self.queries += 1;
         //     let (idx, m) = self
@@ -152,11 +159,11 @@ where
         //         })
         //         .unwrap();
         //     let m = *m;
-        //     if m.mv.is_place_move() {
-        //         self.top_placements.try_append(m.mv);
-        //     } else {
-        //         self.top_stack_moves.try_append(m);
-        //     }
+        // if m.mv.is_place_move() {
+        //     self.top_placements.try_append(m.mv);
+        // } else {
+        //     self.top_stack_moves.try_append(m);
+        // }
         //     self.moves.swap_remove(idx);
         //     m
         // } else {
@@ -164,14 +171,6 @@ where
         //     let x = self.moves.pop().unwrap();
         //     x
         // }
-    }
-    pub fn get_best(
-        &mut self,
-        info: &SearchInfo,
-        prev: Option<RevGameMove>,
-        killers: &KillerMoves,
-    ) -> GameMove {
-        self.get_best_scored(info, prev, killers).mv
     }
     pub fn len(&self) -> usize {
         self.moves.len()
@@ -273,6 +272,9 @@ where
         self.prune_threshold = threshold;
         self.prune_bad = true;
     }
+    pub fn do_lmr(&mut self) {
+        self.prune_bad = true;
+    }
     fn set_counter_move(&mut self, mv: GameMove) {
         self.counter_move = Some(mv);
     }
@@ -316,8 +318,9 @@ where
                 .bits()
                 .significant_direction_stacks(board.side_to_move());
             for (direction, s) in sig.into_iter().enumerate() {
-                self.gen_score_stack_moves(board, direction, s, info);
-                self.needs.directions[direction].unset_bits(s);
+                let check = s & self.needs.directions[direction];
+                self.gen_score_stack_moves(board, direction, check, info);
+                self.needs.directions[direction].unset_bits(check);
             }
         }
         self.gen_score_place_moves(board, self.needs.empty, info, self.check_tak);
@@ -336,8 +339,7 @@ where
             }
         }
     }
-    pub fn get_next(&mut self, board: &mut T, info: &mut SearchInfo) -> Option<ScoredMove> {
-        self.queries += 1;
+    pub(crate) fn get_next(&mut self, board: &mut T, info: &mut SearchInfo) -> Option<ScoredMove> {
         if self.good.is_empty() {
             match self.stage {
                 MoveStage::HashMove => {
@@ -356,13 +358,16 @@ where
                     // if self.prune_bad {
                     //     return None;
                     // }
+                    self.queries += 1;
                     return self.bad.pop();
                 }
             }
             self.stage = self.stage.advance();
             return self.get_next(board, info);
         }
-        if self.queries > SmartMoveBuffer::<T>::THOROUGH_MOVES {
+        self.queries += 1;
+        // SmartMoveBuffer::<T>::THOROUGH_MOVES
+        if self.queries > 9999 {
             self.good.pop()
         } else {
             let (idx, _m) = self
@@ -581,6 +586,8 @@ where
         self.gen_isolated(board, info, pv_move);
         if let Some(pos) = self.good.iter().position(|m| m.mv == pv_move) {
             self.good.swap_remove(pos);
+        } else {
+            assert!(false);
         }
     }
 }

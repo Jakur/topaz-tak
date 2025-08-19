@@ -987,34 +987,41 @@ where
 
     if skip_quiets {
         let mean = info.hist_moves.mean_flat_score(board.side_to_move());
-        let _num_pruned = moves.drop_below_score(mean - info.hyper.quiet_score);
+        moves
+            .buffer()
+            .do_futility_pruning(mean - info.hyper.quiet_score);
+        // let _num_pruned = moves.drop_below_score(mean - info.hyper.quiet_score);
+    }
+
+    if depth >= 6 {
+        moves.buffer().do_lmr();
     }
 
     let mut beta_cut = false;
     let mut count = if has_searched_pv { 1 } else { 0 };
-    while let Some(scored) = moves.buffer().get_next(board, info) {
+    while let Some(scored) = moves.get_best_scored(board, info) {
         let ScoredMove {
             mv,
             score: mv_order_score,
             changed_bits,
         } = scored;
         // let mv = moves.get_best(info, last_move);
-        // if is_root && count <= 16 {
-        //     // println!(
-        //     //     "Depth: {} MC: {} Move {} Move Score {}",
-        //     //     depth,
-        //     //     count,
-        //     //     mv.to_ptn::<T>(),
-        //     //     mv_order_score
-        //     // );
-        //     if count == 16 {
-        //         // dbg!(&info.corr_hist.white.iter().max());
-        //         dbg!(&info.corr_hist.black[0..10]);
-        //         // let mean = info.hist_moves.mean_flat_score(board.side_to_move());
-        //         // println!("Mean Flat Score: {mean}");
-        //         // info.hist_moves.debug();
-        //     }
-        // }
+        if is_root && count <= 16 {
+            println!(
+                "Depth: {} MC: {} Move {} Move Score {}",
+                depth,
+                count,
+                mv.to_ptn::<T>(),
+                mv_order_score
+            );
+            if count == 16 {
+                // dbg!(&info.corr_hist.white.iter().max());
+                // dbg!(&info.corr_hist.black[0..10]);
+                // let mean = info.hist_moves.mean_flat_score(board.side_to_move());
+                // println!("Mean Flat Score: {mean}");
+                // info.hist_moves.debug();
+            }
+        }
 
         let rev_move = board.do_move(mv);
         info.hash_history.push(board.hash(), board.ply());

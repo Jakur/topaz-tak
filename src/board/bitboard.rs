@@ -841,6 +841,12 @@ mod test {
     use crate::board::Board6;
     use crate::Position;
     #[test]
+    pub fn unset() {
+        let mut x = Bitboard6::new(0x10401808000400);
+        x.unset_bits(Bitboard6::new(0x1800000000));
+        assert_eq!(x, Bitboard6::new(0x10400008000400));
+    }
+    #[test]
     pub fn candidate_stacks() {
         let tps = "2,1,1,x2,1/21,2,x,1122S,1,1/2,2,21,x2,1/1112S,x,21C,22121S,112S,2/1,2,2,22C,12,1S/1,2,2,1,x2 1 36";
         let board = Board6::try_from_tps(tps).unwrap();
