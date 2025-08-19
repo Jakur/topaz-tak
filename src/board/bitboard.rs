@@ -10,6 +10,7 @@ pub struct BitboardStorage<T> {
     pub flat: T,
     pub wall: T,
     pub cap: T,
+    has_friendly: T,
     zobrist_blocker: u64,
     zobrist_other: u64,
 }
@@ -89,6 +90,32 @@ where
         self.road_pieces(color).check_road()
     }
 
+    pub fn update_stack_bits(&mut self, stack: &Stack, bit_pattern: T) {
+        let (_, friendly) = stack.captive_friendly(); 
+        if friendly > 0 {
+            self.has_friendly |= bit_pattern;
+        }
+    }
+
+    pub fn significant_direction_stacks(&self, side_to_move: Color) -> [T; 4] {
+        let mut out = [T::default(); 4];
+        let pieces = self.all_pieces(side_to_move);
+        let enemy = self.flat & self.all_pieces(!side_to_move);
+        for (i, neighbor) in [pieces.north(), pieces.east(), pieces.south(), pieces.west()].into_iter().enumerate() {
+            let mut data = (self.has_friendly | self.cap) & pieces;
+            let target = neighbor & enemy; 
+            let good_stack = match i {
+                0 => target.south(),
+                1 => target.west(),
+                2 => target.north(),
+                _ => target.east(),
+            };
+            data |= pieces & good_stack;
+            out[i] = data;
+        }
+        out
+    }
+
     pub fn build<B: TakBoard>(board: &[Stack], side_to_move: Color) -> Self {
         assert_eq!(board.len(), B::SIZE * B::SIZE);
         // Todo compare to manual build hash
@@ -98,6 +125,7 @@ where
         for (idx, stack) in board.iter().enumerate() {
             if let Some(piece) = stack.top() {
                 let bit_pattern = T::index_to_bit(idx);
+                storage.update_stack_bits(&stack, bit_pattern);
                 match piece {
                     Piece::WhiteFlat => {
                         storage.white |= bit_pattern;
@@ -147,6 +175,7 @@ pub trait Bitboard:
     + std::ops::BitOr<u64, Output=Self>
 {
     const ZERO: Self;
+    const UNIVERSAL: Self;
     /// Returns all bits adjacent to a bitboard by sliding the entire bitboard in
     /// all 4 directions. 
     /// 
@@ -228,6 +257,7 @@ pub trait Bitboard:
     fn size() -> usize;
     fn simple_road_est(self) -> (i32, i32);
     fn index_iter(self) -> BitIndexIterator<Self>;
+    fn unset_bits(&mut self, bits: Self);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -571,6 +601,7 @@ macro_rules! bitboard_impl {
         }
         impl Bitboard for $t {
             const ZERO: Self = Self::new(0);
+            const UNIVERSAL: Self = Self::new(u64::MAX);
             fn adjacent(self) -> Self {
                 let data = self.0;
                 let up = data >> 8;
@@ -766,6 +797,9 @@ macro_rules! bitboard_impl {
             fn index_iter(self) -> BitIndexIterator<Self> {
                 BitIndexIterator::new(self)
             }
+            fn unset_bits(&mut self, bits: Self) {
+                *self = *self & !bits;
+            }
         }
     };
 }
@@ -805,7 +839,18 @@ where
 mod test {
     use super::*;
     use crate::board::Board6;
-    use crate::board::zobrist;
+    use crate::Position;
+    #[test]
+    pub fn candidate_stacks() {
+        let tps = "2,1,1,x2,1/21,2,x,1122S,1,1/2,2,21,x2,1/1112S,x,21C,22121S,112S,2/1,2,2,22C,12,1S/1,2,2,1,x2 1 36";
+        let board = Board6::try_from_tps(tps).unwrap();
+        assert_eq!(board.bits().has_friendly, Bitboard6::new(0x101000100000));
+        let sig = board.bits().significant_direction_stacks(board.side_to_move());
+        assert_eq!(sig[0], Bitboard6::new(0x401800020000));
+        assert_eq!(sig[1], Bitboard6::new(0x2021800020000));
+        assert_eq!(sig[2], Bitboard6::new(0x1840020400));
+        assert_eq!(sig[3], Bitboard6::new(0x10401808000400));
+    }
     #[test]
     pub fn pop_lowest() {
         let mut x = Bitboard6::new(0x20103c007e00);

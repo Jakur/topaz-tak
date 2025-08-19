@@ -481,7 +481,10 @@ macro_rules! board_impl {
                         }
                     }
                 }
-                for stack in board.board.iter() {
+                for (idx, stack) in board.board.iter().enumerate() {
+                    board
+                        .bits
+                        .update_stack_bits(stack, <Self as TakBoard>::Bits::index_to_bit(idx));
                     for piece in stack.iter() {
                         match piece {
                             Piece::WhiteCap => board.caps_left[0] -= 1,
@@ -553,15 +556,22 @@ macro_rules! board_impl {
                     let iter = rev_m.game_move.quantity_iter(Self::SIZE);
                     let mut build = stack::Pickup::default();
                     for q_step in iter {
-                        build.append(
-                            self.board[q_step.index]
-                                .split_off(q_step.quantity as usize, &mut self.bits),
+                        let st = &mut self.board[q_step.index];
+                        build.append(st.split_off(q_step.quantity as usize, &mut self.bits));
+                        self.bits.update_stack_bits(
+                            &st,
+                            <Self as TakBoard>::Bits::index_to_bit(src_index),
                         );
                     }
-                    self.board[src_index].add_stack(
+                    let src_stack = &mut self.board[src_index];
+                    src_stack.add_stack(
                         rev_m.game_move.number() as usize,
                         &mut build,
                         &mut self.bits,
+                    );
+                    self.bits.update_stack_bits(
+                        &src_stack,
+                        <Self as TakBoard>::Bits::index_to_bit(src_index),
                     );
                     if rev_m.game_move.crush() {
                         self.board[rev_m.dest_sq].uncrush_top(&mut self.bits);
@@ -597,13 +607,18 @@ macro_rules! board_impl {
                     let src_stack = &mut self.board[src_index];
                     debug_assert!(src_stack.len() >= num_pieces);
                     let mut take_stack = src_stack.split_off(num_pieces, &mut self.bits);
+                    self.bits.update_stack_bits(
+                        &src_stack,
+                        <Self as TakBoard>::Bits::index_to_bit(src_index),
+                    );
                     let mut last_idx = 0;
                     for q_step in stack_move.into_iter() {
                         debug_assert!(q_step.index != src_index);
-                        self.board[q_step.index].add_stack(
-                            q_step.quantity as usize,
-                            &mut take_stack,
-                            &mut self.bits,
+                        let st = &mut self.board[q_step.index];
+                        st.add_stack(q_step.quantity as usize, &mut take_stack, &mut self.bits);
+                        self.bits.update_stack_bits(
+                            st,
+                            <Self as TakBoard>::Bits::index_to_bit(q_step.index),
                         );
                         last_idx = q_step.index;
                     }

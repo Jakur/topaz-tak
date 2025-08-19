@@ -507,7 +507,7 @@ where
     eval.set_tempo_offset(info.hyper.tempo_bonus);
     let mut alpha = -1_000_000;
     let mut beta = 1_000_000;
-    let mut moves: [SmartMoveBuffer; 50] = core::array::from_fn(|_| SmartMoveBuffer::new(0));
+    let mut moves: [SmartMoveBuffer<T>; 50] = core::array::from_fn(|_| SmartMoveBuffer::new(0));
     for depth in 1..=info.max_depth {
         // Abort if we are unlikely to finish the search at this depth
         if depth >= info.early_abort_depth {
@@ -645,7 +645,7 @@ fn alpha_beta<T, E>(
     evaluator: &mut E,
     info: &mut SearchInfo,
     data: SearchData,
-    bufs: &mut [SmartMoveBuffer],
+    bufs: &mut [SmartMoveBuffer<T>],
 ) -> i32
 where
     T: TakBoard,
@@ -888,7 +888,7 @@ where
     if board.ply() >= 6 && depth > GEN_THOROUGH_ORDER_DEPTH {
         if let Some(mv) = board.can_make_road(&mut info.extra_move_buffer, None) {
             // let data = &[mv];
-            moves.add_scored(mv, 1000);
+            moves.add_scored(mv, 10000);
             // moves.add_move(mv);
             // moves.score_wins(data);
         }
@@ -969,13 +969,19 @@ where
             }
         }
     }
-    moves.gen_and_score(depth, board, info);
+    moves.buffer().prepare(
+        board,
+        info,
+        last_move.map(|x| x.game_move),
+        depth > GEN_THOROUGH_ORDER_DEPTH,
+    );
+    // moves.gen_and_score(depth, board, info);
 
     if let Some(entry) = pv_entry {
         if has_searched_pv {
-            moves.remove(entry.game_move);
+            moves.buffer().remove_pv_move(board, info, entry.game_move);
         } else {
-            moves.score_pv_move(entry.game_move);
+            moves.buffer().score_pv_move(board, info, entry.game_move);
         }
     }
 
@@ -985,14 +991,13 @@ where
     }
 
     let mut beta_cut = false;
-
-    for c in 0..moves.len() {
-        let count = if has_searched_pv { c + 1 } else { c };
+    let mut count = if has_searched_pv { 1 } else { 0 };
+    while let Some(scored) = moves.buffer().get_next(board, info) {
         let ScoredMove {
             mv,
             score: mv_order_score,
             changed_bits,
-        } = moves.get_best_scored(info, last_move, &info.killers[depth % 64]);
+        } = scored;
         // let mv = moves.get_best(info, last_move);
         // if is_root && count <= 16 {
         //     // println!(
@@ -1181,6 +1186,7 @@ where
             best_move = Some(mv);
             best_score = Some(score);
         }
+        count += 1;
     }
 
     if let Some(best) = best_move {

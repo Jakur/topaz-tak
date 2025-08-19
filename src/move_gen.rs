@@ -140,9 +140,9 @@ pub fn generate_masked_stack_moves<T: TakBoard, B: MoveBuffer>(
         let limits = find_move_limits(board, index);
         for dir in 0..4 {
             let dir_move = start_move.set_direction(dir as u32);
-            let max_steps = limits.steps[dir];
+            let max_steps = limits.vals[dir].steps;
             let max_pieces = std::cmp::min(T::SIZE, stack_height);
-            if limits.can_crush[dir] {
+            if limits.vals[dir].can_crush {
                 directional_crush_moves(moves, dir_move, max_steps, max_pieces - 1);
             }
             if max_steps == 0 {
@@ -150,6 +150,38 @@ pub fn generate_masked_stack_moves<T: TakBoard, B: MoveBuffer>(
             }
             directional_stack_moves(moves, dir_move, max_steps, max_pieces);
         }
+        // moves.add_limit(limits);
+    }
+}
+
+/// Generates all legal sliding movements in one direction for only the provided stacks
+pub fn generate_masked_directional_moves<T: TakBoard, B: MoveBuffer>(
+    board: &T,
+    moves: &mut B,
+    dir: usize,
+    stacks: BitIndexIterator<T::Bits>,
+) {
+    let f = match dir {
+        0 => T::Bits::north,
+        1 => T::Bits::east,
+        2 => T::Bits::south,
+        _ => T::Bits::west,
+    };
+    for index in stacks {
+        let stack_height = board.index(index).len();
+        let start_move = GameMove(index as u32);
+        let mut limit = MoveLimit::default();
+        find_dir_limit(board.bits(), index, &mut limit, f);
+        let dir_move = start_move.set_direction(dir as u32);
+        let max_steps = limit.steps;
+        let max_pieces = std::cmp::min(T::SIZE, stack_height);
+        if limit.can_crush {
+            directional_crush_moves(moves, dir_move, max_steps, max_pieces - 1);
+        }
+        if max_steps == 0 {
+            continue;
+        }
+        directional_stack_moves(moves, dir_move, max_steps, max_pieces);
         // moves.add_limit(limits);
     }
 }
@@ -505,27 +537,35 @@ pub struct QuantityStep {
     pub quantity: u32,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MoveLimit {
+    steps: u8,
+    can_crush: bool,
+}
+
+impl MoveLimit {
+    fn cap_steps(&self) -> u8 {
+        self.steps + self.can_crush as u8
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct MoveLimits {
-    steps: [u8; 4],
-    can_crush: [bool; 4],
+    vals: [MoveLimit; 4],
 }
 
 impl MoveLimits {
-    pub fn new(steps: [u8; 4], can_crush: [bool; 4]) -> Self {
-        Self { steps, can_crush }
-    }
     pub fn cap_north(&self) -> u8 {
-        self.steps[0] + self.can_crush[0] as u8
+        self.vals[0].cap_steps()
     }
     pub fn cap_east(&self) -> u8 {
-        self.steps[1] + self.can_crush[1] as u8
+        self.vals[1].cap_steps()
     }
     pub fn cap_south(&self) -> u8 {
-        self.steps[2] + self.can_crush[2] as u8
+        self.vals[2].cap_steps()
     }
     pub fn cap_west(&self) -> u8 {
-        self.steps[3] + self.can_crush[3] as u8
+        self.vals[3].cap_steps()
     }
 }
 
@@ -539,10 +579,10 @@ impl MoveLimits {
 pub fn find_move_limits<T: TakBoard>(board: &T, st_index: usize) -> MoveLimits {
     let mut limits = MoveLimits::default();
     let bits = board.bits();
-    find_dir_limit(bits, st_index, 0, &mut limits, T::Bits::north);
-    find_dir_limit(bits, st_index, 1, &mut limits, T::Bits::east);
-    find_dir_limit(bits, st_index, 2, &mut limits, T::Bits::south);
-    find_dir_limit(bits, st_index, 3, &mut limits, T::Bits::west);
+    find_dir_limit(bits, st_index, &mut limits.vals[0], T::Bits::north);
+    find_dir_limit(bits, st_index, &mut limits.vals[1], T::Bits::east);
+    find_dir_limit(bits, st_index, &mut limits.vals[2], T::Bits::south);
+    find_dir_limit(bits, st_index, &mut limits.vals[3], T::Bits::west);
     limits
 }
 
@@ -574,16 +614,17 @@ pub fn legal_stack_move<T: TakBoard>(board: &T, game_move: GameMove) -> bool {
         2 => T::Bits::south,
         _ => T::Bits::west,
     };
-    find_dir_limit(board.bits(), src_index, dir, &mut limits, f);
+    find_dir_limit(board.bits(), src_index, &mut limits.vals[dir], f);
     let steps_moved = game_move.count_steps();
+    let v = limits.vals[dir];
     if game_move.crush() {
-        if !is_cap || !limits.can_crush[dir] {
+        if !is_cap || !v.can_crush {
             return false;
         }
-        if steps_moved != (limits.steps[dir] + 1) {
+        if steps_moved != (v.steps + 1) {
             return false;
         }
-    } else if steps_moved > limits.steps[dir] {
+    } else if steps_moved > v.steps {
         return false;
     }
     true
@@ -594,8 +635,7 @@ pub fn legal_stack_move<T: TakBoard>(board: &T, game_move: GameMove) -> bool {
 fn find_dir_limit<B, F>(
     board: &BitboardStorage<B>,
     st_idx: usize,
-    dir: usize,
-    limits: &mut MoveLimits,
+    limit: &mut MoveLimit,
     step_fn: F,
 ) where
     B: Bitboard,
@@ -610,14 +650,14 @@ fn find_dir_limit<B, F>(
             break;
         } else if (bit & board.wall) != B::ZERO {
             if cap_stack {
-                limits.can_crush[dir] = true;
+                limit.can_crush = true;
             }
             break;
         }
         bit = step_fn(bit);
         counter += 1;
     }
-    limits.steps[dir] = counter;
+    limit.steps = counter;
 }
 
 /// Find all stack moves for a single stack in one direction. Calls the recursive
