@@ -191,6 +191,7 @@ pub struct StagedBuffer<T: TakBoard> {
     special_move: GameMove,
     special_score: i16,
     queries: usize,
+    futility: bool,
 }
 
 impl<T> MoveBuffer for StagedBuffer<T>
@@ -221,6 +222,7 @@ where
             counter_move: None,
             needs: std::default::Default::default(),
             prune_bad: false,
+            futility: false,
             prune_threshold: Self::DEFAULT_THRESHOLD,
             check_tak: false,
             special_move: GameMove::null_move(),
@@ -271,6 +273,7 @@ where
     pub fn do_futility_pruning(&mut self, threshold: i16) {
         self.prune_threshold = threshold;
         self.prune_bad = true;
+        self.futility = true;
     }
     pub fn do_lmr(&mut self) {
         self.prune_bad = true;
@@ -355,19 +358,28 @@ where
                     self.gen_unlikely(board, info);
                 }
                 MoveStage::Unlikely => {
+                    if self.futility {
+                        return None;
+                    }
                     // if self.prune_bad {
                     //     return None;
                     // }
                     self.queries += 1;
-                    return self.bad.pop();
+                    if self.queries <= SmartMoveBuffer::<T>::THOROUGH_MOVES {
+                        let (idx, _m) =
+                            self.bad.iter().enumerate().max_by_key(|(_i, &m)| m.score)?;
+                        let best = self.bad.swap_remove(idx);
+                        return Some(best);
+                    } else {
+                        return self.bad.pop();
+                    }
                 }
             }
             self.stage = self.stage.advance();
             return self.get_next(board, info);
         }
         self.queries += 1;
-        // SmartMoveBuffer::<T>::THOROUGH_MOVES
-        if self.queries > 9999 {
+        if self.queries > SmartMoveBuffer::<T>::THOROUGH_MOVES {
             self.good.pop()
         } else {
             let (idx, _m) = self

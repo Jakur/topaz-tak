@@ -1,6 +1,6 @@
 use super::{Color, GameResult};
 use crate::board::TakBoard;
-use crate::eval::Evaluator;
+use crate::eval::{Evaluator, WIN_FOUND};
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{
     generate_aggressive_place_moves, generate_all_stack_moves, CaptureHistory, CorrHist,
@@ -993,7 +993,7 @@ where
         // let _num_pruned = moves.drop_below_score(mean - info.hyper.quiet_score);
     }
 
-    if depth >= 6 {
+    if !is_pv && depth >= 6 {
         moves.buffer().do_lmr();
     }
 
