@@ -124,8 +124,9 @@ where
         // }
     }
     pub fn get_lmr_reduced_depth(&self, depth: usize, improving: bool) -> usize {
+        // let good_penalty = if self.moves.good.len() == 0 { 1.0 } else { 0.0 };
         let reduction = (depth as f32).log2()
-            + (self.queries.clamp(1, Self::THOROUGH_MOVES) as f32).log2()
+            + (self.moves.queries.clamp(1, Self::THOROUGH_MOVES) as f32).log2()
             - 2.0;
         depth - (reduction.floor() as usize).clamp(2, depth - 1) // Reduce at minimum 2, at max to depth 1
     }
@@ -192,6 +193,7 @@ pub struct StagedBuffer<T: TakBoard> {
     special_score: i16,
     queries: usize,
     futility: bool,
+    partial_tak: bool,
 }
 
 impl<T> MoveBuffer for StagedBuffer<T>
@@ -215,7 +217,7 @@ where
     const DEFAULT_THRESHOLD: i16 = 15;
     fn with_capacity(capacity: usize) -> Self {
         Self {
-            stage: MoveStage::HashMove,
+            stage: MoveStage::CounterMove,
             good: Vec::with_capacity(capacity),
             bad: Vec::with_capacity(capacity),
             staging: Vec::with_capacity(capacity),
@@ -228,6 +230,7 @@ where
             special_move: GameMove::null_move(),
             special_score: 0,
             queries: 0,
+            partial_tak: false,
         }
     }
     fn clear(&mut self) {
@@ -237,12 +240,14 @@ where
         self.counter_move = None;
         self.prune_bad = false;
         self.prune_threshold = Self::DEFAULT_THRESHOLD;
-        self.stage = MoveStage::HashMove;
+        self.stage = MoveStage::CounterMove;
         self.needs = NeedsGeneration::default();
         self.check_tak = false;
         self.special_move = GameMove::null_move();
         self.special_score = 0;
         self.queries = 0;
+        self.futility = false;
+        self.partial_tak = false;
     }
     pub fn prepare(
         &mut self,
@@ -252,12 +257,6 @@ where
         check_tak: bool,
     ) {
         if self.len() > 0 {
-            // Has win
-            self.needs.empty = T::Bits::ZERO;
-            for i in 0..4 {
-                self.needs.directions[i] = T::Bits::ZERO;
-            }
-            self.stage = MoveStage::Unlikely;
             return;
         }
         self.needs.empty = board.bits().empty();
@@ -275,14 +274,8 @@ where
         self.prune_bad = true;
         self.futility = true;
     }
-    pub fn do_lmr(&mut self) {
+    pub fn do_lmp(&mut self) {
         self.prune_bad = true;
-    }
-    fn set_counter_move(&mut self, mv: GameMove) {
-        self.counter_move = Some(mv);
-    }
-    fn set_check_tak(&mut self) {
-        self.check_tak = true;
     }
     fn push(&mut self, mut scored: ScoredMove) {
         if scored.mv == self.special_move {
@@ -300,11 +293,11 @@ where
     fn gen_isolated(&mut self, board: &mut T, info: &mut SearchInfo, mv: GameMove) {
         let bit = T::Bits::index_to_bit(mv.src_index());
         if mv.is_place_move() {
-            self.gen_score_place_moves(board, bit, info, self.check_tak);
+            self.gen_score_place_moves(board, bit & self.needs.empty, info, self.check_tak);
             self.needs.empty.unset_bits(bit);
         } else if board.ply() >= 4 {
             let dir = mv.direction() as usize;
-            self.gen_score_stack_moves(board, dir, bit, info);
+            self.gen_score_stack_moves(board, dir, bit & self.needs.directions[dir], info);
             self.needs.directions[dir].unset_bits(bit);
         }
     }
@@ -313,6 +306,35 @@ where
             self.special_move = cm;
             self.special_score = 100;
             self.gen_isolated(board, info, cm);
+        }
+    }
+    fn partial_gen_flats(&mut self, board: &mut T, info: &mut SearchInfo) -> bool {
+        let mut searched = T::Bits::ZERO;
+        let best = if board.side_to_move() == Color::White {
+            info.hist_moves
+                .white_flat
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| **v > 0)
+                .max_by_key(|(_i, v)| *v)
+                .map(|(i, _v)| i)
+        } else {
+            info.hist_moves
+                .black_flat
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| **v > 0)
+                .max_by_key(|(_i, v)| *v)
+                .map(|(i, _v)| i)
+        };
+        if let Some(best) = best {
+            let bits = T::Bits::index_to_bit(best) & self.needs.empty;
+            searched |= bits;
+            self.gen_score_place_moves(board, bits, info, self.check_tak);
+            self.needs.empty.unset_bits(searched);
+            true
+        } else {
+            false
         }
     }
     fn gen_normal(&mut self, board: &mut T, info: &mut SearchInfo) {
@@ -342,54 +364,81 @@ where
             }
         }
     }
+    pub(crate) fn set_win(&mut self, mv: GameMove) {
+        self.stage = MoveStage::WinningMove;
+        self.good.push(ScoredMove::new(mv, WIN_SORT, 0));
+    }
     pub(crate) fn get_next(&mut self, board: &mut T, info: &mut SearchInfo) -> Option<ScoredMove> {
-        if self.good.is_empty() {
-            match self.stage {
-                MoveStage::HashMove => {
-                    self.gen_counter(board, info);
-                }
-                MoveStage::CounterMove => {
-                    self.gen_normal(board, info);
-                }
-                MoveStage::Normal => {
-                    if self.prune_bad {
-                        return None;
-                    }
-                    self.gen_unlikely(board, info);
-                }
-                MoveStage::Unlikely => {
-                    if self.futility {
-                        return None;
-                    }
-                    // if self.prune_bad {
-                    //     return None;
-                    // }
-                    self.queries += 1;
-                    if self.queries <= SmartMoveBuffer::<T>::THOROUGH_MOVES {
-                        let (idx, _m) =
-                            self.bad.iter().enumerate().max_by_key(|(_i, &m)| m.score)?;
-                        let best = self.bad.swap_remove(idx);
-                        return Some(best);
-                    } else {
-                        return self.bad.pop();
-                    }
-                }
-            }
-            self.stage = self.stage.advance();
-            return self.get_next(board, info);
+        match self.stage {
+            MoveStage::WinningMove => return self.good.pop(),
+            MoveStage::HashMove => return self.fetch_good(),
+            _ => {}
+        }
+        if self.queries == 0 {
+            self.gen_normal(board, info);
+            // self.gen_normal(board, info);
         }
         self.queries += 1;
+        if self.good.is_empty() {
+            if self.futility {
+                return None;
+            }
+            if !self.prune_bad && self.stage != MoveStage::Unlikely {
+                self.gen_unlikely(board, info);
+                self.stage = MoveStage::Unlikely;
+                return self.get_next(board, info);
+            }
+            return self.bad.pop();
+            // if self.queries <= SmartMoveBuffer::<T>::THOROUGH_MOVES {
+            //     let (idx, _m) = self.bad.iter().enumerate().max_by_key(|(_i, &m)| m.score)?;
+            //     let best = self.bad.swap_remove(idx);
+            //     return Some(best);
+            // } else {
+            //     return self.bad.pop();
+            // }
+            // match self.stage {
+            //     MoveStage::Normal => {
+            //         // if !self.prune_bad {
+            //         //     self.gen_unlikely(board, info);
+            //         //     self.prune_bad = true;
+            //         // }
+            //     }
+            //     MoveStage::Unlikely => {
+            //         if self.futility {
+            //             return None;
+            //         }
+            //         // if self.prune_bad {
+            //         //     return None;
+            //         // }
+            //         self.queries += 1;
+            //         if self.queries <= SmartMoveBuffer::<T>::THOROUGH_MOVES {
+            //             let (idx, _m) =
+            //                 self.bad.iter().enumerate().max_by_key(|(_i, &m)| m.score)?;
+            //             let best = self.bad.swap_remove(idx);
+            //             return Some(best);
+            //         } else {
+            //             return self.bad.pop();
+            //         }
+            //     }
+            //     _ => {}
+            // }
+            // self.stage = self.stage.advance();
+            // return self.get_next(board, info);
+        }
         if self.queries > SmartMoveBuffer::<T>::THOROUGH_MOVES {
             self.good.pop()
         } else {
-            let (idx, _m) = self
-                .good
-                .iter()
-                .enumerate()
-                .max_by_key(|(_i, &m)| m.score)?;
-            let best = self.good.swap_remove(idx);
-            Some(best)
+            self.fetch_good()
         }
+    }
+    fn fetch_good(&mut self) -> Option<ScoredMove> {
+        let (idx, _m) = self
+            .good
+            .iter()
+            .enumerate()
+            .max_by_key(|(_i, &m)| m.score)?;
+        let best = self.good.swap_remove(idx);
+        Some(best)
     }
     fn gen_score_place_moves(
         &mut self,
@@ -397,8 +446,9 @@ where
         bits: T::Bits,
         info: &mut SearchInfo,
         check_tak: bool,
-    ) {
+    ) -> bool {
         let side = board.side_to_move();
+        let mut has_tak_move = false;
         for idx in (bits & board.bits().empty()).index_iter() {
             let mut flat_score = 100 + info.hist_moves.flat_score(idx, side);
             let mut wall_score = -50 + info.hist_moves.wall_score(idx, side);
@@ -437,6 +487,7 @@ where
                 let buffer = info.buffer();
                 if let Some(_winning) = board.can_make_road(buffer, None) {
                     tak_score += TAK_SORT;
+                    has_tak_move = true;
                 }
                 board.rev_null_move();
                 board.reverse_move(rev);
@@ -464,6 +515,7 @@ where
                 ));
             }
         }
+        has_tak_move
     }
     fn gen_score_stack_moves(
         &mut self,
@@ -590,6 +642,7 @@ where
         self.special_move = pv_move;
         self.special_score = PV_SORT;
         self.gen_isolated(board, info, pv_move);
+        self.stage = MoveStage::HashMove;
     }
     pub fn remove_pv_move(&mut self, board: &mut T, info: &mut SearchInfo, pv_move: GameMove) {
         debug_assert_eq!(self.stage, MoveStage::HashMove);
@@ -598,9 +651,8 @@ where
         self.gen_isolated(board, info, pv_move);
         if let Some(pos) = self.good.iter().position(|m| m.mv == pv_move) {
             self.good.swap_remove(pos);
-        } else {
-            assert!(false);
         }
+        self.stage = MoveStage::CounterMove;
     }
 }
 
@@ -638,7 +690,8 @@ impl<T: TakBoard> NeedsGeneration<T> {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum MoveStage {
-    HashMove = 0,
+    WinningMove = 0,
+    HashMove,
     CounterMove,
     Normal,
     Unlikely,
@@ -647,6 +700,7 @@ enum MoveStage {
 impl MoveStage {
     fn advance(self) -> Self {
         match self {
+            MoveStage::WinningMove => MoveStage::HashMove,
             MoveStage::HashMove => MoveStage::CounterMove,
             MoveStage::CounterMove => MoveStage::Normal,
             MoveStage::Normal => MoveStage::Unlikely,
@@ -1096,6 +1150,25 @@ impl<const SIZE: usize> EvalHist<SIZE> {
 mod test {
     use super::*;
     use crate::{transposition_table::HashTable, Board6};
+    #[test]
+    fn staged() {
+        let table = HashTable::new(1 << 14);
+        let mut info = SearchInfo::new(12, &table);
+        let mut moves = StagedBuffer::with_capacity(128);
+        let tps = "1,x,212,1,1,2S/x,112S,x,1,2S,x/x,2,x,11C,x2/x,2,2121S,x,112C,1/x,2,1,2,2,x/2,2,1,x3 1 22";
+        let mut board = Board6::try_from_tps(tps).unwrap();
+        moves.prepare(&mut board, &mut info, None, true);
+        let pv = GameMove::try_from_ptn("c5", &board).unwrap();
+        moves.score_pv_move(&mut board, &mut info, pv);
+        let mut sanity: Vec<GameMove> = Vec::new();
+        generate_all_moves(&board, &mut sanity);
+        let count = sanity.len();
+        let mut c = 0;
+        while let Some(_) = moves.get_next(&mut board, &mut info) {
+            c += 1;
+        }
+        assert_eq!(c, count);
+    }
     // #[test]
     // fn big_stack_order() {
     //     let tps = "21C,222222,2,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 2 31";

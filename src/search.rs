@@ -213,8 +213,8 @@ impl<'a> SearchInfo<'a> {
                 break; // Cycle
             }
             if !position.legal_move(m) {
-                dbg!("Illegal pv move in {:?}", &position);
-                dbg!("Illegal Move in Pv {}", m.to_ptn::<E>());
+                eprintln!("Illegal pv move in {:?}", &position);
+                eprintln!("Illegal Move in Pv {}", m.to_ptn::<E>());
                 break;
             }
             let rev = position.do_move(m);
@@ -888,7 +888,7 @@ where
     if board.ply() >= 6 && depth > GEN_THOROUGH_ORDER_DEPTH {
         if let Some(mv) = board.can_make_road(&mut info.extra_move_buffer, None) {
             // let data = &[mv];
-            moves.add_scored(mv, 10000);
+            moves.buffer().set_win(mv);
             // moves.add_move(mv);
             // moves.score_wins(data);
         }
@@ -993,8 +993,8 @@ where
         // let _num_pruned = moves.drop_below_score(mean - info.hyper.quiet_score);
     }
 
-    if !is_pv && depth >= 6 {
-        moves.buffer().do_lmr();
+    if !is_pv && depth <= 6 {
+        moves.buffer().do_lmp();
     }
 
     let mut beta_cut = false;
@@ -1006,22 +1006,22 @@ where
             changed_bits,
         } = scored;
         // let mv = moves.get_best(info, last_move);
-        if is_root && count <= 16 {
-            println!(
-                "Depth: {} MC: {} Move {} Move Score {}",
-                depth,
-                count,
-                mv.to_ptn::<T>(),
-                mv_order_score
-            );
-            if count == 16 {
-                // dbg!(&info.corr_hist.white.iter().max());
-                // dbg!(&info.corr_hist.black[0..10]);
-                // let mean = info.hist_moves.mean_flat_score(board.side_to_move());
-                // println!("Mean Flat Score: {mean}");
-                // info.hist_moves.debug();
-            }
-        }
+        // if is_root && count <= 16 {
+        //     println!(
+        //         "Depth: {} MC: {} Move {} Move Score {}",
+        //         depth,
+        //         count,
+        //         mv.to_ptn::<T>(),
+        //         mv_order_score
+        //     );
+        //     if count == 16 {
+        //         // dbg!(&info.corr_hist.white.iter().max());
+        //         // dbg!(&info.corr_hist.black[0..10]);
+        //         // let mean = info.hist_moves.mean_flat_score(board.side_to_move());
+        //         // println!("Mean Flat Score: {mean}");
+        //         // info.hist_moves.debug();
+        //     }
+        // }
 
         let rev_move = board.do_move(mv);
         info.hash_history.push(board.hash(), board.ply());
