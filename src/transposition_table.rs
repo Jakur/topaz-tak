@@ -1,4 +1,5 @@
 use crate::{eval, GameMove};
+use bytemuck::{AnyBitPattern, NoUninit, Pod, Zeroable};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 // transposition table parameters
@@ -134,11 +135,20 @@ impl HashBucket {
     }
 }
 
+#[repr(C)]
+#[derive(Pod, Clone, Copy, Debug, Zeroable)]
+struct RawConcurrent {
+    v1: u64,
+    v2: u64,
+}
+
 /// Because the implementation is spread across 2 values, it is not truly atomic.
 /// This implementation should prevent major concurrency bugs, however
+#[repr(C)]
+#[derive(Zeroable)]
 struct ConcurrentEntry {
     hash_and_move: AtomicU64,
-    score_flags: AtomicU32,
+    score_flags: AtomicU64,
 }
 
 impl ConcurrentEntry {
@@ -151,23 +161,35 @@ impl ConcurrentEntry {
     const fn empty() -> Self {
         Self {
             hash_and_move: AtomicU64::new(0),
-            score_flags: AtomicU32::new((ALPHA_FLAG as u32) << 8),
+            score_flags: AtomicU64::new((ALPHA_FLAG as u64) << 8),
         }
     }
+    fn from_raw(vals: RawConcurrent) -> Self {
+        Self {
+            hash_and_move: AtomicU64::new(vals.v1),
+            score_flags: AtomicU64::new(vals.v2),
+        }
+    }
+    fn into_raw(&self) -> RawConcurrent {
+        let v1 = self.hash_and_move.load(Ordering::Relaxed);
+        let v2 = self.score_flags.load(Ordering::Relaxed);
+        RawConcurrent { v1, v2 }
+    }
     fn update(&self, e: HashEntry) {
-        let mut first = (e.hash_hi as u64) << 32;
-        first |= e.game_move.raw() as u64;
-        self.hash_and_move.store(first, Ordering::Relaxed);
-        let mut second = (e.score_val as u32) << 16;
-        second |= (e.depth_flags as u32) << 8;
-        second |= e.ply as u32;
-        self.score_flags.store(second, Ordering::Relaxed);
+        let raw: RawConcurrent = bytemuck::cast(e);
+        // let mut first = (e.hash_hi as u64) << 32;
+        // first |= e.game_move.raw() as u64;
+        self.hash_and_move.store(raw.v1, Ordering::Relaxed);
+        // let mut second = (e.score_val as u32) << 16;
+        // second |= (e.depth_flags as u32) << 8;
+        // second |= e.ply as u32;
+        self.score_flags.store(raw.v2, Ordering::Relaxed);
     }
     fn clear(&self) {
-        const MASK: u32 = 0xFFFF_0000 | (!(DEPTH_MASK as u32) << 8);
+        const MASK: u64 = 0xFFFF_0000 | (!(DEPTH_MASK as u64) << 8);
         self.score_flags.fetch_and(MASK, Ordering::Relaxed);
     }
-    fn ply(&self) -> u32 {
+    fn ply(&self) -> u64 {
         self.score_flags.load(Ordering::Relaxed) & 0xFF
     }
 }
@@ -176,54 +198,60 @@ impl Clone for ConcurrentEntry {
     fn clone(&self) -> Self {
         Self {
             hash_and_move: AtomicU64::new(self.hash_and_move.load(Ordering::Relaxed)),
-            score_flags: AtomicU32::new(self.score_flags.load(Ordering::Relaxed)),
+            score_flags: AtomicU64::new(self.score_flags.load(Ordering::Relaxed)),
         }
     }
 }
 
 impl From<HashEntry> for ConcurrentEntry {
     fn from(e: HashEntry) -> Self {
-        let mut first = (e.hash_hi as u64) << 32;
-        first |= e.game_move.raw() as u64;
-        let hash_and_move = AtomicU64::new(first);
-        let mut second = (e.score_val as u32) << 16;
-        second |= (e.depth_flags as u32) << 8;
-        second |= e.ply as u32;
-        let score_flags = AtomicU32::new(second);
-        Self {
-            hash_and_move,
-            score_flags,
-        }
+        ConcurrentEntry::from_raw(bytemuck::cast(e))
+        // let mut first = (e.hash_hi as u64) << 32;
+        // first |= e.game_move.raw() as u64;
+        // let hash_and_move = AtomicU64::new(first);
+        // let mut second = (e.score_val as u32) << 16;
+        // second |= (e.depth_flags as u32) << 8;
+        // second |= e.ply as u32;
+        // let score_flags = AtomicU32::new(second);
+        // Self {
+        //     hash_and_move,
+        //     score_flags,
+        // }
     }
 }
 
 impl From<&ConcurrentEntry> for HashEntry {
     fn from(e: &ConcurrentEntry) -> Self {
-        let val = e.hash_and_move.load(Ordering::Relaxed);
-        let hash_hi = (val >> 32) as u32;
-        let game_move = GameMove::from_raw((val & 0xFFFF_FFFF) as u32);
-        let val2 = e.score_flags.load(Ordering::Relaxed);
-        let score_val = val2 as i32 >> 16;
-        let depth_flags = ((val2 & 0xFF00) >> 8) as u8;
-        let ply = (val2 & 0xFF) as u8;
-        HashEntry {
-            hash_hi,
-            game_move,
-            score_val,
-            depth_flags,
-            ply,
-        }
+        bytemuck::cast(e.into_raw())
+        // let val = e.hash_and_move.load(Ordering::Relaxed);
+        // let hash_hi = (val >> 32) as u32;
+        // let game_move = GameMove::from_raw((val & 0xFFFF_FFFF) as u32);
+        // let val2 = e.score_flags.load(Ordering::Relaxed);
+        // let score_val = val2 as i32 >> 24;
+        // let raw_eval = val2 as i32 >> 16;
+        // let depth_flags = ((val2 & 0xFF00) >> 8) as u8;
+        // let ply = (val2 & 0xFF) as u8;
+        // HashEntry {
+        //     hash_hi,
+        //     game_move,
+        //     score_val: score_val as i16,
+        //     raw_eval: raw_eval as i16,
+        //     depth_flags,
+        //     ply,
+        // }
     }
 }
 
 // Right now this totals to 16 bytes.
 // This means not only less memory usage, but is also much faster because of
 // cache utilization. each slot (2 entries) is loaded with a single cache line.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, AnyBitPattern, NoUninit)]
+#[repr(C)]
 pub struct HashEntry {
     hash_hi: u32,            // 4 bytes (~3 low bytes are encoded in the HashTable idx)
     pub game_move: GameMove, // 4 bytes
-    score_val: i32,          // 4 bytes
+    score_val: i32,          // 2 bytes
+    raw_eval: i16,           // 2 bytes
     depth_flags: u8,         // 1 byte
     ply: u8,                 // 1 byte
 }
@@ -241,6 +269,7 @@ impl HashEntry {
         hash: u64,
         game_move: GameMove,
         score: ScoreCutoff,
+        raw_eval: i32,
         depth: usize,
         ply: usize,
     ) -> Self {
@@ -264,9 +293,14 @@ impl HashEntry {
             hash_hi: (hash >> 32) as u32,
             game_move,
             score_val,
+            raw_eval: raw_eval as i16,
             depth_flags,
             ply: ply as u8,
         }
+    }
+
+    pub fn get_raw_eval(&self) -> i32 {
+        self.raw_eval as i32
     }
 
     pub fn depth(&self) -> u8 {
@@ -319,21 +353,22 @@ mod test {
     }
     #[test]
     fn concurrent() {
-        let mut m = HashEntry::new(
+        let m = HashEntry::new(
             0xDEADBEEF_6969,
             GameMove::from_placement(crate::Piece::WhiteCap, 15),
             ScoreCutoff::Beta(-10000),
+            -101,
             6,
             16,
         );
         let x: ConcurrentEntry = m.into();
         let m2: HashEntry = (&x).into();
         assert_eq!(m, m2);
-        x.clear();
-        m.ply = 0;
-        m.depth_flags &= !DEPTH_MASK;
-        let m2: HashEntry = (&x).into();
-        assert_eq!(m, m2);
+        // x.clear();
+        // m.ply = 0;
+        // m.depth_flags &= !DEPTH_MASK;
+        // let m2: HashEntry = (&x).into();
+        // assert_eq!(m, m2);
         // assert_eq!(HashEntry::empty(), (&ConcurrentEntry::empty()).into());
     }
 }

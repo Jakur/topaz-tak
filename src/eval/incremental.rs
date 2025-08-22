@@ -217,15 +217,16 @@ impl TakSimple6 {
             let ntm = [468, 0][c] + 36 * location + sq;
             f(stm, ntm);
         }
-        let white_res_adv = (31 + reserves[0] - reserves[1]).clamp(23, 39);
-        let black_res_adv = (31 + reserves[1] - reserves[0]).clamp(23, 39);
+        // let white_res_adv = (31 + reserves[0] - reserves[1]).clamp(23, 39);
+        // let black_res_adv = (31 + reserves[1] - reserves[0]).clamp(23, 39);
         if pos.white_to_move {
             // White to move
             f(
                 Self::SQUARE_INPUTS + 8 + reserves[0],
                 Self::SQUARE_INPUTS + 8 + reserves[1],
             );
-            f(975 + white_res_adv, 975 + black_res_adv);
+            f(980 + reserves[1], 980 + reserves[0]);
+            // f(975 + white_res_adv, 975 + black_res_adv);
             f(Self::SQUARE_INPUTS, Self::SQUARE_INPUTS + 1);
         } else {
             // Black to move
@@ -233,7 +234,8 @@ impl TakSimple6 {
                 Self::SQUARE_INPUTS + 8 + reserves[1],
                 Self::SQUARE_INPUTS + 8 + reserves[0],
             );
-            f(975 + black_res_adv, 960 + white_res_adv);
+            f(980 + reserves[0], 980 + reserves[1]);
+            // f(975 + black_res_adv, 960 + white_res_adv);
             f(Self::SQUARE_INPUTS + 1, Self::SQUARE_INPUTS);
         }
     }

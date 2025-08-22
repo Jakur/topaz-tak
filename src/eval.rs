@@ -13,21 +13,23 @@ mod incremental;
 mod smooth;
 // pub use smooth::SmoothWeights6;
 
-pub const WIN_SCORE: i32 = 10_000;
-pub const LOSE_SCORE: i32 = -1 * WIN_SCORE;
-pub const WIN_FOUND: i32 = WIN_SCORE - 100;
-pub const LOSS_FOUND: i32 = LOSE_SCORE + 100;
+pub type Eval = i32;
+
+pub const WIN_SCORE: Eval = 10_000;
+pub const LOSE_SCORE: Eval = -1 * WIN_SCORE;
+pub const WIN_FOUND: Eval = WIN_SCORE - 100;
+pub const LOSS_FOUND: Eval = LOSE_SCORE + 100;
 
 pub trait Evaluator {
     type Game: TakBoard + Send;
-    fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32;
-    fn set_tempo_offset(&mut self, tempo: i32);
+    fn evaluate(&mut self, game: &Self::Game, depth: usize) -> Eval;
+    fn set_tempo_offset(&mut self, tempo: Eval);
 }
 
 impl Evaluator for NNUE6 {
     type Game = Board6;
 
-    fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
+    fn evaluate(&mut self, game: &Self::Game, depth: usize) -> Eval {
         let takboard = build_nn_repr(game);
         let eval = self.incremental_eval(takboard);
         if depth % 2 == 0 {
@@ -36,7 +38,7 @@ impl Evaluator for NNUE6 {
             eval + self.tempo_offset
         }
     }
-    fn set_tempo_offset(&mut self, tempo: i32) {
+    fn set_tempo_offset(&mut self, tempo: Eval) {
         self.tempo_offset = tempo;
     }
 }

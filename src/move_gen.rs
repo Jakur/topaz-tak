@@ -5,6 +5,7 @@ use crate::{Bitboard, BitboardStorage};
 use std::fmt;
 
 mod move_order;
+use bytemuck::{Pod, Zeroable};
 pub(crate) use move_order::ScoredMove;
 pub use move_order::{
     CaptureHistory, CorrHist, CounterMoves, EvalHist, HistoryMoves, KillerMoves, PlaceHistory,
@@ -183,7 +184,8 @@ impl RevGameMove {
 /// 01FF000 Spread
 /// 0800000 Wall Smash
 /// F000000 Placement Piece
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Pod, Zeroable)]
+#[repr(transparent)]
 pub struct GameMove(u32);
 
 impl GameMove {

@@ -212,9 +212,12 @@ impl<'a> SearchInfo<'a> {
             if counter >= 32 {
                 break; // Cycle
             }
+            if !m.is_valid() {
+                break;
+            }
             if !position.legal_move(m) {
-                dbg!("Illegal pv move in {:?}", &position);
-                dbg!("Illegal Move in Pv {}", m.to_ptn::<E>());
+                eprintln!("Illegal pv move in {:?}", &position);
+                eprintln!("Illegal Move in Pv {}", m.to_ptn::<E>());
                 break;
             }
             let rev = position.do_move(m);
@@ -735,13 +738,9 @@ where
     }
     // Transposition Table Lookup
     // Investigate prevalence of null moves in the pv table. It seems to be very rare.
-    let mut pv_entry: Option<HashEntry> = None;
-    let pv_entry_foreign = info.lookup_move(board);
-    if let Some(entry) = pv_entry_foreign {
-        pv_entry = Some(entry); // save for move lookup
-    }
+    let pv_entry: Option<HashEntry> = info.lookup_move(board);
 
-    if let Some(entry) = pv_entry {
+    let raw_eval = if let Some(entry) = pv_entry {
         if !is_pv && entry.depth() as usize >= depth {
             match entry.score() {
                 ScoreCutoff::Alpha(score) => {
@@ -762,11 +761,28 @@ where
                 }
             }
         }
-    }
+        entry.get_raw_eval() // Todo may need ply_depth fixing if offset is non-zero
+    } else {
+        let raw_v = evaluator.evaluate(board, ply_depth);
+        let eval = raw_v + info.corr_hist.correction(board);
+        info.store_move(
+            board,
+            eval,
+            HashEntry::new(
+                board.hash(),
+                GameMove::null_move(),
+                ScoreCutoff::Exact(eval),
+                raw_v,
+                0,
+                board.ply(),
+            ),
+        );
+        raw_v
+    };
     // (R)FP
     if depth <= 3 && !is_pv && !tak_history.check(ply_depth.saturating_sub(1)) {
         // Reverse futility pruning
-        let eval = evaluator.evaluate(board, ply_depth) + info.corr_hist.correction(board);
+        let eval = raw_eval + info.corr_hist.correction(board);
         info.eval_hist.set_eval(ply_depth, eval);
         if info.eval_hist.is_improving(ply_depth) {
             if eval - (depth as i32 * info.hyper.rfp_margin - info.hyper.improving_rfp_offset)
@@ -784,7 +800,7 @@ where
             skip_quiets = true;
         }
     } else {
-        let eval = evaluator.evaluate(board, ply_depth) + info.corr_hist.correction(board);
+        let eval = raw_eval + info.corr_hist.correction(board);
         info.eval_hist.set_eval(ply_depth, eval);
     }
 
@@ -899,7 +915,7 @@ where
     if moves.len() == 0 {
         // if we don't have an immediate win, check TT move first
         if let Some(entry) = pv_entry {
-            if board.legal_move(entry.game_move)
+            if entry.game_move.is_valid() && board.legal_move(entry.game_move)
             // TODO maybe a really fast legal checker is faster
             {
                 let m = entry.game_move;
@@ -947,13 +963,14 @@ where
                         }
                         info.store_move(
                             board,
-                            info.eval_hist.get_eval(ply_depth).unwrap_or_else(|| {
-                                evaluator.evaluate(board, depth) + info.corr_hist.correction(board)
-                            }),
+                            info.eval_hist
+                                .get_eval(ply_depth)
+                                .unwrap_or_else(|| raw_eval + info.corr_hist.correction(board)),
                             HashEntry::new(
                                 board.hash(),
                                 m,
                                 ScoreCutoff::Beta(beta),
+                                raw_eval,
                                 depth,
                                 board.ply(),
                             ),
@@ -972,10 +989,12 @@ where
     moves.gen_and_score(depth, board, info);
 
     if let Some(entry) = pv_entry {
-        if has_searched_pv {
-            moves.remove(entry.game_move);
-        } else {
-            moves.score_pv_move(entry.game_move);
+        if entry.game_move.is_valid() {
+            if has_searched_pv {
+                moves.remove(entry.game_move);
+            } else {
+                moves.score_pv_move(entry.game_move);
+            }
         }
     }
 
@@ -1194,10 +1213,10 @@ where
             };
             info.store_move(
                 board,
-                info.eval_hist.get_eval(ply_depth).unwrap_or_else(|| {
-                    evaluator.evaluate(board, depth) + info.corr_hist.correction(board)
-                }),
-                HashEntry::new(board.hash(), best, cutoff, depth, board.ply()),
+                info.eval_hist
+                    .get_eval(ply_depth)
+                    .unwrap_or_else(|| raw_eval + info.corr_hist.correction(board)),
+                HashEntry::new(board.hash(), best, cutoff, raw_eval, depth, board.ply()),
             );
         }
     } else {
