@@ -1,6 +1,6 @@
 use crate::{eval, GameMove};
 use bytemuck::{AnyBitPattern, NoUninit, Pod, Zeroable};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // transposition table parameters
 const TT_BUCKET_SIZE: usize = 5; // how many HashEntries for each HashTable slot

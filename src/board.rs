@@ -129,9 +129,6 @@ macro_rules! board_impl {
             fn flip_ew(&self) -> Self {
                 self.transform_board(|(row, col)| (row, Self::SIZE - 1 - col))
             }
-            pub(crate) fn set_move_number(&mut self, move_number: usize) {
-                self.move_num = move_number;
-            }
         }
 
         impl TakBoard for $t {

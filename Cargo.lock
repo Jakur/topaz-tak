@@ -554,7 +554,6 @@ dependencies = [
  "getopts",
  "getrandom",
  "instant",
- "lazy_static",
  "once_cell",
  "rand_core",
  "rand_xoshiro",

@@ -222,7 +222,7 @@ impl SmartMoveBuffer {
         for idx in board.empty_tiles() {
             let mut flat_score = 100 + info.hist_moves.flat_score(idx, side);
             let mut wall_score = -50 + info.hist_moves.wall_score(idx, side);
-            let mut cap_score = info.hist_moves.cap_score(idx);
+            let mut cap_score = info.hist_moves.cap_score(idx, side);
             let neighbors = T::Bits::index_to_bit(idx).adjacent();
             let enemies = neighbors & board.bits().all_pieces(!side);
             let mut num_enemies = 0;
@@ -319,7 +319,6 @@ impl SmartMoveBuffer {
         &mut self,
         info: &SearchInfo,
         prev: Option<RevGameMove>,
-        killers: &KillerMoves,
     ) -> ScoredMove {
         if self.queries <= Self::THOROUGH_MOVES {
             self.queries += 1;
@@ -333,7 +332,6 @@ impl SmartMoveBuffer {
                             prev.map(|x| x.game_move).unwrap_or(GameMove::null_move()),
                             m.mv,
                         ) as i16
-                        + killers.score(m.mv) as i16
                 })
                 .unwrap();
             let m = *m;
@@ -350,13 +348,8 @@ impl SmartMoveBuffer {
             x
         }
     }
-    pub fn get_best(
-        &mut self,
-        info: &SearchInfo,
-        prev: Option<RevGameMove>,
-        killers: &KillerMoves,
-    ) -> GameMove {
-        self.get_best_scored(info, prev, killers).mv
+    pub fn get_best(&mut self, info: &SearchInfo, prev: Option<RevGameMove>) -> GameMove {
+        self.get_best_scored(info, prev).mv
     }
     pub fn len(&self) -> usize {
         self.moves.len()
@@ -388,9 +381,6 @@ where
             self.data[self.idx] = mv;
             self.idx += 1;
         }
-    }
-    fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
-        self.data.iter_mut().take(self.idx)
     }
     fn iter(&self) -> impl Iterator<Item = &T> {
         self.data.iter().take(self.idx)
@@ -606,7 +596,8 @@ pub struct PlaceHistory<const SIZE: usize> {
     black_flat: [i32; SIZE],
     white_wall: [i32; SIZE],
     black_wall: [i32; SIZE],
-    all_cap: [i32; SIZE],
+    white_cap: [i32; SIZE],
+    black_cap: [i32; SIZE],
 }
 
 impl<const SIZE: usize> PlaceHistory<SIZE> {
@@ -616,7 +607,8 @@ impl<const SIZE: usize> PlaceHistory<SIZE> {
             white_flat: [0; SIZE],
             white_wall: [0; SIZE],
             black_wall: [0; SIZE],
-            all_cap: [0; SIZE],
+            white_cap: [0; SIZE],
+            black_cap: [0; SIZE],
         }
     }
     pub fn mean_flat_score(&self, side: Color) -> i16 {
@@ -642,7 +634,8 @@ impl<const SIZE: usize> PlaceHistory<SIZE> {
         let table = match mv.place_piece() {
             Piece::WhiteFlat => &mut self.white_flat,
             Piece::BlackFlat => &mut self.black_flat,
-            Piece::WhiteCap | Piece::BlackCap => &mut self.all_cap,
+            Piece::WhiteCap => &mut self.white_cap,
+            Piece::BlackCap => &mut self.black_cap,
             Piece::WhiteWall => &mut self.white_wall,
             Piece::BlackWall => &mut self.black_wall,
         };
@@ -658,10 +651,14 @@ impl<const SIZE: usize> PlaceHistory<SIZE> {
         // let raw_score = table[idx].abs();
         sign * raw_score as i16
     }
-    pub fn cap_score(&self, idx: usize) -> i16 {
-        let sign = self.all_cap[idx].signum() as i16;
-        let raw_score = 10 * (1 + self.all_cap[idx].abs()).isqrt();
-        // let raw_score = self.all_cap[idx].abs();
+    pub fn cap_score(&self, idx: usize, color: Color) -> i16 {
+        let table = match color {
+            Color::White => &self.white_cap,
+            Color::Black => &self.black_cap,
+        };
+        let sign = table[idx].signum() as i16;
+        let raw_score = 10 * (1 + table[idx].abs()).isqrt();
+        // let raw_score = table[idx].abs();
         sign * raw_score as i16
     }
     pub fn wall_score(&self, idx: usize, color: Color) -> i16 {
@@ -679,7 +676,8 @@ impl<const SIZE: usize> PlaceHistory<SIZE> {
         dbg!(&self.black_flat);
         dbg!(&self.white_wall);
         dbg!(&self.black_wall);
-        dbg!(&self.all_cap);
+        dbg!(&self.white_cap);
+        dbg!(&self.black_cap);
     }
 }
 
@@ -703,7 +701,8 @@ impl<const SIZE: usize> std::fmt::Debug for PlaceHistory<SIZE> {
             .field("white_wall", &construct_table(&self.white_wall, 7)?)
             .field("black_flat", &construct_table(&self.black_flat, 7)?)
             .field("black_wall", &construct_table(&self.black_wall, 7)?)
-            .field("all_cap", &construct_table(&self.all_cap, 7)?)
+            .field("white_cap", &construct_table(&self.white_cap, 7)?)
+            .field("black_cap", &construct_table(&self.black_cap, 7)?)
             .finish()
     }
 }
@@ -737,7 +736,6 @@ impl<const SIZE: usize> HistoryMoves<SIZE> {
 #[derive(Clone)]
 pub struct EvalHist<const SIZE: usize> {
     evals: [i32; SIZE],
-    tak_move_buffer: Vec<GameMove>,
 }
 
 impl<const SIZE: usize> EvalHist<SIZE> {
@@ -745,7 +743,6 @@ impl<const SIZE: usize> EvalHist<SIZE> {
     pub fn new() -> Self {
         Self {
             evals: [Self::EMPTY; SIZE],
-            tak_move_buffer: Vec::with_capacity(128),
         }
     }
     /// Negative if the current depth is worse than previous ply, else positive
@@ -778,28 +775,4 @@ impl<const SIZE: usize> EvalHist<SIZE> {
             Some(eval)
         }
     }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::{transposition_table::HashTable, Board6};
-    // #[test]
-    // fn big_stack_order() {
-    //     let tps = "21C,222222,2,x3/2,2,2S,12121S,x,2/2,2,1,1,1,1/x,1S,111112C,1,1,x/1,12112S,x4/x,2,x3,1 2 31";
-    //     let board = Board6::try_from_tps(tps).unwrap();
-    //     let mut moves = SmartMoveBuffer::new(36);
-    //     generate_all_moves(&board, &mut moves);
-    //     moves.score_stack_moves(&board);
-    //     moves.moves.sort_by_key(|x| -x.score);
-    //     assert!(moves.moves[0].score >= moves.moves.last().unwrap().score);
-    //     let table = HashTable::new(1 << 6);
-    //     let info = SearchInfo::new(6, &table);
-    //     let prev = None;
-    //     let order = (0..moves.moves.len()).map(|_| moves.get_best(&info, prev));
-    //     // let order: Vec<_> = moves.moves.into_iter().map(|x| *x.mv).collect();
-    //     for m in order {
-    //         println!("{}", m.to_ptn::<Board6>());
-    //     }
-    // }
 }

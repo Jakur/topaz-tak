@@ -4,7 +4,7 @@ use crate::Position;
 use anyhow::Result;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use getopts::Options;
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::env;
 use std::fs::OpenOptions;
@@ -19,9 +19,8 @@ use topaz_tak::search::{book, search, SearchInfo};
 use topaz_tak::transposition_table::HashTable;
 use topaz_tak::*;
 
-lazy_static! {
-    static ref SAVED_TPS: HashMap<&'static str, &'static str> = {
-        let x = [
+static SAVED_TPS: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
+    let x = [
         ("alion1", "2,1221122,1,1,1,2S/1,1,1,x,1C,1111212/x2,2,212,2C,11/2,2,x2,1,1/x3,1,1,x/x2,2,21,x,112S 2 32"),
         ("alion2", "2,212221C,2,2,2C,1/1,2,1,1,2,1/12,x,1S,2S,2,1/2,2,2,x2,1/1,2212121S,2,12,1,1S/x,2,2,2,x,1 1 30"),
         ("alion3", "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27"),
@@ -47,9 +46,8 @@ lazy_static! {
         ("endgame2", "2,x,2,2,1,1/1,2,2,1,12,1/1,2112S,x,1,2,1/21,2,2221S,2,2112C,2/2,121,1,2S,11221C,1/12,222221S,12,1,1,1 1 43"),
         ("endgame3", "x2,21,122,1121S,112S/1S,x,1112,x,2S,x/112C,2S,x,1222221C,2,x/2,x2,1,2121S,x/112,1112111112S,x3,221S/2,2,x2,21,2 1 56"),
         ].into_iter().collect();
-        x
-    };
-}
+    x
+});
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
