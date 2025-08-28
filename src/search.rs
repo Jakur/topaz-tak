@@ -483,10 +483,11 @@ where
     // step 6: search all moves ordered by score.
     moves.clear();
     // let mut moves = SmartMoveBuffer::new(T::SIZE * T::SIZE);
-
+    let mut has_win = false;
     if board.ply() >= 6 && depth > GEN_THOROUGH_ORDER_DEPTH {
         if let Some(mv) = board.can_make_road(&mut info.extra_move_buffer, None) {
             // let data = &[mv];
+            has_win = true;
             moves.add_scored(mv, 1000);
             // moves.add_move(mv);
             // moves.score_wins(data);
@@ -495,7 +496,7 @@ where
     info.extra_move_buffer.clear();
 
     let mut has_searched_pv = false;
-    if moves.len() == 0 {
+    if !has_win {
         // if we don't have an immediate win, check TT move first
         if let Some(entry) = pv_entry {
             if entry.game_move.is_valid() && board.legal_move(entry.game_move)
@@ -584,9 +585,11 @@ where
         }
     }
 
-    if skip_quiets {
-        let mean = info.hist_moves.mean_flat_score(board.side_to_move());
-        let _num_pruned = moves.drop_below_score(mean - info.hyper.quiet_score);
+    if !has_win && skip_quiets {
+        // let mean = info.hist_moves.mean_flat_score(board.side_to_move());
+        let _num_pruned = moves.drop_below_score(100 - info.hyper.quiet_score);
+        // dbg!(mean - info.hyper.quiet_score);
+        // dbg!(_num_pruned);
     }
 
     let mut beta_cut = false;
