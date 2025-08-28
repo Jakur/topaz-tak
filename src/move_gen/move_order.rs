@@ -130,7 +130,6 @@ impl SmartMoveBuffer {
                 }
             }
             // [2, 3, 2, 6, 2, 3, 2, 0, 10, 1, 0, 2, 0, -1, 3, 0, 0, 2]
-            let mut bitset: u64 = 0;
             let mut offset = 0;
             let mut dest = board.index(stack_idx);
             let mut covered_an_enemy = false;
@@ -152,7 +151,6 @@ impl SmartMoveBuffer {
                         if piece.is_flat() {
                             fcd += 1;
                         }
-                        bitset |= bit_idx;
                     }
                 }
                 if covering.owner() == active_side {
@@ -160,7 +158,6 @@ impl SmartMoveBuffer {
                 } else {
                     fcd -= 1;
                     contiguous = false;
-                    bitset &= !(bit_idx)
                 }
             }
             let src_stack = board.index(src_idx);
@@ -208,7 +205,6 @@ impl SmartMoveBuffer {
                 x.score += 10 * ((dest.len() as i16) - (src_stack.len() as i16));
             }
             x.score += 65 * fcd;
-            x.changed_bits = bitset;
             x.score += captures.score_stack_move(active_side, x.mv);
         }
     }
@@ -266,7 +262,7 @@ impl SmartMoveBuffer {
                 self.moves.push(ScoredMove::new(
                     GameMove::from_placement(Piece::cap(side), idx),
                     cap_score + tak_score,
-                    0,
+                    TAK_SORT != 0,
                 ));
             }
             if board.pieces_reserve(board.side_to_move()) > 0 {
@@ -274,13 +270,13 @@ impl SmartMoveBuffer {
                     self.moves.push(ScoredMove::new(
                         GameMove::from_placement(Piece::wall(side), idx),
                         wall_score,
-                        0,
+                        false,
                     ));
                 }
                 self.moves.push(ScoredMove::new(
                     GameMove::from_placement(Piece::flat(side), idx),
                     flat_score + tak_score,
-                    0,
+                    TAK_SORT != 0,
                 ));
             }
         }
@@ -391,16 +387,12 @@ where
 pub(crate) struct ScoredMove {
     pub(crate) mv: GameMove,
     pub(crate) score: i16,
-    pub(crate) changed_bits: u64,
+    pub(crate) is_tak: bool,
 }
 
 impl ScoredMove {
-    fn new(mv: GameMove, score: i16, changed: u64) -> Self {
-        Self {
-            mv,
-            score,
-            changed_bits: changed,
-        }
+    fn new(mv: GameMove, score: i16, is_tak: bool) -> Self {
+        Self { mv, score, is_tak }
     }
 }
 
@@ -409,17 +401,17 @@ impl MoveBuffer for SmartMoveBuffer {
         // (bits + self.number() + 10 * self.is_stack_move() as u64)
         if mv.is_place_move() {
             if mv.place_piece().is_wall() {
-                self.moves.push(ScoredMove::new(mv, 2, 0));
+                self.moves.push(ScoredMove::new(mv, 2, false));
             } else {
-                self.moves.push(ScoredMove::new(mv, 3, 0));
+                self.moves.push(ScoredMove::new(mv, 3, false));
             }
         } else {
-            self.moves.push(ScoredMove::new(mv, 0, 0));
+            self.moves.push(ScoredMove::new(mv, 0, false));
         }
     }
 
     fn add_scored(&mut self, mv: GameMove, score: i16) {
-        self.moves.push(ScoredMove::new(mv, score, 0))
+        self.moves.push(ScoredMove::new(mv, score, false))
     }
 }
 

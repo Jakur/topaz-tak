@@ -35,7 +35,7 @@ impl MoveBuffer for Vec<ScoredMove> {
         self.push(ScoredMove {
             mv,
             score: 0,
-            changed_bits: 0,
+            is_tak: false,
         });
     }
 
@@ -43,7 +43,7 @@ impl MoveBuffer for Vec<ScoredMove> {
         self.push(ScoredMove {
             mv,
             score,
-            changed_bits: 0,
+            is_tak: false,
         });
     }
 }

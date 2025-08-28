@@ -363,7 +363,8 @@ where
         raw_v
     };
     // (R)FP
-    if depth <= 3 && !is_pv && !tak_history.check(ply_depth.saturating_sub(1)) {
+    // !tak_history.consecutive(ply_depth)
+    let eval = if depth <= 3 && !is_pv {
         // Reverse futility pruning
         let eval = raw_eval + info.corr_hist.correction(board);
         info.eval_hist.set_eval(ply_depth, eval);
@@ -378,14 +379,12 @@ where
                 return beta;
             }
         }
-        // Futility pruning
-        if eval + (depth as i32 * info.hyper.fp_margin) < alpha {
-            skip_quiets = true;
-        }
+        eval
     } else {
         let eval = raw_eval + info.corr_hist.correction(board);
         info.eval_hist.set_eval(ply_depth, eval);
-    }
+        eval
+    };
 
     let (moves, rest) = bufs.split_first_mut().unwrap();
 
@@ -575,6 +574,15 @@ where
     }
     moves.gen_and_score(depth, board, info);
 
+    // Futility pruning
+    if depth <= 3
+        && !is_pv
+        // && !tak_history.consecutive(ply_depth.saturating_sub(1))
+        && eval + (depth as i32 * info.hyper.fp_margin) < alpha
+    {
+        skip_quiets = true;
+    }
+
     if let Some(entry) = pv_entry {
         if entry.game_move.is_valid() {
             if has_searched_pv {
@@ -599,8 +607,11 @@ where
         let ScoredMove {
             mv,
             score: mv_order_score,
-            changed_bits,
+            is_tak,
         } = moves.get_best_scored(info, last_move);
+        if is_tak {
+            tak_history = tak_history.add(ply_depth + 1);
+        }
         // let mv = moves.get_best(info, last_move);
         // if is_root && count <= 16 {
         //     // println!(
@@ -658,7 +669,7 @@ where
                 && mv_order_score < 500 // Not a flat placement tak move
                 && (LMR_REDUCE_PV || !is_pv)
                 && (LMR_REDUCE_ROOT || !is_root)
-                && !tak_history.consecutive(ply_depth)
+            // && !tak_history.consecutive(ply_depth)
             {
                 reduced_depth =
                     moves.get_lmr_reduced_depth(depth, info.eval_hist.is_improving(ply_depth));
