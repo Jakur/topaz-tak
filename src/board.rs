@@ -73,6 +73,14 @@ pub trait TakBoard:
     fn reset_stacks(&mut self);
     fn try_from_tps(tps: &str) -> Result<Self>;
     fn fifty_move_rule(&self) -> usize;
+    // Returns true if any flat placement will win the game
+    #[inline]
+    fn has_trivial_flat_win(&self) -> bool {
+        let side = self.side_to_move();
+        ((self.pieces_reserve(side) == 1 && self.caps_reserve(side) == 0)
+            || self.bits().empty().pop_count() == 1)
+            && self.flat_diff(side) >= 0
+    }
 }
 
 macro_rules! board_impl {

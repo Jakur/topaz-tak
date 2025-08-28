@@ -274,11 +274,6 @@ where
     let mut skip_quiets = false;
     // let mut road_move = None;
     if depth == 0 {
-        // let critical = board.bits().road_pieces(board.side_to_move());
-        // if critical & board.bits().empty() != T::Bits::ZERO {
-        //     return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
-        // }
-
         // let opp_critical = board.bits().road_pieces(!board.side_to_move()) & board.bits().empty();
         // // Opponent has two winning placements, we must move a stack
         // if extensions == 0 && opp_critical.pop_count() >= 2 {
@@ -297,6 +292,14 @@ where
             if board.flat_diff(side) >= 0 {
                 return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
             }
+        }
+
+        let critical = board
+            .bits()
+            .road_pieces(board.side_to_move())
+            .critical_squares();
+        if critical & board.bits().empty() != T::Bits::ZERO {
+            return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
         }
         // if let Some(prev) = last_move {
         //     return q_search(board, evaluator, info, alpha, beta, prev);
