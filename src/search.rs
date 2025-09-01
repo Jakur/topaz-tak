@@ -483,7 +483,7 @@ where
     moves.clear();
     // let mut moves = SmartMoveBuffer::new(T::SIZE * T::SIZE);
     let mut has_win = false;
-    if board.ply() >= 6 && depth > GEN_THOROUGH_ORDER_DEPTH {
+    if board.ply() >= 6 {
         if let Some(mv) = board.can_make_road(&mut info.extra_move_buffer, None) {
             // let data = &[mv];
             has_win = true;
