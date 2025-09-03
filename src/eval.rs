@@ -6,12 +6,10 @@ use crate::Color;
 use crate::Position;
 
 pub use incremental::{BoardData, PieceSquare, NNUE6};
-// static NN6: once_cell::sync::OnceCell<incremental::Weights> = once_cell::sync::OnceCell::new();
 
 #[allow(dead_code)]
 mod incremental;
 mod smooth;
-// pub use smooth::SmoothWeights6;
 
 pub type Eval = i32;
 

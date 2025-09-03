@@ -36,6 +36,7 @@ impl MoveBuffer for Vec<ScoredMove> {
             mv,
             score: 0,
             is_tak: false,
+            fcd: 0,
         });
     }
 
@@ -44,6 +45,7 @@ impl MoveBuffer for Vec<ScoredMove> {
             mv,
             score,
             is_tak: false,
+            fcd: 0,
         });
     }
 }

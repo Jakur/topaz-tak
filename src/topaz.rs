@@ -170,6 +170,24 @@ pub fn main() {
                 write!(&mut out, "{}", std::str::from_utf8(&variation_buf).unwrap()).unwrap();
             }
             return;
+        } else if arg1 == "count" {
+            let mut eval = NNUE6::default();
+            let total: usize = SAVED_TPS
+                .values()
+                .map(|tps| {
+                    let table = HashTable::new(GameInitializer::default().hash_size);
+                    let mut info = SearchInfo::new(12, &table).quiet(false).abort_depth(12);
+                    if let Ok(mut board) = Board6::try_from_tps(*tps) {
+                        let outcome = search(&mut board, &mut eval, &mut info);
+                        table.clear();
+                        outcome.unwrap().nodes
+                    } else {
+                        0
+                    }
+                })
+                .sum();
+            println!("Total Nodes: {total}");
+            return;
         } else if arg1 == "magic" {
             unimplemented!();
             // gen_magics();

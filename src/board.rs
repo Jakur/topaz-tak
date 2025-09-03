@@ -62,6 +62,7 @@ pub trait TakBoard:
     where
         Self: Sized;
     fn komi(&self) -> u8;
+    /// Returns the (half) flat difference for a player
     fn flat_diff(&self, player: Color) -> i32;
     /// Returns a cloned board rotated counter-clockwise in standard orientation
     fn rotate(&self) -> Self;

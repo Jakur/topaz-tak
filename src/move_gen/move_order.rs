@@ -16,6 +16,7 @@ pub struct SmartMoveBuffer {
     top_stack_moves: SimpleMoveList<ScoredMove>,
     // stack_hist: Vec<i16>,
     queries: usize,
+    best_fcd: i8,
     // flat_attempts: i16,
 }
 
@@ -29,6 +30,7 @@ impl SmartMoveBuffer {
             top_placements: SimpleMoveList::new(),
             top_stack_moves: SimpleMoveList::new(),
             queries: 0,
+            best_fcd: 1,
             // flat_attempts: 0,
         }
     }
@@ -38,6 +40,26 @@ impl SmartMoveBuffer {
         self.top_placements.clear();
         self.top_stack_moves.clear();
         self.queries = 0;
+        self.best_fcd = 1;
+    }
+    pub fn gen_score_stack<T: TakBoard>(&mut self, board: &mut T, info: &mut SearchInfo) {
+        if board.ply() >= 4 {
+            self.gen_score_stack_moves(board, &info.capture_hist);
+        }
+    }
+    pub fn gen_score_place<T: TakBoard>(
+        &mut self,
+        depth: usize,
+        board: &mut T,
+        info: &mut SearchInfo,
+    ) {
+        self.gen_score_place_moves(
+            board,
+            info,
+            board.ply() >= 4
+                && depth > GEN_THOROUGH_ORDER_DEPTH
+                && board.pieces_reserve(board.side_to_move()) > 1,
+        );
     }
     pub fn gen_and_score<T: TakBoard>(
         &mut self,
@@ -102,6 +124,9 @@ impl SmartMoveBuffer {
         let original = self.moves.len();
         self.moves.retain(|x| x.score >= threshold);
         original - self.moves.len()
+    }
+    pub fn best_fcd_count(&self) -> i8 {
+        self.best_fcd
     }
     pub fn gen_score_stack_moves<T: TakBoard>(&mut self, board: &T, captures: &CaptureHistory) {
         generate_all_stack_moves(board, &mut self.moves);
@@ -205,6 +230,11 @@ impl SmartMoveBuffer {
                 x.score += 10 * ((dest.len() as i16) - (src_stack.len() as i16));
             }
             x.score += 65 * fcd;
+            let fcd = fcd as i8;
+            x.fcd = fcd;
+            if fcd > self.best_fcd {
+                self.best_fcd = fcd;
+            }
             x.score += captures.score_stack_move(active_side, x.mv);
         }
     }
@@ -263,6 +293,7 @@ impl SmartMoveBuffer {
                     GameMove::from_placement(Piece::cap(side), idx),
                     cap_score + tak_score,
                     TAK_SORT != 0,
+                    0,
                 ));
             }
             if board.pieces_reserve(board.side_to_move()) > 0 {
@@ -271,12 +302,14 @@ impl SmartMoveBuffer {
                         GameMove::from_placement(Piece::wall(side), idx),
                         wall_score,
                         false,
+                        0,
                     ));
                 }
                 self.moves.push(ScoredMove::new(
                     GameMove::from_placement(Piece::flat(side), idx),
                     flat_score + tak_score,
                     TAK_SORT != 0,
+                    1,
                 ));
             }
         }
@@ -388,11 +421,17 @@ pub(crate) struct ScoredMove {
     pub(crate) mv: GameMove,
     pub(crate) score: i16,
     pub(crate) is_tak: bool,
+    pub(crate) fcd: i8,
 }
 
 impl ScoredMove {
-    fn new(mv: GameMove, score: i16, is_tak: bool) -> Self {
-        Self { mv, score, is_tak }
+    fn new(mv: GameMove, score: i16, is_tak: bool, fcd: i8) -> Self {
+        Self {
+            mv,
+            score,
+            is_tak,
+            fcd,
+        }
     }
 }
 
@@ -401,17 +440,17 @@ impl MoveBuffer for SmartMoveBuffer {
         // (bits + self.number() + 10 * self.is_stack_move() as u64)
         if mv.is_place_move() {
             if mv.place_piece().is_wall() {
-                self.moves.push(ScoredMove::new(mv, 2, false));
+                self.moves.push(ScoredMove::new(mv, 2, false, 0));
             } else {
-                self.moves.push(ScoredMove::new(mv, 3, false));
+                self.moves.push(ScoredMove::new(mv, 3, false, 1));
             }
         } else {
-            self.moves.push(ScoredMove::new(mv, 0, false));
+            self.moves.push(ScoredMove::new(mv, 0, false, 0));
         }
     }
 
     fn add_scored(&mut self, mv: GameMove, score: i16) {
-        self.moves.push(ScoredMove::new(mv, score, false))
+        self.moves.push(ScoredMove::new(mv, score, false, 0))
     }
 }
 

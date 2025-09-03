@@ -1,6 +1,6 @@
 use super::{Color, GameResult};
 use crate::board::TakBoard;
-use crate::eval::Evaluator;
+use crate::eval::{Evaluator, LOSS_FOUND, WIN_FOUND};
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{GameMove, MoveBuffer, RevGameMove, ScoredMove, SmartMoveBuffer};
 use crate::transposition_table::{HashEntry, ScoreCutoff};
@@ -289,18 +289,32 @@ where
         if (board.pieces_reserve(side) == 1 && board.caps_reserve(side) == 0)
             || board.bits().empty().pop_count() == 1
         {
-            if board.flat_diff(side) >= 0 {
+            let flat_diff = board.flat_diff(side);
+            if flat_diff >= 0 {
                 return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
+            }
+            if flat_diff == -2 && beta < 0 {
+                return 0;
             }
         }
 
-        let critical = board
-            .bits()
-            .road_pieces(board.side_to_move())
-            .critical_squares();
-        if critical & board.bits().empty() != T::Bits::ZERO {
+        if board
+            .can_make_road(&mut info.extra_move_buffer, None)
+            .is_some()
+        {
+            info.extra_move_buffer.clear();
             return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
         }
+
+        info.extra_move_buffer.clear();
+
+        // let critical = board
+        //     .bits()
+        //     .road_pieces(board.side_to_move())
+        //     .critical_squares();
+        // if critical & board.bits().empty() != T::Bits::ZERO {
+        //     return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
+        // }
         // if let Some(prev) = last_move {
         //     return q_search(board, evaluator, info, alpha, beta, prev);
         // } else {
@@ -494,6 +508,27 @@ where
     }
     info.extra_move_buffer.clear();
 
+    // let opp = !board.side_to_move();
+    // let opp_flat_adv = board.flat_diff(opp); // Half flats
+    // if !has_win
+    //     && board.caps_reserve(opp) == 0
+    //     && board.pieces_reserve(opp) == 1
+    //     && ply_depth > 1
+    //     && opp_flat_adv > 2
+    // {
+    //     generated_stack_moves = true;
+    //     moves.gen_score_stack(board, info);
+    //     let best_fcd = 2 * moves.best_fcd_count() as i32;
+    //     let size_check = board.bits().empty().pop_count() > T::SIZE as u32 - 1; // Cannot possibly board fill(?)
+    //     let mut bonus = 0;
+    //     if size_check {
+    //         bonus += 2;
+    //     }
+    //     if bonus + opp_flat_adv - best_fcd > 0 {
+    //         return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32 + 1;
+    //     }
+    // }
+
     let mut has_searched_pv = false;
     if !has_win {
         // if we don't have an immediate win, check TT move first
@@ -573,14 +608,12 @@ where
         }
     }
     moves.gen_and_score(depth, board, info);
-
-    // Futility pruning
-    if depth <= 3
-        && !is_pv
-        // && !tak_history.consecutive(ply_depth.saturating_sub(1))
-        && eval + (depth as i32 * info.hyper.fp_margin) < alpha
-    {
-        skip_quiets = true;
+    if !has_win {
+        // moves.gen_score_place(depth, board, info);
+        // Futility pruning
+        if depth <= 3 && !is_pv && eval + (depth as i32 * info.hyper.fp_margin) < alpha {
+            let _num_pruned = moves.drop_below_score(100 - info.hyper.quiet_score);
+        }
     }
 
     if let Some(entry) = pv_entry {
@@ -593,13 +626,6 @@ where
         }
     }
 
-    if !has_win && skip_quiets {
-        // let mean = info.hist_moves.mean_flat_score(board.side_to_move());
-        let _num_pruned = moves.drop_below_score(100 - info.hyper.quiet_score);
-        // dbg!(mean - info.hyper.quiet_score);
-        // dbg!(_num_pruned);
-    }
-
     let mut beta_cut = false;
 
     for c in 0..moves.len() {
@@ -608,10 +634,11 @@ where
             mv,
             score: mv_order_score,
             is_tak,
+            fcd,
         } = moves.get_best_scored(info, last_move);
-        if is_tak {
-            tak_history = tak_history.add(ply_depth + 1);
-        }
+        // if is_tak {
+        //     tak_history = tak_history.add(ply_depth + 1);
+        // }
         // let mv = moves.get_best(info, last_move);
         // if is_root && count <= 16 {
         //     // println!(
@@ -749,6 +776,22 @@ where
 
         board.reverse_move(rev_move);
         info.hash_history.pop();
+
+        // if valid {
+        //     if !(score <= LOSS_FOUND || score <= alpha) {
+        //         let opp = !board.side_to_move();
+        //         let opp_flat_adv = board.flat_diff(opp); // Half flats
+        //         let best_fcd = 2 * moves.best_fcd_count() as i32;
+        //         dbg!(opp_flat_adv);
+        //         dbg!(best_fcd);
+        //         dbg!(depth);
+        //         dbg!(&board);
+        //         dbg!(alpha);
+        //         dbg!(beta);
+        //         dbg!(score);
+        //     }
+        //     assert!(score <= LOSS_FOUND || score <= alpha);
+        // }
 
         if info.stopped {
             return 0;
