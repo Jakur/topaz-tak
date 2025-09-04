@@ -36,9 +36,6 @@ const FUTILITY_MARGIN: i32 = 50;
 const ASPIRATION_ENABLED: bool = true; // Requires stable search, it's close
 const ASPIRATION_WINDOW: i32 = 55;
 
-// move generation and ordering parameters
-const GEN_THOROUGH_ORDER_DEPTH: usize = 1; // where to stop bothering with accurate move ordering
-
 // internal iterative deepening parameters TODO not tuned yet
 // doesn't have much cost attached to it, so why not
 const IID_ENABLED: bool = true;
@@ -271,7 +268,6 @@ where
     }
 
     let ply_depth = info.ply_depth(board);
-    let mut skip_quiets = false;
     // let mut road_move = None;
     if depth == 0 {
         // let opp_critical = board.bits().road_pieces(!board.side_to_move()) & board.bits().empty();
@@ -308,30 +304,23 @@ where
 
         info.extra_move_buffer.clear();
 
-        // let critical = board
-        //     .bits()
-        //     .road_pieces(board.side_to_move())
-        //     .critical_squares();
-        // if critical & board.bits().empty() != T::Bits::ZERO {
-        //     return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
-        // }
-        // if let Some(prev) = last_move {
-        //     return q_search(board, evaluator, info, alpha, beta, prev);
-        // } else {
-        //     let ply_depth = info.ply_depth(board);
-        //     return evaluator.evaluate(board, ply_depth);
-        // }
-        // return q_search(board, evaluator, info, alpha, beta, last_move, 4);
         let eval = evaluator.evaluate(board, ply_depth) + info.corr_hist.correction(board);
+        let opp = !board.side_to_move();
+        let opp_flat_adv = board.flat_diff(opp); // Half flats
+        let moves = &mut bufs[0];
+        if eval > alpha
+            && board.caps_reserve(opp) == 0
+            && board.pieces_reserve(opp) == 1
+            && opp_flat_adv > 2
+        {
+            moves.clear();
+            moves.gen_score_stack(board, info);
+            let best_fcd = 2 * moves.best_fcd_count() as i32;
+            if opp_flat_adv - best_fcd > 0 {
+                return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32 + 1;
+            }
+        }
         return eval;
-        // let mut road_check = Vec::new();
-        // road_move = board.can_make_road(&mut road_check);
-        // if road_move.is_some() {
-        //     depth += 1;
-        // } else {
-        //     return board.evaluate();
-        // }
-        // road_check.clear();
     }
     // Transposition Table Lookup
     // Investigate prevalence of null moves in the pv table. It seems to be very rare.
@@ -402,25 +391,33 @@ where
 
     let (moves, rest) = bufs.split_first_mut().unwrap();
 
+    moves.clear();
+    let mut has_win = false;
+    if board.ply() >= 6 {
+        if let Some(mv) = board.can_make_road(&mut info.extra_move_buffer, None) {
+            has_win = true;
+            moves.add_scored(mv, 10000);
+        }
+    }
+    info.extra_move_buffer.clear();
+
     if NULL_REDUCTION_ENABLED
         && (!data.is_pv || NULL_REDUCE_PV)
         && null_move
         && depth > NULL_REDUCTION
     {
-        // && road_move.is_none() {
-
         board.null_move();
         info.hash_history.push(0, board.ply());
-        // Check if we are in Tak
-        let one_depth_score = -1
+        // Check if our position is so good that passing still gives opp a bad pos
+        let score = -1
             * alpha_beta(
                 board,
                 evaluator,
                 info,
                 SearchData::new(
-                    -1_000_000,
-                    1_000_000,
-                    1,
+                    -beta,
+                    -beta + 1,
+                    depth - 1 - NULL_REDUCTION,
                     false,
                     None,
                     extensions,
@@ -430,36 +427,11 @@ where
                 ),
                 rest,
             );
-        if one_depth_score <= LOSE_SCORE + 100 {
-            board.rev_null_move();
-            info.hash_history.pop();
-            tak_history = tak_history.add(info.ply_depth(board));
-        } else {
-            // Check if our position is so good that passing still gives opp a bad pos
-            let score = -1
-                * alpha_beta(
-                    board,
-                    evaluator,
-                    info,
-                    SearchData::new(
-                        -beta,
-                        -beta + 1,
-                        depth - 1 - NULL_REDUCTION,
-                        false,
-                        None,
-                        extensions,
-                        tak_history,
-                        false,
-                        false,
-                    ),
-                    rest,
-                );
-            board.rev_null_move();
-            info.hash_history.pop();
-            // If we beta cutoff from the null move, then we can stop searching
-            if score >= beta {
-                return beta;
-            }
+        board.rev_null_move();
+        info.hash_history.pop();
+        // If we beta cutoff from the null move, then we can stop searching
+        if score >= beta {
+            return beta;
         }
     }
 
@@ -494,40 +466,6 @@ where
     // step 4: check for TT-Move and search it immediately
     // step 5: score spread moves, generate and score placements in gen_and_score()
     // step 6: search all moves ordered by score.
-    moves.clear();
-    // let mut moves = SmartMoveBuffer::new(T::SIZE * T::SIZE);
-    let mut has_win = false;
-    if board.ply() >= 6 {
-        if let Some(mv) = board.can_make_road(&mut info.extra_move_buffer, None) {
-            // let data = &[mv];
-            has_win = true;
-            moves.add_scored(mv, 1000);
-            // moves.add_move(mv);
-            // moves.score_wins(data);
-        }
-    }
-    info.extra_move_buffer.clear();
-
-    // let opp = !board.side_to_move();
-    // let opp_flat_adv = board.flat_diff(opp); // Half flats
-    // if !has_win
-    //     && board.caps_reserve(opp) == 0
-    //     && board.pieces_reserve(opp) == 1
-    //     && ply_depth > 1
-    //     && opp_flat_adv > 2
-    // {
-    //     generated_stack_moves = true;
-    //     moves.gen_score_stack(board, info);
-    //     let best_fcd = 2 * moves.best_fcd_count() as i32;
-    //     let size_check = board.bits().empty().pop_count() > T::SIZE as u32 - 1; // Cannot possibly board fill(?)
-    //     let mut bonus = 0;
-    //     if size_check {
-    //         bonus += 2;
-    //     }
-    //     if bonus + opp_flat_adv - best_fcd > 0 {
-    //         return LOSE_SCORE + board.ply() as i32 - info.start_ply as i32 + 1;
-    //     }
-    // }
 
     let mut has_searched_pv = false;
     if !has_win {
