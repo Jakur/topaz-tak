@@ -666,6 +666,7 @@ fn identify() {
     println!("id author Justin Kur");
     println!("option name HalfKomi type spin default 0 min 0 max 12");
     println!("option name Threads type spin default 1 min 1 max 8");
+    println!("option name Hash type spin default 8 min 1 max 1024");
     println!("option name MaxNodes type spin default -1 min -1 max 10000000");
     println!("teiok");
 }
@@ -726,6 +727,9 @@ fn tei_loop() {
             } else if name == "MaxNodes" {
                 init.max_nodes = value.parse().unwrap();
                 println!("Setting MaxNodes to {}", init.max_nodes);
+            } else if name == "Hash" {
+                init.hash_size = 1024 * 1024 * value.parse::<usize>().unwrap();
+                println!("Setting Hash to {}", init.hash_size);
             }
         } else {
             println!("Unknown Tei Command: {}", buffer);
@@ -739,7 +743,7 @@ const PLAYTAK_KOMI: u8 = 4;
 fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiCommand>) -> Result<()> {
     const MAX_DEPTH: usize = 32;
     const KOMI: u8 = PLAYTAK_KOMI;
-    const MAX_OPENING_LENGTH: usize = 10;
+    // const MAX_OPENING_LENGTH: usize = 10;
     let mut move_cache = Vec::new();
     let mut board = Board6::new().with_komi(KOMI);
     let table = HashTable::new(2 << 26);

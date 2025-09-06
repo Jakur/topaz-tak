@@ -103,6 +103,7 @@ impl<'a> SearchInfo<'a> {
         self.eval_hist = EvalHist::new();
         self.corr_hist = CorrHist::new();
         self.capture_hist.clear();
+        self.pv_table.clear();
     }
     pub fn take_input_stream(&mut self) -> Option<Receiver<TeiCommand>> {
         self.input.take()
@@ -402,6 +403,11 @@ impl<const SIZE: usize> PVTable<SIZE> {
         Self {
             table: [[GameMove::null_move(); SIZE]; SIZE],
             table_length: [0; SIZE],
+        }
+    }
+    pub fn clear(&mut self) {
+        for i in 0..SIZE {
+            self.table_length[i] = 0;
         }
     }
     pub fn update(&mut self, ply: usize, mv: GameMove) {
