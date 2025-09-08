@@ -102,7 +102,7 @@ where
             board,
             eval,
             info,
-            SearchData::new(alpha, beta, depth, true, None, 0, TakHistory(0), true, true),
+            SearchData::new(alpha, beta, depth, true, None, 0, true, true, true),
             &mut moves,
         );
         if ASPIRATION_ENABLED {
@@ -112,15 +112,7 @@ where
                     eval,
                     info,
                     SearchData::new(
-                        -1_000_000,
-                        1_000_000,
-                        depth,
-                        true,
-                        None,
-                        0,
-                        TakHistory(0),
-                        true,
-                        true,
+                        -1_000_000, 1_000_000, depth, true, None, 0, true, true, true,
                     ),
                     &mut moves,
                 )
@@ -189,7 +181,7 @@ struct SearchData {
     null_move: bool,
     last_move: Option<RevGameMove>,
     extensions: u8,
-    tak_history: TakHistory,
+    needs_pv_update: bool,
     is_pv: bool,
     is_root: bool,
 }
@@ -202,7 +194,7 @@ impl SearchData {
         null_move: bool,
         last_move: Option<RevGameMove>,
         extensions: u8,
-        tak_history: TakHistory,
+        needs_pv_update: bool,
         is_pv: bool,
         is_root: bool,
     ) -> Self {
@@ -213,7 +205,7 @@ impl SearchData {
             null_move,
             last_move,
             extensions,
-            tak_history,
+            needs_pv_update,
             is_pv,
             is_root,
         }
@@ -238,7 +230,7 @@ where
         null_move,
         last_move,
         extensions,
-        mut tak_history,
+        needs_pv_update,
         is_pv,
         is_root,
     } = data;
@@ -270,17 +262,6 @@ where
     let ply_depth = info.ply_depth(board);
     // let mut road_move = None;
     if depth == 0 {
-        // let opp_critical = board.bits().road_pieces(!board.side_to_move()) & board.bits().empty();
-        // // Opponent has two winning placements, we must move a stack
-        // if extensions == 0 && opp_critical.pop_count() >= 2 {
-        //     return alpha_beta(
-        //         board,
-        //         evaluator,
-        //         info,
-        //         SearchData::new(alpha, beta, 2, false, last_move, 1, true),
-        //     );
-        // }
-        // // Todo make this work with pv?
         let side = board.side_to_move();
         if (board.pieces_reserve(side) == 1 && board.caps_reserve(side) == 0)
             || board.bits().empty().pop_count() == 1
@@ -421,7 +402,7 @@ where
                     false,
                     None,
                     extensions,
-                    tak_history,
+                    false,
                     false,
                     false,
                 ),
@@ -490,7 +471,7 @@ where
                             true,
                             Some(rev_move),
                             extensions,
-                            tak_history,
+                            needs_pv_update,
                             data.is_pv,
                             false,
                         ),
@@ -503,7 +484,7 @@ where
                     return 0;
                 }
                 if score > alpha {
-                    if is_pv && info.main_thread {
+                    if (is_pv || needs_pv_update) && info.main_thread {
                         info.pv_table.update(ply_depth, m);
                     }
                     if score >= beta {
@@ -616,7 +597,7 @@ where
                     true,
                     Some(rev_move),
                     next_extensions,
-                    tak_history,
+                    needs_pv_update,
                     data.is_pv,
                     false,
                 ),
@@ -658,7 +639,7 @@ where
                     true,
                     Some(rev_move),
                     next_extensions,
-                    tak_history,
+                    is_pv && !(needs_re_search_on_alpha || needs_re_search_on_alpha_beta),
                     false,
                     false,
                 ),
@@ -678,7 +659,7 @@ where
                         true,
                         Some(rev_move),
                         next_extensions,
-                        tak_history,
+                        is_pv && !needs_re_search_on_alpha_beta,
                         false,
                         false,
                     ),
@@ -690,7 +671,7 @@ where
             if needs_re_search_on_alpha_beta
                 && score > alpha
                 && score < beta
-                && (PV_RE_SEARCH_NON_PV || data.is_pv)
+                && (PV_RE_SEARCH_NON_PV || is_pv)
             {
                 score = -alpha_beta(
                     board,
@@ -703,8 +684,8 @@ where
                         true,
                         Some(rev_move),
                         next_extensions,
-                        tak_history,
-                        data.is_pv,
+                        is_pv,
+                        is_pv,
                         false,
                     ),
                     rest,
@@ -735,7 +716,7 @@ where
             return 0;
         }
         if score > alpha {
-            if is_pv && info.main_thread {
+            if (is_pv || needs_pv_update) && info.main_thread {
                 info.pv_table.update(ply_depth, mv);
             }
 

@@ -1,4 +1,4 @@
-use crate::board::TakBoard;
+use crate::board::{Board6, TakBoard};
 use crate::eval::WIN_SCORE;
 use crate::move_gen::{CaptureHistory, CorrHist, CounterMoves, EvalHist, GameMove, PlaceHistory};
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
@@ -392,10 +392,10 @@ where
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct PVTable<const SIZE: usize> {
-    table: [[GameMove; SIZE]; SIZE],
-    table_length: [usize; SIZE],
+    pub(crate) table: [[GameMove; SIZE]; SIZE],
+    pub(crate) table_length: [usize; SIZE],
 }
 
 impl<const SIZE: usize> PVTable<SIZE> {
