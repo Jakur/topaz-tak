@@ -14,7 +14,7 @@ pub use util::{HashHistory, SearchHyper, SearchInfo, SearchOutcome, SearchStats}
 const DRAW_SCORE: i32 = 0;
 
 const NULL_REDUCTION_ENABLED: bool = true;
-const NULL_REDUCE_PV: bool = true; // probably shouldn't
+const NULL_REDUCE_PV: bool = false; // probably shouldn't
 const NULL_REDUCTION: usize = 6;
 
 // late move reduction parameters
@@ -623,7 +623,8 @@ where
                 needs_re_search_on_alpha = true;
             }
             let next_beta = -alpha;
-            if PV_SEARCH_ENABLED && depth > 1 && !data.is_root {
+            if PV_SEARCH_ENABLED {
+                // && depth > 1 && !data.is_root {
                 next_alpha = -(alpha + 1);
                 needs_re_search_on_alpha_beta = true;
             }
@@ -647,7 +648,7 @@ where
             );
 
             // re-search full depth moves and those that don't fail low
-            if needs_re_search_on_alpha && score > alpha {
+            if needs_re_search_on_alpha && next_depth > reduced_depth && score > alpha {
                 score = -alpha_beta(
                     board,
                     evaluator,
