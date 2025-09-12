@@ -102,7 +102,7 @@ where
             board,
             eval,
             info,
-            SearchData::new(alpha, beta, depth, true, None, 0, true, true, true),
+            SearchData::new(alpha, beta, depth, true, None, 0, false, true, true),
             &mut moves,
         );
         if ASPIRATION_ENABLED {
@@ -112,7 +112,7 @@ where
                     eval,
                     info,
                     SearchData::new(
-                        -1_000_000, 1_000_000, depth, true, None, 0, true, true, true,
+                        -1_000_000, 1_000_000, depth, true, None, 0, false, true, true,
                     ),
                     &mut moves,
                 )
@@ -181,7 +181,7 @@ struct SearchData {
     null_move: bool,
     last_move: Option<RevGameMove>,
     extensions: u8,
-    needs_pv_update: bool,
+    cut_node: bool,
     is_pv: bool,
     is_root: bool,
 }
@@ -194,7 +194,7 @@ impl SearchData {
         null_move: bool,
         last_move: Option<RevGameMove>,
         extensions: u8,
-        needs_pv_update: bool,
+        cut_node: bool,
         is_pv: bool,
         is_root: bool,
     ) -> Self {
@@ -205,7 +205,7 @@ impl SearchData {
             null_move,
             last_move,
             extensions,
-            needs_pv_update,
+            cut_node,
             is_pv,
             is_root,
         }
@@ -230,7 +230,7 @@ where
         null_move,
         last_move,
         extensions,
-        needs_pv_update,
+        cut_node,
         is_pv,
         is_root,
     } = data;
@@ -381,7 +381,7 @@ where
         }
     }
     info.extra_move_buffer.clear();
-
+    let next_cut = if is_pv { false } else { !cut_node };
     if NULL_REDUCTION_ENABLED
         && (!data.is_pv || NULL_REDUCE_PV)
         && null_move
@@ -402,7 +402,7 @@ where
                     false,
                     None,
                     extensions,
-                    false,
+                    next_cut,
                     false,
                     false,
                 ),
@@ -458,7 +458,6 @@ where
                 let m = entry.game_move;
                 let rev_move = board.do_move(m);
                 info.hash_history.push(board.hash(), board.ply());
-
                 let score = -1
                     * alpha_beta(
                         board,
@@ -471,7 +470,7 @@ where
                             true,
                             Some(rev_move),
                             extensions,
-                            needs_pv_update,
+                            next_cut,
                             data.is_pv,
                             false,
                         ),
@@ -484,7 +483,7 @@ where
                     return 0;
                 }
                 if score > alpha {
-                    if (is_pv || needs_pv_update) && info.main_thread {
+                    if is_pv && info.main_thread {
                         info.pv_table.update(ply_depth, m);
                     }
                     if score >= beta {
@@ -597,7 +596,7 @@ where
                     true,
                     Some(rev_move),
                     next_extensions,
-                    needs_pv_update,
+                    next_cut,
                     data.is_pv,
                     false,
                 ),
@@ -617,8 +616,7 @@ where
                 && (LMR_REDUCE_ROOT || !is_root)
             // && !tak_history.consecutive(ply_depth)
             {
-                reduced_depth =
-                    moves.get_lmr_reduced_depth(depth, info.eval_hist.is_improving(ply_depth));
+                reduced_depth = moves.get_lmr_reduced_depth(depth, cut_node, is_pv);
                 // reduced_depth -= 2;
                 needs_re_search_on_alpha = true;
             }
@@ -640,7 +638,7 @@ where
                     true,
                     Some(rev_move),
                     next_extensions,
-                    is_pv && !(needs_re_search_on_alpha || needs_re_search_on_alpha_beta),
+                    !cut_node,
                     false,
                     false,
                 ),
@@ -660,7 +658,7 @@ where
                         true,
                         Some(rev_move),
                         next_extensions,
-                        is_pv && !needs_re_search_on_alpha_beta,
+                        !cut_node,
                         false,
                         false,
                     ),
@@ -685,7 +683,7 @@ where
                         true,
                         Some(rev_move),
                         next_extensions,
-                        is_pv,
+                        next_cut,
                         is_pv,
                         false,
                     ),
@@ -697,27 +695,11 @@ where
         board.reverse_move(rev_move);
         info.hash_history.pop();
 
-        // if valid {
-        //     if !(score <= LOSS_FOUND || score <= alpha) {
-        //         let opp = !board.side_to_move();
-        //         let opp_flat_adv = board.flat_diff(opp); // Half flats
-        //         let best_fcd = 2 * moves.best_fcd_count() as i32;
-        //         dbg!(opp_flat_adv);
-        //         dbg!(best_fcd);
-        //         dbg!(depth);
-        //         dbg!(&board);
-        //         dbg!(alpha);
-        //         dbg!(beta);
-        //         dbg!(score);
-        //     }
-        //     assert!(score <= LOSS_FOUND || score <= alpha);
-        // }
-
         if info.stopped {
             return 0;
         }
         if score > alpha {
-            if (is_pv || needs_pv_update) && info.main_thread {
+            if is_pv && info.main_thread {
                 info.pv_table.update(ply_depth, mv);
             }
 
