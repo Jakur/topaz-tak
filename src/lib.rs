@@ -25,6 +25,7 @@ pub struct GameInitializer {
     pub add_noise: bool,
     pub num_threads: usize,
     pub max_nodes: i64,
+    pub multi_pv: usize,
 }
 
 #[cfg(feature = "evaluation")]
@@ -37,6 +38,7 @@ impl GameInitializer {
             add_noise,
             max_nodes: -1,
             num_threads: 1,
+            multi_pv: 1,
         }
     }
     pub fn get_board<E: eval::Evaluator + Default>(&self) -> (E::Game, E) {
@@ -77,6 +79,7 @@ impl std::default::Default for GameInitializer {
             num_threads: 1,
             add_noise: false,
             max_nodes: -1,
+            multi_pv: 1,
         }
     }
 }

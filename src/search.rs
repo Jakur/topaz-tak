@@ -1,3 +1,5 @@
+use std::result;
+
 use super::{Color, GameResult};
 use crate::board::TakBoard;
 use crate::eval::{Evaluator, LOSS_FOUND, WIN_FOUND};
@@ -87,6 +89,10 @@ where
     let mut alpha = -1_000_000;
     let mut beta = 1_000_000;
     let mut moves: [SmartMoveBuffer; 50] = core::array::from_fn(|_| SmartMoveBuffer::new(0));
+    let is_multi_pv = info.multi_pv > 1 && info.main_thread;
+    println!("{}", info.multi_pv);
+    // println!("{is_multi_pv}");
+    let mut outcomes: Vec<SearchOutcome<T>> = Vec::new();
     for depth in 1..=info.max_depth {
         // Abort if we are unlikely to finish the search at this depth
         if depth >= info.early_abort_depth {
@@ -98,79 +104,89 @@ where
                 break;
             }
         }
-        let mut best_score = alpha_beta(
-            board,
-            eval,
-            info,
-            SearchData::new(alpha, beta, depth, true, None, 0, false, true, true),
-            &mut moves,
-        );
-        if ASPIRATION_ENABLED {
-            if (best_score <= alpha) || (best_score >= beta) {
-                best_score = alpha_beta(
-                    board,
-                    eval,
-                    info,
-                    SearchData::new(
-                        -1_000_000, 1_000_000, depth, true, None, 0, false, true, true,
-                    ),
-                    &mut moves,
-                )
-            }
-            alpha = best_score - info.hyper.aspiration;
-            beta = best_score + info.hyper.aspiration;
-        }
-        // node_counts.push(info.nodes);
-        let pv_moves = info.pv_table.get_pv();
-        // let pv_moves = info.full_pv(board);
-        // If we had an incomplete depth search, use the previous depth's vals
-        if info.stopped {
-            if let Some(data) = outcome {
-                let updated = SearchOutcome::new(data.score, data.pv, data.depth, info);
-                outcome = Some(updated);
-            }
-            break;
-        }
-        outcome = Some(SearchOutcome::new(
-            best_score,
-            pv_moves.clone(),
-            depth,
-            info,
-        ));
-        if !info.quiet {
-            if let Some(ref outcome) = outcome {
-                if !info.quiet {
-                    println!("{}", outcome);
+        info.forbidden_root_moves.clear();
+        let num_pvs = info.multi_pv as usize;
+        for pv_idx in 0..num_pvs {
+            let mut best_score = alpha_beta(
+                board,
+                eval,
+                info,
+                SearchData::new(alpha, beta, depth, true, None, 0, false, true, true),
+                &mut moves,
+            );
+            if ASPIRATION_ENABLED {
+                if (best_score <= alpha) || (best_score >= beta) {
+                    best_score = alpha_beta(
+                        board,
+                        eval,
+                        info,
+                        SearchData::new(
+                            -1_000_000, 1_000_000, depth, true, None, 0, false, true, true,
+                        ),
+                        &mut moves,
+                    )
+                }
+                if pv_idx == 0 {
+                    alpha = best_score - info.hyper.aspiration;
+                    beta = best_score + info.hyper.aspiration;
                 }
             }
-        }
-        // Stop wasting time
-        if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
-            return outcome;
+            let pv_moves = info.pv_table.get_pv();
+            // If we had an incomplete depth search, use the previous depth's vals
+            if info.stopped {
+                if let Some(data) = outcome {
+                    let updated = SearchOutcome::new(data.score, data.pv, data.depth, info);
+                    outcome = Some(updated);
+                }
+                break;
+            }
+            if pv_idx == 0 {
+                outcome = Some(SearchOutcome::new(
+                    best_score,
+                    pv_moves.clone(),
+                    depth,
+                    info,
+                ));
+            }
+            if is_multi_pv {
+                outcomes.push(SearchOutcome::new(
+                    best_score,
+                    pv_moves.clone(),
+                    depth,
+                    info,
+                ));
+                info.forbidden_root_moves.try_append(pv_moves[0]);
+            }
+            if !info.quiet {
+                if is_multi_pv && pv_idx == num_pvs - 1 {
+                    for idx in 0..num_pvs {
+                        if let Some(res) = outcomes.get_mut(idx) {
+                            res.update_multipv_index(idx + 1);
+                        }
+                    }
+                    if let Some((last_pv, result)) = outcomes.split_last_mut() {
+                        for res in result {
+                            res.update_multipv(last_pv);
+                        }
+                    }
+                    for line in outcomes.drain(..) {
+                        println!("{}", line);
+                    }
+                } else {
+                    if let Some(ref outcome) = outcome {
+                        println!("{}", outcome);
+                    }
+                }
+            }
+            // Stop wasting time
+            if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
+                return outcome;
+            }
         }
     }
     info.hist_moves.clear();
     info.counter_moves.clear();
     outcome
-}
-
-#[derive(Clone, Copy)]
-struct TakHistory(u32);
-
-impl TakHistory {
-    fn add(self, depth: usize) -> Self {
-        Self(self.0 | 1 << depth)
-    }
-    fn consecutive(self, depth: usize) -> bool {
-        if depth < 2 {
-            return false;
-        }
-        let mask = (1 << depth) | (1 << (depth - 2));
-        (self.0 & mask) == mask
-    }
-    fn check(self, depth: usize) -> bool {
-        self.0 & (1 << depth) != 0
-    }
 }
 
 #[derive(Clone)]
@@ -346,20 +362,22 @@ where
         );
         raw_v
     };
+    // 1 endgame, 0 early game
+    let phase = (board.pieces_reserve(Color::White) < 10 || board.pieces_reserve(Color::Black) < 10)
+        as usize;
     // (R)FP
-    // !tak_history.consecutive(ply_depth)
     let eval = if depth <= 3 && !is_pv {
         // Reverse futility pruning
+        let rfp_margin = info.hyper.rfp_margin;
+        // let rfp_margin = [info.hyper.rfp_margin, info.hyper.rfp_margin + 15][phase];
         let eval = raw_eval + info.corr_hist.correction(board);
         info.eval_hist.set_eval(ply_depth, eval);
         if info.eval_hist.is_improving(ply_depth) {
-            if eval - (depth as i32 * info.hyper.rfp_margin - info.hyper.improving_rfp_offset)
-                >= beta
-            {
+            if eval - (depth as i32 * rfp_margin - info.hyper.improving_rfp_offset) >= beta {
                 return beta;
             }
         } else {
-            if eval - (depth as i32 * info.hyper.rfp_margin) >= beta {
+            if eval - (depth as i32 * rfp_margin) >= beta {
                 return beta;
             }
         }
@@ -382,11 +400,14 @@ where
     }
     info.extra_move_buffer.clear();
     let next_cut = if is_pv { false } else { !cut_node };
+    let side = board.side_to_move();
     if NULL_REDUCTION_ENABLED
         && (!data.is_pv || NULL_REDUCE_PV)
         && null_move
         && depth > NULL_REDUCTION
+        && (board.pieces_reserve(side) > 1 || board.flat_diff(side) >= 1)
     {
+        // Require that we can place a new flat without losing
         board.null_move();
         info.hash_history.push(0, board.ply());
         // Check if our position is so good that passing still gives opp a bad pos
@@ -452,7 +473,11 @@ where
     if !has_win {
         // if we don't have an immediate win, check TT move first
         if let Some(entry) = pv_entry {
-            if entry.game_move.is_valid() && board.legal_move(entry.game_move)
+            if entry.game_move.is_valid()
+                && board.legal_move(entry.game_move)
+                && (!is_root
+                    || info.multi_pv < 2
+                    || !info.forbidden_root_moves.contains(&entry.game_move))
             // TODO maybe a really fast legal checker is faster
             {
                 let m = entry.game_move;
@@ -526,10 +551,14 @@ where
         }
     }
     moves.gen_and_score(depth, board, info);
+    if is_root && info.multi_pv > 1 {
+        moves.drop_arbitrary(&info.forbidden_root_moves);
+    }
     if !has_win {
         // moves.gen_score_place(depth, board, info);
         // Futility pruning
-        if depth <= 3 && !is_pv && eval + (depth as i32 * info.hyper.fp_margin) < alpha {
+        let fp_margin = info.hyper.fp_margin;
+        if depth <= 3 && !is_pv && eval + (depth as i32 * fp_margin) < alpha {
             let _num_pruned = moves.drop_below_score(100 - info.hyper.quiet_score);
         }
     }

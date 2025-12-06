@@ -1,6 +1,8 @@
 use crate::board::{Board6, TakBoard};
 use crate::eval::WIN_SCORE;
-use crate::move_gen::{CaptureHistory, CorrHist, CounterMoves, EvalHist, GameMove, PlaceHistory};
+use crate::move_gen::{
+    CaptureHistory, CorrHist, CounterMoves, EvalHist, GameMove, PlaceHistory, SimpleMoveList,
+};
 use crate::transposition_table::{HashEntry, HashTable, ScoreCutoff};
 use crate::{TeiCommand, TimeBank};
 use crossbeam_channel::Receiver;
@@ -31,6 +33,8 @@ pub struct SearchInfo<'a> {
     pub(crate) hyper: SearchHyper,
     pub(crate) extra_move_buffer: Vec<GameMove>,
     pub(crate) main_thread: bool,
+    pub(crate) multi_pv: usize,
+    pub(crate) forbidden_root_moves: SimpleMoveList<GameMove>,
 }
 
 impl<'a> SearchInfo<'a> {
@@ -59,10 +63,18 @@ impl<'a> SearchInfo<'a> {
             hyper: SearchHyper::default(),
             extra_move_buffer: Vec::with_capacity(128),
             main_thread: true,
+            multi_pv: 1,
+            forbidden_root_moves: SimpleMoveList::new(),
         }
+    }
+    pub fn set_multi_pv(mut self, num_pvs: usize) -> Self {
+        self.multi_pv = std::cmp::max(1, num_pvs);
+        self
     }
     pub fn secondary(mut self) -> Self {
         self.main_thread = false;
+        self.multi_pv = 1;
+        self.forbidden_root_moves = SimpleMoveList::new();
         self
     }
     pub fn buffer(&mut self) -> &mut Vec<GameMove> {
@@ -315,7 +327,7 @@ impl SearchStats {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SearchOutcome<T> {
     pub score: i32,
     pub time: u128,
@@ -325,6 +337,7 @@ pub struct SearchOutcome<T> {
     pub t_cuts: u64,
     pub hashfull: usize,
     pub phantom: PhantomData<T>,
+    multi_pv_idx: usize,
 }
 
 impl<T> SearchOutcome<T>
@@ -345,7 +358,17 @@ where
             t_cuts,
             hashfull: search_info.trans_table.occupancy(),
             phantom: PhantomData,
+            multi_pv_idx: 0,
         }
+    }
+    pub fn update_multipv_index(&mut self, idx: usize) {
+        self.multi_pv_idx = idx;
+    }
+    pub fn update_multipv(&mut self, last_pv: &Self) {
+        self.time = last_pv.time;
+        self.nodes = last_pv.nodes;
+        self.t_cuts = last_pv.t_cuts;
+        self.hashfull = last_pv.hashfull;
     }
     pub fn next(&self) -> Option<GameMove> {
         self.pv.get(0).copied()
@@ -377,17 +400,32 @@ where
         } else {
             0
         };
-        write!(
-            f,
-            "info depth {} score cp {} time {} nodes {} nps {} hashfull {} pv {}",
-            self.depth,
-            readable_eval(self.score),
-            self.time,
-            self.nodes,
-            nps,
-            self.hashfull,
-            pv_string,
-        )?;
+        if self.multi_pv_idx > 0 {
+            write!(
+                f,
+                "info depth {} multipv {} score cp {} time {} nodes {} nps {} hashfull {} pv {}",
+                self.depth,
+                self.multi_pv_idx,
+                readable_eval(self.score),
+                self.time,
+                self.nodes,
+                nps,
+                self.hashfull,
+                pv_string,
+            )?;
+        } else {
+            write!(
+                f,
+                "info depth {} score cp {} time {} nodes {} nps {} hashfull {} pv {}",
+                self.depth,
+                readable_eval(self.score),
+                self.time,
+                self.nodes,
+                nps,
+                self.hashfull,
+                pv_string,
+            )?;
+        }
         Ok(())
     }
 }

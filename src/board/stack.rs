@@ -195,7 +195,7 @@ impl Stack {
         self.hash_in_top(bits);
         ret
     }
-    pub fn iter(&self) -> StackIterator {
+    pub fn iter<'a>(&'a self) -> StackIterator<'a> {
         StackIterator::new(&self, 0)
     }
     pub fn len(&self) -> usize {

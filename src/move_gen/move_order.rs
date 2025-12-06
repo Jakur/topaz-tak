@@ -125,6 +125,9 @@ impl SmartMoveBuffer {
         self.moves.retain(|x| x.score >= threshold);
         original - self.moves.len()
     }
+    pub fn drop_arbitrary(&mut self, mvs: &SimpleMoveList<GameMove>) {
+        self.moves.retain(|x| !mvs.contains(&x.mv))
+    }
     pub fn best_fcd_count(&self) -> i8 {
         self.best_fcd
     }
@@ -390,7 +393,7 @@ impl SmartMoveBuffer {
 }
 
 #[derive(Debug, Clone)]
-struct SimpleMoveList<T> {
+pub struct SimpleMoveList<T> {
     data: [T; 10],
     idx: usize,
 }
@@ -399,24 +402,33 @@ impl<T> SimpleMoveList<T>
 where
     T: Default + Clone + Copy,
 {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             data: [T::default(); 10],
             idx: 0,
         }
     }
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.idx = 0;
     }
     /// Adds a new move to the list if there is sufficient capacity, else noop
-    fn try_append(&mut self, mv: T) {
+    pub fn try_append(&mut self, mv: T) {
         if self.idx < self.data.len() {
             self.data[self.idx] = mv;
             self.idx += 1;
         }
     }
-    fn iter(&self) -> impl Iterator<Item = &T> {
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.data.iter().take(self.idx)
+    }
+}
+
+impl<T> SimpleMoveList<T>
+where
+    T: Default + Clone + Copy + PartialEq,
+{
+    pub fn contains(&self, val: &T) -> bool {
+        self.iter().find(|&x| x == val).is_some()
     }
 }
 

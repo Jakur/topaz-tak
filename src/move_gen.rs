@@ -9,7 +9,7 @@ use bytemuck::{Pod, Zeroable};
 pub(crate) use move_order::ScoredMove;
 pub use move_order::{
     CaptureHistory, CorrHist, CounterMoves, EvalHist, HistoryMoves, KillerMoves, PlaceHistory,
-    SmartMoveBuffer,
+    SimpleMoveList, SmartMoveBuffer,
 };
 // #[allow(dead_code)]
 // pub mod magic;

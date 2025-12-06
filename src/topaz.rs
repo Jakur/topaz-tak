@@ -60,7 +60,7 @@ pub fn main() {
             let game = build_tps(&args[2..]);
             let table = HashTable::new(2 << 20);
             if let Ok(game) = game {
-                let mut info = SearchInfo::new(20, &table);
+                let mut info = SearchInfo::new(32, &table);
                 match game {
                     TakGame::Standard5(mut board) => {
                         let mut eval = Weights5::default();
@@ -202,7 +202,7 @@ pub fn main() {
             let table = HashTable::new(2 << 20);
             let mut info =
                 SearchInfo::new(SELF_PLAY_DEPTH, &table).time_bank(TimeBank::flat(12_000));
-            const SELF_PLAY_DEPTH: usize = 4;
+            const SELF_PLAY_DEPTH: usize = 20;
             while game.game_result().is_none() {
                 match game {
                     TakGame::Standard5(ref mut board) => {
@@ -563,7 +563,6 @@ fn play_game_tei<E: Evaluator + Default + Send>(
     let table = HashTable::new(init.hash_size);
     let mut position_hashes = Vec::new();
     let mut info = SearchInfo::new(init.max_depth, &table);
-    // let mut eval = Box::new(crate::eval::Weights5::default());
 
     loop {
         let message = receiver.recv()?;
@@ -577,6 +576,7 @@ fn play_game_tei<E: Evaluator + Default + Send>(
                 if init.max_nodes > 0 {
                     info = info.set_max_nodes(init.max_nodes as u64, init.max_nodes as u64);
                 }
+                info = info.set_multi_pv(init.multi_pv);
                 info = info.input_stream(receiver.clone());
                 if let Some(mv_time) = go.movetime {
                     info = info.time_bank(TimeBank::flat(mv_time));
@@ -668,6 +668,7 @@ fn identify() {
     println!("option name Threads type spin default 1 min 1 max 8");
     println!("option name Hash type spin default 8 min 1 max 1024");
     println!("option name MaxNodes type spin default -1 min -1 max 10000000");
+    println!("option name MultiPV type spin default 1 min 1 max 8");
     println!("teiok");
 }
 
@@ -730,6 +731,9 @@ fn tei_loop() {
             } else if name == "Hash" {
                 init.hash_size = 1024 * 1024 * value.parse::<usize>().unwrap();
                 println!("Setting Hash to {}", init.hash_size);
+            } else if name == "MultiPV" {
+                init.multi_pv = value.parse().unwrap();
+                println!("Setting MultiPV to {}", init.multi_pv);
             }
         } else {
             println!("Unknown Tei Command: {}", buffer);
@@ -778,10 +782,11 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
                         }
                     }
                 }
-                let use_time = 55_000; // Todo better time management
+                let use_time = 12_000; // Todo better time management
                 info = SearchInfo::new(MAX_DEPTH, &table)
+                    .set_max_nodes(10000, 10000)
                     .time_bank(TimeBank::flat(use_time))
-                    .abort_depth(16);
+                    .abort_depth(64);
                 let res = topaz_tak::search::multi_search(&mut board, &mut eval, &mut info, 1);
                 if let Some(outcome) = res {
                     server_send
@@ -915,7 +920,7 @@ fn playtak_loop(engine_send: Sender<TeiCommand>, engine_recv: Receiver<String>) 
                                 com.write(s.as_bytes()).unwrap();
                                 goal = None;
                             } else if !live_seek && counter >= 5 {
-                                let s = format!("Seek 6 600 60 W {} 30 1 0 0 \n", PLAYTAK_KOMI);
+                                let s = format!("Seek 6 180 15 A {} 30 1 0 0 \n", PLAYTAK_KOMI);
                                 println!("Sending seek!");
                                 com.write(s.as_bytes()).unwrap();
                                 live_seek = true;
@@ -990,27 +995,28 @@ fn playtak_auth() -> Option<(String, String)> {
 }
 
 fn load_playtak_book() -> Option<&'static book::Book> {
-    use std::io::Read;
-    dotenv::dotenv().ok()?;
-    let mut pt_book = None;
-    for (key, value) in env::vars() {
-        if key == "PLAYTAK_BOOK" {
-            pt_book = Some(value);
-        }
-    }
-    let pt_book = pt_book?;
-    let mut vec = Vec::new();
-    if let Ok(mut file) = std::fs::File::open(&pt_book) {
-        let mut book_data = String::new();
-        file.read_to_string(&mut book_data).ok()?;
-        for line in book_data.lines() {
-            vec.push(line.to_string());
-        }
-        let book = book::load_book_data(vec);
-        Some(book)
-    } else {
-        None
-    }
+    None
+    // use std::io::Read;
+    // dotenv::dotenv().ok()?;
+    // let mut pt_book = None;
+    // for (key, value) in env::vars() {
+    //     if key == "PLAYTAK_BOOK" {
+    //         pt_book = Some(value);
+    //     }
+    // }
+    // let pt_book = pt_book?;
+    // let mut vec = Vec::new();
+    // if let Ok(mut file) = std::fs::File::open(&pt_book) {
+    //     let mut book_data = String::new();
+    //     file.read_to_string(&mut book_data).ok()?;
+    //     for line in book_data.lines() {
+    //         vec.push(line.to_string());
+    //     }
+    //     let book = book::load_book_data(vec);
+    //     Some(book)
+    // } else {
+    //     None
+    // }
 }
 
 // fn gen_magics() {
