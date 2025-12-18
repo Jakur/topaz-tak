@@ -15,9 +15,10 @@ use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
 use topaz_tak::eval::{Evaluator, Weights5, Weights6, NNUE6};
 use topaz_tak::proof::TinueSearch;
-use topaz_tak::search::{book, search, SearchInfo};
+use topaz_tak::search::{book, search, SearchHyper, SearchInfo};
 use topaz_tak::transposition_table::HashTable;
 use topaz_tak::*;
+const TUNING: bool = false;
 
 static SAVED_TPS: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     let x = [
@@ -576,7 +577,9 @@ fn play_game_tei<E: Evaluator + Default + Send>(
                 if init.max_nodes > 0 {
                     info = info.set_max_nodes(init.max_nodes as u64, init.max_nodes as u64);
                 }
-                info = info.set_multi_pv(init.multi_pv);
+                info = info
+                    .set_multi_pv(init.multi_pv)
+                    .with_hyper(init.hyper.clone());
                 info = info.input_stream(receiver.clone());
                 if let Some(mv_time) = go.movetime {
                     info = info.time_bank(TimeBank::flat(mv_time));
@@ -669,6 +672,13 @@ fn identify() {
     println!("option name Hash type spin default 8 min 1 max 1024");
     println!("option name MaxNodes type spin default -1 min -1 max 10000000");
     println!("option name MultiPV type spin default 1 min 1 max 8");
+    if TUNING {
+        println!("option name RFP type spin default 115 min 50 max 150");
+        println!("option name FP type spin default 50 min 30 max 100");
+        println!("option name RFPImp type spin default 35 min 0 max 50");
+        println!("option name ASP type spin default 55 min 45 max 80");
+        println!("option name Quiet type spin default 40 min -10 max 70");
+    }
     println!("teiok");
 }
 
@@ -734,6 +744,16 @@ fn tei_loop() {
             } else if name == "MultiPV" {
                 init.multi_pv = value.parse().unwrap();
                 println!("Setting MultiPV to {}", init.multi_pv);
+            } else if name == "RFP" {
+                init.hyper.rfp_margin = value.parse().unwrap();
+            } else if name == "FP" {
+                init.hyper.fp_margin = value.parse().unwrap();
+            } else if name == "RFPImp" {
+                init.hyper.improving_rfp_offset = value.parse().unwrap();
+            } else if name == "ASP" {
+                init.hyper.aspiration = value.parse().unwrap();
+            } else if name == "Quiet" {
+                init.hyper.quiet_score = value.parse().unwrap();
             }
         } else {
             println!("Unknown Tei Command: {}", buffer);
@@ -741,6 +761,12 @@ fn tei_loop() {
         buffer.clear();
     }
 }
+
+//         println!("option name RFP type spin default 115 min 50 max 150");
+// println!("option name FP type spin default 50 min 30 max 100");
+// println!("option name RFPImp type spin default 35 min 0 max 50");
+// println!("option name ASP type spin default 55 min 45 max 80");
+// println!("option name Quiet type spin default 40 min -10 max 70");
 
 const PLAYTAK_KOMI: u8 = 4;
 

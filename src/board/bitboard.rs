@@ -140,6 +140,7 @@ pub trait Bitboard:
     + std::ops::BitOrAssign
     + std::ops::BitOr<Output = Self>
     + std::ops::BitAnd<Output = Self>
+    + std::ops::BitAndAssign
     + std::ops::Sub<Output = Self>
     + std::ops::SubAssign
     + std::ops::Not<Output = Self>
@@ -227,6 +228,8 @@ pub trait Bitboard:
     /// Returns the board size that this bitboard corresponds to
     fn size() -> usize;
     fn simple_road_est(self) -> (i32, i32);
+    fn set_bit(self, bit_idx: usize) -> Self;
+    fn unset_bit(self, bit_idx: usize) -> Self;
     fn index_iter(self) -> BitIndexIterator<Self>;
 }
 
@@ -765,6 +768,12 @@ macro_rules! bitboard_impl {
             }
             fn index_iter(self) -> BitIndexIterator<Self> {
                 BitIndexIterator::new(self)
+            }
+            fn set_bit(self, bit_idx: usize) -> Self {
+                self | Self::index_to_bit(bit_idx)
+            }
+            fn unset_bit(self, bit_idx: usize) -> Self {
+                self & !(Self::index_to_bit(bit_idx))
             }
         }
     };

@@ -269,15 +269,18 @@ impl std::default::Default for SearchHyper {
     // fn default() -> Self {
     //     Self::new(139, 33, 43, 23, 59)
     // }
+    // fn default() -> Self {
+    //     Self {
+    //         rfp_margin: super::REVERSE_FUTILITY_MARGIN,
+    //         improving_rfp_offset: 35,
+    //         fp_margin: super::FUTILITY_MARGIN,
+    //         tempo_bonus: 0, // 134 ? or 100
+    //         aspiration: super::ASPIRATION_WINDOW,
+    //         quiet_score: 40,
+    //     }
+    // }
     fn default() -> Self {
-        Self {
-            rfp_margin: super::REVERSE_FUTILITY_MARGIN,
-            improving_rfp_offset: 35,
-            fp_margin: super::FUTILITY_MARGIN,
-            tempo_bonus: 0, // 134 ? or 100
-            aspiration: super::ASPIRATION_WINDOW,
-            quiet_score: 40,
-        }
+        Self::new(118, 47, 34, 0, 51, 34)
     }
 }
 

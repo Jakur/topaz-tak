@@ -15,6 +15,8 @@ pub mod search;
 pub mod transposition_table;
 
 use crate::board::{Board5, Board6, Board7};
+#[cfg(feature = "evaluation")]
+use crate::search::SearchHyper;
 
 #[cfg(feature = "evaluation")]
 #[derive(Clone)]
@@ -26,6 +28,7 @@ pub struct GameInitializer {
     pub num_threads: usize,
     pub max_nodes: i64,
     pub multi_pv: usize,
+    pub hyper: SearchHyper,
 }
 
 #[cfg(feature = "evaluation")]
@@ -39,6 +42,7 @@ impl GameInitializer {
             max_nodes: -1,
             num_threads: 1,
             multi_pv: 1,
+            hyper: SearchHyper::default(),
         }
     }
     pub fn get_board<E: eval::Evaluator + Default>(&self) -> (E::Game, E) {
@@ -80,6 +84,7 @@ impl std::default::Default for GameInitializer {
             add_noise: false,
             max_nodes: -1,
             multi_pv: 1,
+            hyper: SearchHyper::default(),
         }
     }
 }
