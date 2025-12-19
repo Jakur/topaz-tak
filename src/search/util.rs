@@ -232,7 +232,7 @@ impl HashHistory {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SearchHyper {
     pub rfp_margin: i32,
     pub improving_rfp_offset: i32,

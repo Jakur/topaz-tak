@@ -90,10 +90,8 @@ where
     let mut beta = 1_000_000;
     let mut moves: [SmartMoveBuffer; 50] = core::array::from_fn(|_| SmartMoveBuffer::new(0));
     let is_multi_pv = info.multi_pv > 1 && info.main_thread;
-    println!("{}", info.multi_pv);
-    // println!("{is_multi_pv}");
     let mut outcomes: Vec<SearchOutcome<T>> = Vec::new();
-    for depth in 1..=info.max_depth {
+    'outer: for depth in 1..=info.max_depth {
         // Abort if we are unlikely to finish the search at this depth
         if depth >= info.early_abort_depth {
             let elapsed = info.start_time.elapsed().as_millis();
@@ -138,7 +136,7 @@ where
                     let updated = SearchOutcome::new(data.score, data.pv, data.depth, info);
                     outcome = Some(updated);
                 }
-                break;
+                break 'outer;
             }
             if pv_idx == 0 {
                 outcome = Some(SearchOutcome::new(
@@ -180,7 +178,11 @@ where
             }
             // Stop wasting time
             if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
-                return outcome;
+                if pv_idx == 0 {
+                    return outcome;
+                } else {
+                    break;
+                }
             }
         }
     }
