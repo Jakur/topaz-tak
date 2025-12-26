@@ -221,6 +221,10 @@ pub trait Bitboard:
     fn west_bits(self, steps: usize) -> Self;
     // Returns a mask of all bits (including the source) orthogonal to the input index
     fn orthogonal(index: usize) -> Self;
+    fn north_of_sq(sq: usize) -> Self;
+    fn east_of_sq(sq: usize) -> Self;
+    fn south_of_sq(sq: usize) -> Self;
+    fn west_of_sq(sq: usize) -> Self;
     fn top() -> Self;
     fn bottom() -> Self;
     fn left() -> Self;
@@ -503,7 +507,9 @@ macro_rules! bitboard_impl {
             const BIT_TO_INDEX: [usize; 64] = Self::build_bit_to_index_table();
             const INDEX_TO_BIT: [u64; Self::TABLE_LENGTH] = Self::build_index_to_bit_table();
             const NORTH_TABLE: [Self; Self::TABLE_LENGTH] = Self::build_north_table();
+            const EAST_TABLE: [Self; Self::TABLE_LENGTH] = Self::build_east_table();
             const SOUTH_TABLE: [Self; Self::TABLE_LENGTH] = Self::build_south_table();
+            const WEST_TABLE: [Self; Self::TABLE_LENGTH] = Self::build_west_table();
             const ORTH_TABLE: [Self; Self::TABLE_LENGTH] = Self::build_orth_table();
             const fn ray_north(bits: u64) -> u64 {
                 let mut prev = Self::new(0);
@@ -557,6 +563,26 @@ macro_rules! bitboard_impl {
                 while i != arr.len() {
                     let bit = 1 << Self::INDEX_TO_BIT[i];
                     arr[i] = Self::new(Self::ray_south(bit) & !bit);
+                    i += 1;
+                }
+                arr
+            }
+            const fn build_east_table() -> [Self; Self::TABLE_LENGTH] {
+                let mut arr = [Self::ZERO; Self::TABLE_LENGTH];
+                let mut i = 0;
+                while i != arr.len() {
+                    let bit = 1 << Self::INDEX_TO_BIT[i];
+                    arr[i] = Self::new(Self::ray_east(bit) & !bit);
+                    i += 1;
+                }
+                arr
+            }
+            const fn build_west_table() -> [Self; Self::TABLE_LENGTH] {
+                let mut arr = [Self::ZERO; Self::TABLE_LENGTH];
+                let mut i = 0;
+                while i != arr.len() {
+                    let bit = 1 << Self::INDEX_TO_BIT[i];
+                    arr[i] = Self::new(Self::ray_west(bit) & !bit);
                     i += 1;
                 }
                 arr
@@ -738,6 +764,18 @@ macro_rules! bitboard_impl {
             }
             fn orthogonal(index: usize) -> Self {
                 Self::ORTH_TABLE[index]
+            }
+            fn north_of_sq(sq: usize) -> Self {
+                Self::NORTH_TABLE[sq]
+            }
+            fn east_of_sq(sq: usize) -> Self {
+                Self::EAST_TABLE[sq]
+            }
+            fn south_of_sq(sq: usize) -> Self {
+                Self::SOUTH_TABLE[sq]
+            }
+            fn west_of_sq(sq: usize) -> Self {
+                Self::WEST_TABLE[sq]
             }
             fn top() -> Self {
                 Self::TOP

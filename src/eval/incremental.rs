@@ -1,4 +1,7 @@
-use crate::{pop_lowest, Piece};
+use crate::{
+    board::{Bitboard6, Board6, StackIterator},
+    pop_lowest, Color, Piece, Position, Stack, TakBoard,
+};
 
 pub const STACK_DEPTH: usize = 10;
 pub const HIDDEN_SIZE: usize = 512;
@@ -23,7 +26,7 @@ pub static NNUE: Network = unsafe {
     std::mem::transmute(*bytes)
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ValidPiece(pub u8);
 
 impl ValidPiece {
@@ -205,10 +208,10 @@ impl TakSimple6 {
     // Squares + Side + Reserves
     pub const NUM_INPUTS: usize = TakSimple6::SQUARE_INPUTS + 8 + 80; // Pad to 1024
 
-    pub fn handle_features<F: FnMut(usize, usize)>(&self, pos: &BoardData, mut f: F) {
+    pub fn handle_features<F: FnMut(usize, usize), T: PieceIterator>(&self, pos: T, mut f: F) {
         let mut reserves: [usize; 2] = [31, 31];
-        for (piece, square, depth_idx) in pos.into_iter() {
-            let c = (piece.is_white() ^ pos.white_to_move) as usize; // 0 if matches, else 1
+        for (piece, square, depth_idx) in pos.piece_iter() {
+            let c = (piece.is_white() ^ pos.white_to_move()) as usize; // 0 if matches, else 1
             reserves[c] -= 1;
             let location = usize::from(piece.without_color() + depth_idx);
             let sq = usize::from(square);
@@ -219,7 +222,7 @@ impl TakSimple6 {
         }
         // let white_res_adv = (31 + reserves[0] - reserves[1]).clamp(23, 39);
         // let black_res_adv = (31 + reserves[1] - reserves[0]).clamp(23, 39);
-        if pos.white_to_move {
+        if pos.white_to_move() {
             // White to move
             f(
                 Self::SQUARE_INPUTS + 8 + reserves[0],
@@ -254,6 +257,92 @@ impl IntoIterator for BoardData {
     }
 }
 
+pub trait PieceIterator {
+    fn piece_iter(&self) -> impl Iterator<Item = (ValidPiece, u8, u8)>;
+    fn white_to_move(&self) -> bool;
+}
+
+impl PieceIterator for &BoardData {
+    fn piece_iter(&self) -> impl Iterator<Item = (ValidPiece, u8, u8)> {
+        self.into_iter()
+    }
+
+    fn white_to_move(&self) -> bool {
+        self.white_to_move
+    }
+}
+
+impl PieceIterator for &Board6 {
+    fn piece_iter(&self) -> impl Iterator<Item = (ValidPiece, u8, u8)> {
+        Board6Iterator::new(self)
+    }
+
+    fn white_to_move(&self) -> bool {
+        self.side_to_move() == Color::White
+    }
+}
+
+struct Board6Iterator<'a> {
+    board: &'a Board6,
+    valid: std::iter::Chain<
+        crate::eval::BitIndexIterator<Bitboard6>,
+        crate::eval::BitIndexIterator<Bitboard6>,
+    >, // Absolutely beautiful type
+    stack: Option<&'a Stack>,
+    depth: u8,
+}
+
+impl<'a> Board6Iterator<'a> {
+    fn new(board: &'a Board6) -> Self {
+        let mut valid = board
+            .active_stacks(Color::White)
+            .chain(board.active_stacks(Color::Black));
+        let stack = valid.next().map(|idx| &board.board()[idx]);
+        Self {
+            board,
+            valid,
+            stack,
+            depth: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for Board6Iterator<'a> {
+    type Item = (ValidPiece, u8, u8); // PieceType, Square, Depth
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(ref mut stack) = self.stack {
+            if self.depth >= 10 {
+                self.depth = 0;
+                self.stack = self.valid.next().map(|idx| &self.board.board()[idx]);
+                return self.next();
+            }
+            let depth = self.depth as usize;
+            if let Some(next_piece) = stack.from_top(depth) {
+                let out_piece = match next_piece {
+                    Piece::WhiteFlat => WHITE_FLAT,
+                    Piece::WhiteWall => WHITE_WALL,
+                    Piece::WhiteCap => WHITE_CAP,
+                    Piece::BlackFlat => BLACK_FLAT,
+                    Piece::BlackWall => BLACK_WALL,
+                    Piece::BlackCap => BLACK_CAP,
+                };
+                self.depth += 1;
+                return Some((
+                    out_piece,
+                    stack.get_index(),
+                    TakBoardIter::DEPTH_TABLE[depth as usize],
+                ));
+            } else {
+                self.depth = 0;
+                self.stack = self.valid.next().map(|idx| &self.board.board()[idx]);
+                return self.next();
+            }
+        }
+        None
+    }
+}
+
 pub struct TakBoardIter {
     board: BoardData,
     idx: usize,
@@ -261,10 +350,13 @@ pub struct TakBoardIter {
     depth: u8,
 }
 
+impl TakBoardIter {
+    pub(crate) const DEPTH_TABLE: [u8; 10] = [0, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+}
+
 impl Iterator for TakBoardIter {
     type Item = (ValidPiece, u8, u8); // PieceType, Square, Depth
     fn next(&mut self) -> Option<Self::Item> {
-        const DEPTH_TABLE: [u8; 10] = [0, 3, 4, 5, 6, 7, 8, 9, 10, 11];
         if self.idx > self.board.data.len() {
             return None;
         }
@@ -284,7 +376,7 @@ impl Iterator for TakBoardIter {
         }
         self.idx += 1;
         self.last = square;
-        Some((piece, square, DEPTH_TABLE[self.depth as usize]))
+        Some((piece, square, Self::DEPTH_TABLE[self.depth as usize]))
     }
 }
 
@@ -349,9 +441,9 @@ pub struct NNUE6 {
 }
 
 impl NNUE6 {
-    pub fn incremental_eval(&mut self, takboard: BoardData) -> i32 {
+    pub fn incremental_eval(&mut self, takboard: &Board6) -> i32 {
         let (ours, theirs) = build_features(takboard);
-        let (old_ours, old_theirs) = if takboard.white_to_move {
+        let (old_ours, old_theirs) = if takboard.white_to_move() {
             (&self.white.0, &self.white.1)
         } else {
             (&self.black.0, &self.black.1)
@@ -372,7 +464,7 @@ impl NNUE6 {
         };
         // Output
         let eval = NNUE.evaluate(&ours.vec, &theirs.vec, ours.state.clone().into_iter());
-        if takboard.white_to_move {
+        if takboard.white_to_move() {
             self.white = (ours, theirs);
         } else {
             self.black = (ours, theirs);
@@ -381,7 +473,7 @@ impl NNUE6 {
     }
     #[cfg(test)]
     pub(crate) fn manual_eval(takboard: BoardData) -> i32 {
-        let (ours, theirs) = build_features(takboard);
+        let (ours, theirs) = build_features(&takboard);
         let ours = Incremental::fresh_new(&NNUE, ours);
         let theirs = Incremental::fresh_new(&NNUE, theirs);
         let eval = NNUE.evaluate(&ours.vec, &theirs.vec, ours.state.clone().into_iter());
@@ -405,11 +497,11 @@ impl Default for NNUE6 {
     }
 }
 
-fn build_features(takboard: BoardData) -> (IncrementalState, IncrementalState) {
+fn build_features<P: PieceIterator>(takboard: P) -> (IncrementalState, IncrementalState) {
     let mut ours = IncrementalState::empty();
     let mut theirs = IncrementalState::empty();
     let simple = TakSimple6 {};
-    simple.handle_features(&takboard, |x, y| {
+    simple.handle_features(takboard, |x, y| {
         ours.add_feature(x as u16);
         theirs.add_feature(y as u16);
     });
@@ -629,6 +721,17 @@ mod tests {
     use crate::board::Board6;
     use crate::board::TakBoard;
     use crate::eval::build_nn_repr;
+    use crate::eval::incremental::Board6Iterator;
+    #[test]
+    fn nn_repr_equivalence() {
+        let tps = "x4,1,1/1,12S,2,2,1,1/1,1221S,1,21C,1,x/1,21112C,2,1,22221S,2/2,2,2,2S,1,2/x2,21,21,x,2 1 32";
+        let board = Board6::try_from_tps(tps).unwrap();
+        let mut vec: Vec<_> = build_nn_repr(&board).into_iter().collect();
+        vec.sort();
+        let mut vec2: Vec<_> = Board6Iterator::new(&board).collect();
+        vec2.sort();
+        assert_eq!(vec, vec2);
+    }
     #[test]
     fn check_rotation() {
         let tps = "2,x3,1,x/2,1,1,x,2112C,2/2,2,2,1S,1S,2/2,2,1,21,1,2/1,212S,1C,x,12S,1/2,x,1,1S,12,1 1 4";

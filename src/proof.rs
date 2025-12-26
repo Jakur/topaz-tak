@@ -409,7 +409,11 @@ where
                 (true, true) | (false, false) => {
                     // We are on the winning side, pick the best valid move
                     let mut moves = Vec::new();
-                    if let Some(mv) = self.board.can_make_road(&mut moves, None) {
+                    if let Some(mv) = self
+                        .board
+                        .can_make_road(&mut moves, None)
+                        .any_move(self.board.side_to_move())
+                    {
                         pv.add_move(mv);
                         break;
                     }
@@ -557,16 +561,19 @@ where
     }
     fn defender_responses(board: &mut T, hint: Option<&[GameMove]>) -> DefenderOutcome {
         let mut moves = Vec::new();
-        if let Some(m) = board.can_make_road(&mut moves, hint) {
+        let side = board.side_to_move();
+        if let Some(m) = board.can_make_road(&mut moves, hint).any_move(side) {
             return DefenderOutcome::CanWin(m);
         }
         moves.clear();
-        let side = board.side_to_move();
         let enemy = !board.side_to_move();
         let has_cap = board.caps_reserve(side) > 0;
         // Todo optimization: only check if there is only one flat threat
         board.null_move();
-        let threat = board.can_make_road(&mut moves, None).unwrap();
+        let threat = board
+            .can_make_road(&mut moves, None)
+            .any_move(board.side_to_move())
+            .unwrap();
         board.rev_null_move();
         moves.clear();
         if threat.is_place_move() {
@@ -653,7 +660,10 @@ where
     fn tinue_evaluate(&mut self, depth: usize) -> AttackerOutcome {
         let pos = &mut self.board;
         let mut moves = Vec::new();
-        if let Some(m) = pos.can_make_road(&mut moves, Some(self.top_moves[depth].get_best())) {
+        if let Some(m) = pos
+            .can_make_road(&mut moves, Some(self.top_moves[depth].get_best()))
+            .any_move(pos.active_player())
+        {
             if m.is_stack_move() {
                 self.top_moves[depth].add_move(m);
             }
@@ -681,7 +691,11 @@ where
         attacker: bool,
     ) -> Result<()> {
         let mut moves = Vec::new();
-        if let Some(mv) = self.board.can_make_road(&mut moves, None) {
+        if let Some(mv) = self
+            .board
+            .can_make_road(&mut moves, None)
+            .any_move(self.board.side_to_move())
+        {
             moves = vec![mv];
         } else {
             moves.clear();

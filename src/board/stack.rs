@@ -18,6 +18,9 @@ impl Stack {
             top_piece: Piece::WhiteFlat,
         }
     }
+    pub(crate) fn get_index(&self) -> u8 {
+        self.index
+    }
     pub(crate) fn set_index(&mut self, index: usize) {
         self.index = index as u8;
     }
@@ -383,6 +386,9 @@ pub struct StackIterator<'a> {
 impl<'a> StackIterator<'a> {
     fn new(stack: &'a Stack, count: usize) -> Self {
         Self { stack, count }
+    }
+    pub(crate) fn get_stack(&'a self) -> &'a Stack {
+        self.stack
     }
 }
 

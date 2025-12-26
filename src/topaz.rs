@@ -176,6 +176,7 @@ pub fn main() {
             let total: usize = SAVED_TPS
                 .values()
                 .map(|tps| {
+                    println!("TPS: {tps}");
                     let table = HashTable::new(GameInitializer::default().hash_size);
                     let mut info = SearchInfo::new(12, &table).quiet(false).abort_depth(12);
                     if let Ok(mut board) = Board6::try_from_tps(*tps) {

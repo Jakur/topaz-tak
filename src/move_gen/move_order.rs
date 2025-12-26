@@ -168,7 +168,7 @@ impl SmartMoveBuffer {
                 dest = board.index(step.index);
                 let covered = dest.top();
                 let covering = stack_data[offset];
-                let bit_idx = 1 << step.index;
+                // let bit_idx = 1 << step.index;
                 if let Some(piece) = covered {
                     if piece.owner() == active_side {
                         if piece.is_flat() {
@@ -247,6 +247,7 @@ impl SmartMoveBuffer {
         info: &mut SearchInfo,
         check_tak: bool,
     ) {
+        let mut known_tak_threats = T::Bits::ZERO;
         let side = board.side_to_move();
         for idx in board.empty_tiles() {
             let mut flat_score = 100 + info.hist_moves.flat_score(idx, side);
@@ -280,16 +281,28 @@ impl SmartMoveBuffer {
             }
             let mut tak_score = 0;
             if check_tak {
-                let mv = GameMove::from_placement(Piece::flat(side), idx);
-                let rev = board.do_move(mv);
-                board.null_move();
-                let buffer = info.buffer();
-                if let Some(_winning) = board.can_make_road(buffer, None) {
+                // If one flat placement enables another one to win, we can cache it
+                if (known_tak_threats & T::Bits::index_to_bit(idx)).nonzero() {
                     tak_score += TAK_SORT;
+                } else {
+                    let mv = GameMove::from_placement(Piece::flat(side), idx);
+                    let rev = board.do_move(mv);
+                    board.null_move();
+                    let buffer = info.buffer();
+                    match board.can_make_road(buffer, None) {
+                        crate::board::TakThreat::Empty => {}
+                        crate::board::TakThreat::FlatPlacement(placements) => {
+                            known_tak_threats |= placements;
+                            tak_score += TAK_SORT;
+                        }
+                        crate::board::TakThreat::StackMovement(_) => {
+                            tak_score += TAK_SORT;
+                        }
+                    }
+                    board.rev_null_move();
+                    board.reverse_move(rev);
+                    buffer.clear();
                 }
-                board.rev_null_move();
-                board.reverse_move(rev);
-                buffer.clear();
             }
             if board.caps_reserve(board.side_to_move()) > 0 && board.ply() >= 4 {
                 self.moves.push(ScoredMove::new(

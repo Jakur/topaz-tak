@@ -35,7 +35,7 @@ pub trait TakBoard:
         &self,
         storage: &mut Vec<GameMove>,
         hint: Option<&[GameMove]>,
-    ) -> Option<GameMove>;
+    ) -> TakThreat<Self::Bits>;
     fn move_num(&self) -> usize;
     fn flat_game(&self) -> Option<GameResult>;
     fn zobrist(&self) -> u64;
@@ -195,7 +195,7 @@ macro_rules! board_impl {
                 for m in legal_moves.iter().copied() {
                     let rev = self.do_move(m);
                     self.null_move();
-                    if let Some(_winning) = self.can_make_road(&mut stack_moves, hint) {
+                    if self.can_make_road(&mut stack_moves, hint).has_win() {
                         tak_threats.push(m);
                     }
                     self.rev_null_move();
@@ -208,12 +208,12 @@ macro_rules! board_impl {
                 &self,
                 storage: &mut Vec<GameMove>,
                 hint: Option<&[GameMove]>,
-            ) -> Option<GameMove> {
+            ) -> TakThreat<Self::Bits> {
                 let player = self.active_player();
                 let road_pieces = self.bits.road_pieces(player);
                 // Check placement
-                let place_road = find_placement_road(player, road_pieces, self.bits.empty());
-                if place_road.is_some() {
+                let place_road = find_placement_road(road_pieces, self.bits.empty());
+                if let TakThreat::FlatPlacement(_) = place_road {
                     return place_road;
                 }
                 // Check stack movements
@@ -221,7 +221,7 @@ macro_rules! board_impl {
                     for m in suggestions.iter().copied() {
                         if m.is_stack_move() && self.legal_move(m) {
                             if self.road_stack_throw(road_pieces, m) {
-                                return Some(m);
+                                return TakThreat::StackMovement(m);
                             }
                         }
                     }
@@ -259,10 +259,10 @@ macro_rules! board_impl {
                 generate_masked_stack_moves(self, storage, stacks);
                 for m in storage.iter().copied() {
                     if self.road_stack_throw(road_pieces, m) {
-                        return Some(m);
+                        return TakThreat::StackMovement(m);
                     }
                 }
-                None
+                TakThreat::Empty
             }
             fn move_num(&self) -> usize {
                 self.move_num
@@ -698,16 +698,51 @@ board_impl![Board5, Bitboard5, 5, 21, 1];
 board_impl![Board6, Bitboard6, 6, 30, 1];
 board_impl![Board7, Bitboard7, 7, 40, 2];
 
-pub fn find_placement_road<T>(player: Color, road_pieces: T, empty: T) -> Option<GameMove>
+pub enum TakThreat<T>
+where
+    T: Bitboard,
+{
+    Empty,
+    FlatPlacement(T),
+    StackMovement(GameMove),
+}
+
+impl<T: Bitboard> TakThreat<T> {
+    pub fn has_win(&self) -> bool {
+        match self {
+            TakThreat::Empty => false,
+            TakThreat::FlatPlacement(_) => true,
+            TakThreat::StackMovement(_) => true,
+        }
+    }
+    pub fn any_move(&self, player: Color) -> Option<GameMove> {
+        match self {
+            TakThreat::Empty => None,
+            TakThreat::FlatPlacement(bits) => {
+                let sq_index = bits.lowest_index();
+                Some(GameMove::from_placement(Piece::flat(player), sq_index))
+            }
+            TakThreat::StackMovement(game_move) => Some(*game_move),
+        }
+    }
+    pub fn all_flat_placements(&self) -> T {
+        match self {
+            TakThreat::Empty => T::ZERO,
+            TakThreat::FlatPlacement(bits) => *bits,
+            TakThreat::StackMovement(_) => T::ZERO,
+        }
+    }
+}
+
+pub fn find_placement_road<T>(road_pieces: T, empty: T) -> TakThreat<T>
 where
     T: Bitboard,
 {
     let valid = road_pieces.critical_squares() & empty;
     if valid != T::ZERO {
-        let sq_index = valid.lowest_index();
-        Some(GameMove::from_placement(Piece::flat(player), sq_index))
+        TakThreat::FlatPlacement(valid)
     } else {
-        None
+        TakThreat::Empty
     }
 }
 
@@ -804,7 +839,10 @@ mod test {
         let rev = board.do_move(GameMove::try_from_ptn("2d6-11", &board).unwrap());
         board.null_move();
         let mut storage = Vec::new();
-        assert!(board.can_make_road(&mut storage, None).is_some());
+        assert!(board
+            .can_make_road(&mut storage, None)
+            .any_move(board.side_to_move())
+            .is_some());
         board.rev_null_move();
         board.reverse_move(rev);
         let tak: Vec<_> = board

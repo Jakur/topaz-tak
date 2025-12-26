@@ -29,14 +29,9 @@ const LMR_REDUCE_ROOT: bool = true; // probably shouldn't
 const PV_SEARCH_ENABLED: bool = true; // no speedup, worse playing strength
 const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF
 
-const REVERSE_FUTILITY_MARGIN: i32 = 115;
-const FUTILITY_MARGIN: i32 = 50;
-// const FUTILITY_MARGIN: i32 = 42;
-
 // aspiration window parameters
 // CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
 const ASPIRATION_ENABLED: bool = true; // Requires stable search, it's close
-const ASPIRATION_WINDOW: i32 = 55;
 
 // internal iterative deepening parameters TODO not tuned yet
 // doesn't have much cost attached to it, so why not
@@ -186,8 +181,6 @@ where
             }
         }
     }
-    info.hist_moves.clear();
-    info.counter_moves.clear();
     outcome
 }
 
@@ -295,7 +288,7 @@ where
 
         if board
             .can_make_road(&mut info.extra_move_buffer, None)
-            .is_some()
+            .has_win()
         {
             info.extra_move_buffer.clear();
             return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
@@ -395,7 +388,10 @@ where
     moves.clear();
     let mut has_win = false;
     if board.ply() >= 6 {
-        if let Some(mv) = board.can_make_road(&mut info.extra_move_buffer, None) {
+        if let Some(mv) = board
+            .can_make_road(&mut info.extra_move_buffer, None)
+            .any_move(board.side_to_move())
+        {
             has_win = true;
             moves.add_scored(mv, 10000);
         }
