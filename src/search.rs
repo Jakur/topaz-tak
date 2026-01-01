@@ -114,15 +114,35 @@ where
             );
             if ASPIRATION_ENABLED {
                 if (best_score <= alpha) || (best_score >= beta) {
+                    let diff = beta - alpha;
                     best_score = alpha_beta(
                         board,
                         eval,
                         info,
                         SearchData::new(
-                            -1_000_000, 1_000_000, depth, true, None, 0, false, true, true,
+                            alpha - 2 * diff,
+                            beta + 2 * diff,
+                            depth,
+                            true,
+                            None,
+                            0,
+                            false,
+                            true,
+                            true,
                         ),
                         &mut moves,
-                    )
+                    );
+                    if (best_score <= alpha) || (best_score >= beta) {
+                        best_score = alpha_beta(
+                            board,
+                            eval,
+                            info,
+                            SearchData::new(
+                                -1_000_000, 1_000_000, depth, true, None, 0, false, true, true,
+                            ),
+                            &mut moves,
+                        )
+                    }
                 }
                 if pv_idx == 0 {
                     alpha = best_score - info.hyper.aspiration;
@@ -365,8 +385,8 @@ where
         raw_v
     };
     // 1 endgame, 0 early game
-    let phase = (board.pieces_reserve(Color::White) < 10 || board.pieces_reserve(Color::Black) < 10)
-        as usize;
+    let deep_endgame =
+        board.pieces_reserve(Color::White) == 1 || board.pieces_reserve(Color::Black) == 1;
     // (R)FP
     let eval = if depth <= 3 && !is_pv {
         // Reverse futility pruning
@@ -645,10 +665,8 @@ where
                 && mv_order_score < 500 // Not a flat placement tak move
                 && (LMR_REDUCE_PV || !is_pv)
                 && (LMR_REDUCE_ROOT || !is_root)
-            // && !tak_history.consecutive(ply_depth)
             {
                 reduced_depth = moves.get_lmr_reduced_depth(depth, cut_node, is_pv);
-                // reduced_depth -= 2;
                 needs_re_search_on_alpha = true;
             }
             let next_beta = -alpha;
