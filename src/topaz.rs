@@ -614,7 +614,7 @@ fn play_game_tei<E: Evaluator + Default + Send>(
                 );
                 // let res = topaz_tak::search::search(&mut board, &mut eval, &mut info);
                 if let Some(outcome) = res {
-                    println!("info {}", outcome);
+                    println!("{}", outcome);
                     println!(
                         "bestmove {}",
                         outcome
