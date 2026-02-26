@@ -146,12 +146,41 @@ pub fn generate_masked_stack_moves<T: TakBoard, B: MoveBuffer>(
             let max_steps = limits.steps[dir];
             let max_pieces = std::cmp::min(T::SIZE, stack_height);
             if limits.can_crush[dir] {
-                directional_crush_moves(moves, dir_move, max_steps, max_pieces - 1);
+                // directional_crush_moves_old(moves, dir_move, max_steps, max_pieces - 1);
+                directional_crush_moves(moves, dir_move, max_steps, max_pieces);
             }
             if max_steps == 0 {
                 continue;
             }
             directional_stack_moves(moves, dir_move, max_steps, max_pieces);
+        }
+        // moves.add_limit(limits);
+    }
+}
+
+/// Generates all legal sliding movements for only the provided stacks
+#[cfg(test)]
+pub fn generate_masked_stack_moves_old<T: TakBoard, B: MoveBuffer>(
+    board: &T,
+    moves: &mut B,
+    stacks: BitIndexIterator<T::Bits>,
+) {
+    for index in stacks {
+        let stack_height = board.index(index).len();
+        let start_move = GameMove(index as u32);
+        let limits = find_move_limits(board, index);
+        for dir in 0..4 {
+            let dir_move = start_move.set_direction(dir as u32);
+            let max_steps = limits.steps[dir];
+            let max_pieces = std::cmp::min(T::SIZE, stack_height);
+            if limits.can_crush[dir] {
+                directional_crush_moves_old(moves, dir_move, max_steps, max_pieces - 1);
+                // directional_crush_moves(moves, dir_move, max_steps, max_pieces);
+            }
+            if max_steps == 0 {
+                continue;
+            }
+            directional_stack_moves_old(moves, dir_move, max_steps, max_pieces);
         }
         // moves.add_limit(limits);
     }
@@ -223,6 +252,9 @@ impl GameMove {
     pub const fn slide_bits(self) -> u32 {
         let bits = self.0 & 0x1FF000;
         bits >> 12
+    }
+    pub fn set_slide_bits(self, slide: u32) -> Self {
+        Self(self.0 | slide << 12)
     }
     /// Counts the number of forward steps taken by a sliding move
     pub fn count_steps(self) -> u8 {
@@ -624,9 +656,99 @@ fn find_dir_limit<B, F>(
     limits.steps[dir] = counter;
 }
 
+// struct SlidePatternMap {
+//     data: [SlidePattern; 255],
+//     starts: [usize; 8],
+// }
+
+// impl SlidePatternMap {
+//     // fn foo(&self, pop_count: usize) -> &[SlidePattern] {
+//     //     let idx = pop_count - 1;
+//     //     if pop_count == 8 {
+//     //         // todo what is this const number above?
+//     //         &self.data[self.starts[idx]..]
+//     //     } else {
+//     //         let next_idx = idx + 1;
+//     //         &self.data[self.starts[idx]..self.starts[next_idx]]
+//     //     }
+//     // }
+//     fn iterate_slides<'a>(&'a self, pop_count: usize) -> impl Iterator<Item = &'a SlidePattern> {
+//         let idx = pop_count - 1;
+//         let slice = if pop_count == 8 {
+//             &self.data[self.starts[idx]..]
+//         } else {
+//             let next_idx = idx + 1;
+//             &self.data[self.starts[idx]..self.starts[next_idx]]
+//         };
+//         slice.iter()
+//     }
+// }
+
+// #[derive(Debug, Clone, Copy)]
+// struct SlidePattern {
+//     slide_bits: u16,
+//     pop_count: u8,
+//     pickup_pieces: u8,
+// }
+
+// impl SlidePattern {
+//     const fn new(slide_bits: u16, pop_count: u8, pickup_pieces: u8) -> Self {
+//         Self {
+//             slide_bits,
+//             pop_count,
+//             pickup_pieces,
+//         }
+//     }
+// }
+
+// const fn generate_stack_sliders() -> SlidePatternMap {
+//     let mut idx = 0;
+//     let mut data = [SlidePattern::new(0, 255, 0); 255];
+//     let mut starts = [0; 8];
+//     let mut target_count = 1;
+//     // Radix "Sort"
+//     while target_count <= 8 {
+//         let mut x = 1u32;
+//         starts[target_count as usize - 1] = idx;
+//         while x < 1 << 8 {
+//             let pop_count = x.count_ones();
+//             if pop_count == target_count {
+//                 data[idx] = SlidePattern::new(x as u16, pop_count as u8, x.ilog2() as u8 + 1);
+//                 idx += 1;
+//             }
+//             x += 1;
+//         }
+//         target_count += 1;
+//     }
+//     SlidePatternMap { data, starts }
+// }
+
+// /// Find all stack moves for a single stack in one direction. Calls the recursive
+// /// function [recursive_stack_moves] 1..=pieces_available times.
+// pub fn directional_stack_moves2<B: MoveBuffer>(
+//     moves: &mut B,
+//     init_move: GameMove,
+//     max_move: u8,
+//     pieces_available: usize,
+// ) {
+//     const MAP: SlidePatternMap = generate_stack_sliders();
+//     for pop_count in 1..=max_move {
+//         for mv in MAP.iterate_slides(pop_count as usize) {
+//             if mv.slide_bits >= 1 << pieces_available {
+//                 break;
+//             }
+//             moves.add_move(
+//                 init_move
+//                     .set_number(mv.pickup_pieces as u32)
+//                     .set_slide_bits(mv.slide_bits as u32),
+//             )
+//         }
+//     }
+// }
+
 /// Find all stack moves for a single stack in one direction. Calls the recursive
 /// function [recursive_stack_moves] 1..=pieces_available times.
-pub fn directional_stack_moves<B: MoveBuffer>(
+pub fn directional_stack_moves_old<B: MoveBuffer>(
     moves: &mut B,
     init_move: GameMove,
     max_move: u8,
@@ -642,6 +764,23 @@ pub fn directional_stack_moves<B: MoveBuffer>(
     }
 }
 
+/// Find all stack moves for a single stack in one direction. Calls the recursive
+/// function [recursive_stack_moves] 1..=pieces_available times.
+pub fn directional_stack_moves<B: MoveBuffer>(
+    moves: &mut B,
+    init_move: GameMove,
+    max_move: u8,
+    pieces_available: usize,
+) {
+    for x in 1u32..1 << pieces_available {
+        let pop_count = x.count_ones();
+        if pop_count > max_move as u32 {
+            continue;
+        }
+        moves.add_move(init_move.set_number(x.ilog2() + 1).set_slide_bits(x));
+    }
+}
+
 /// Find all crush moves for a single stack in one direction. The crush tile has
 /// index max_move + 1 and only a lone capstone can crush a wall, so we set
 /// the corresponding last tile and wall crush bits before recursing. Calls the
@@ -649,6 +788,48 @@ pub fn directional_stack_moves<B: MoveBuffer>(
 /// This is more restrictive than the condition on [directional_stack_moves] because
 /// one flat must be placed for tile traversed.
 pub fn directional_crush_moves<B: MoveBuffer>(
+    moves: &mut B,
+    init_move: GameMove,
+    max_steps: u8,
+    pieces_available: usize,
+) {
+    let init_move = init_move.set_crush();
+    // let init_move = init_move.set_crush().set_tile(max_steps as usize + 1, 1);
+    if max_steps == 0 {
+        moves.add_move(init_move.set_number(1).set_next_tile(1));
+        return;
+    }
+    let start_slide: u32 = 1;
+    // let start_slide: u32 = (1 << max_steps) | (1 << max_steps - 1);
+    for x in start_slide..1 << pieces_available {
+        let log = x.ilog2();
+        let mask = 1 << log | (1 << (log - 1));
+        if mask & x != mask {
+            continue;
+        }
+        let pop_count = x.count_ones();
+        if pop_count != (max_steps + 1) as u32 {
+            continue;
+        }
+        moves.add_move(init_move.set_number(log + 1).set_slide_bits(x));
+    }
+    // Todo figure out upper bound for number of pieces to take to save some cycles?
+    // for take_pieces in max_steps as u32..pieces_available as u32 + 1 {
+    //     recursive_crush_moves(
+    //         moves,
+    //         init_move.set_number(take_pieces + 1),
+    //         max_steps,
+    //         take_pieces,
+    //     );
+    // }
+}
+/// Find all crush moves for a single stack in one direction. The crush tile has
+/// index max_move + 1 and only a lone capstone can crush a wall, so we set
+/// the corresponding last tile and wall crush bits before recursing. Calls the
+/// recursive function [recursive_crush_moves] for all legal initial stack sizes.
+/// This is more restrictive than the condition on [directional_stack_moves] because
+/// one flat must be placed for tile traversed.
+pub fn directional_crush_moves_old<B: MoveBuffer>(
     moves: &mut B,
     init_move: GameMove,
     max_steps: u8,
@@ -748,9 +929,122 @@ pub const fn long_slide(mv: GameMove) -> u32 {
 mod test {
     use crate::board::Board6;
     use crate::Position;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use super::*;
+
+    #[test]
+    pub fn aaa() {
+        eprintln!("{}", 22u32.ilog2());
+        let board = Board6::try_from_tps(
+            "2,2,2,121S,x,2/21,1,2,x,121C,1/x,1,1,x,2S,1/x,1,2,11122C,1,x/x2,2,x,1,x/1,x3,1,x 2 22",
+        )
+        .unwrap();
+        let mut moves: Vec<GameMove> = Vec::new();
+        generate_all_moves(&board, &mut moves);
+        let crushes: Vec<_> = moves
+            .iter()
+            .copied()
+            .filter(|x| x.is_stack_move() && x.crush())
+            .collect();
+        for crush in crushes {
+            eprintln!("{}, {}", crush.to_ptn::<Board6>(), crush.slide_bits());
+        }
+    }
+
+    // #[test]
+    // pub fn foofoobar() {
+    //     let sliders_map = generate_stack_sliders();
+    //     let sliders = sliders_map.data;
+    //     for slider in &sliders[0..16] {
+    //         eprintln!("{slider:?}")
+    //     }
+    //     dbg!(sliders.iter().position(|x| x.pop_count == 255));
+    //     //        assert!(sliders.iter().find(|x| x.pop_count == 255).is_none())
+    //     // sliders.iter().map(|x| x)
+    //     dbg!(sliders.iter().position(|x| x.pop_count == 4));
+    //     assert!(sliders
+    //         .iter()
+    //         .skip(1)
+    //         .find(|x| x.pop_count == 255)
+    //         .is_none())
+    // }
+
+    #[test]
+    pub fn foobar() {
+        let board = Board6::try_from_tps("2,x,x,x,x,11/x,x,x,x,x,221/x,2,2,2,x,221/2,1,12C,1,21C,2/2,x,2,x,x,2/x,2,2,2,x,121 1 25").unwrap();
+        let mut moves: Vec<GameMove> = Vec::new();
+        let mut moves2: Vec<GameMove> = Vec::new();
+        generate_masked_stack_moves(
+            &board,
+            &mut moves,
+            board.active_stacks(board.side_to_move()),
+        );
+        generate_masked_stack_moves_old(
+            &board,
+            &mut moves2,
+            board.active_stacks(board.side_to_move()),
+        );
+        let moves: HashSet<_> = moves.into_iter().collect();
+        let moves2: HashSet<_> = moves2.into_iter().collect();
+        let false_pos = moves.difference(&moves2);
+        let false_neg = moves2.difference(&moves);
+        eprintln!("False Positive");
+        for mv in false_pos {
+            eprintln!("{mv:?}, {}", mv.to_ptn::<Board6>());
+        }
+        println!("False Negative");
+        for mv in false_neg {
+            eprintln!("{mv:?}, {}", mv.to_ptn::<Board6>());
+        }
+    }
+
+    #[test]
+    pub fn foo() {
+        // bar("1212121S,x2,2,1,1/12S,12,121,2S,11C,x/1,112S,112C,1,x,12/1,2,2,1,1,1/2,2,2,2S,121S,x/2,2,1,2S,212,12S 1 40", 0, 3);
+        let board = Board6::try_from_tps("2,2,21S,12122,221,x/2,1,2,12C,2,x/1,12222211C,21S,2,x2/2,1,2,1,1,1/x,2,12S,1,1,1/x,2,x3,1 1 37").unwrap();
+        for sq in board.active_stacks(board.side_to_move()) {
+            let stack = &board.board()[sq];
+            if stack.has_cap() {
+                continue;
+            }
+            let limit = find_move_limits(&board, sq);
+            if sq == 21 {
+                eprintln!("{limit:?}");
+            }
+            for dir in 0..4 {
+                // eprintln!("{sq} --> {dir}");
+                bar(&board, sq, dir);
+            }
+        }
+    }
+
+    fn bar(board: &Board6, start_idx: usize, dir: u32) {
+        let mut moves: Vec<GameMove> = Vec::new();
+        generate_all_stack_moves(board, &mut moves);
+        moves.retain(|x| x.is_stack_move() && x.src_index() == start_idx && x.direction() == dir);
+        let mut manual = HashSet::new();
+        for mv in moves {
+            // eprintln!("{} -- {:b}", mv.to_ptn::<Board6>(), mv.slide_bits());
+            manual.insert(mv.slide_bits());
+        }
+        let limits = find_move_limits(board, start_idx);
+        // eprintln!("{limits:?}");
+        let mut iterative = HashSet::new();
+        let max = board.board()[start_idx].len().min(Board6::SIZE);
+        for x in 1..1 << max {
+            if (x as u32).count_ones() > limits.steps[dir as usize] as u32 {
+                continue;
+            }
+            iterative.insert(x);
+        }
+        assert_eq!(manual.len(), iterative.len());
+        assert_eq!(manual, iterative);
+    }
+
+    // fn check() {
+
+    // }
 
     #[test]
     pub fn index_move_by_bits() {

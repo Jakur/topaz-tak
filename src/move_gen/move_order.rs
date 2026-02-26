@@ -168,7 +168,7 @@ impl SmartMoveBuffer {
                 dest = board.index(step.index);
                 let covered = dest.top();
                 let covering = stack_data[offset];
-                let bit_idx = 1 << step.index;
+                // let bit_idx = 1 << step.index;
                 if let Some(piece) = covered {
                     if piece.owner() == active_side {
                         if piece.is_flat() {

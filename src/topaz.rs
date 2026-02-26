@@ -57,6 +57,13 @@ pub fn main() {
             play_game_cmd(false);
         } else if arg1 == "white" {
             play_game_cmd(true);
+        } else if arg1 == "perft" {
+            let game = build_tps(&args[2..]);
+            if let Ok(TakGame::Standard6(mut g)) = game {
+                for depth in 1..5 {
+                    dbg!(perft(&mut g, depth));
+                }
+            }
         } else if arg1 == "analyze" {
             let game = build_tps(&args[2..]);
             let table = HashTable::new(2 << 20);
