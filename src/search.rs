@@ -580,9 +580,13 @@ where
         // moves.gen_score_place(depth, board, info);
         // Futility pruning
         let fp_margin = info.hyper.fp_margin;
-        if depth <= 3 && !is_pv && eval + (depth as i32 * fp_margin) < alpha {
+        if depth <= 6 && !is_pv && eval + (depth.ilog2() as i32 * depth as i32 * fp_margin) < alpha
+        {
             let _num_pruned = moves.drop_below_score(100 - info.hyper.quiet_score);
         }
+        // if depth <= 6 && !is_pv && eval + (depth as i32 * fp_margin) < alpha {
+        //     let _num_pruned = moves.drop_below_score(0);
+        // }
     }
 
     if let Some(entry) = pv_entry {
