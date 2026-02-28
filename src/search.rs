@@ -576,13 +576,13 @@ where
     if is_root && info.multi_pv > 1 {
         moves.drop_arbitrary(&info.forbidden_root_moves);
     }
-    if !has_win {
-        // moves.gen_score_place(depth, board, info);
+    if !(has_win || is_pv) {
         // Futility pruning
         let fp_margin = info.hyper.fp_margin;
-        if depth <= 6 && !is_pv && eval + (depth.ilog2() as i32 * depth as i32 * fp_margin) < alpha
-        {
-            let _num_pruned = moves.drop_below_score(100 - info.hyper.quiet_score);
+        if depth <= 6 && eval + (depth.ilog2().max(1) as i32 * depth as i32 * fp_margin) < alpha {
+            let _num_pruned = moves.drop_below_score(110 - info.hyper.quiet_score);
+        } else if depth <= 4 && eval < alpha {
+            moves.drop_below_score(40);
         }
         // if depth <= 6 && !is_pv && eval + (depth as i32 * fp_margin) < alpha {
         //     let _num_pruned = moves.drop_below_score(0);
