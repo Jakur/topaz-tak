@@ -609,6 +609,10 @@ where
             is_tak,
             fcd,
         } = moves.get_best_scored(info, last_move);
+
+        if !is_pv && c > SmartMoveBuffer::THOROUGH_MOVES && depth < 2 {
+            break;
+        }
         // if is_tak {
         //     tak_history = tak_history.add(ply_depth + 1);
         // }

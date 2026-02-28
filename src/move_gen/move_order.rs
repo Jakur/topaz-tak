@@ -21,7 +21,7 @@ pub struct SmartMoveBuffer {
 }
 
 impl SmartMoveBuffer {
-    const THOROUGH_MOVES: usize = 16;
+    pub(crate) const THOROUGH_MOVES: usize = 24;
     pub fn new(buffer_size: usize) -> Self {
         Self {
             moves: Vec::with_capacity(buffer_size),
@@ -342,11 +342,7 @@ impl SmartMoveBuffer {
         }
     }
     pub fn get_lmr_reduced_depth(&self, depth: usize, cut_node: bool, pv_node: bool) -> usize {
-        let max_val = if cut_node {
-            Self::THOROUGH_MOVES * 4 / 3
-        } else {
-            Self::THOROUGH_MOVES
-        };
+        let max_val = if cut_node { 21 } else { 16 };
         let reduction =
             (depth as f32).log2() + (self.queries.clamp(1, max_val) as f32).log2() - 2.0;
         depth - (reduction.floor() as usize).clamp(2, depth - 1) // Reduce at minimum 2, at max to depth 1
