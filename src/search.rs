@@ -86,8 +86,11 @@ where
     // let mut node_counts = vec![1];
     info.start_search(board.ply());
     eval.set_tempo_offset(info.hyper.tempo_bonus);
-    let mut alpha = -1_000_000;
-    let mut beta = 1_000_000;
+    let mut alphas = [-1_000_000; 8];
+    let mut betas = [1_000_000; 8];
+    let mut solved = [false; 8];
+    // let mut alpha = -1_000_000;
+    // let mut beta = 1_000_000;
     let mut moves: [SmartMoveBuffer; 50] = core::array::from_fn(|_| SmartMoveBuffer::new(0));
     let is_multi_pv = info.multi_pv > 1 && info.main_thread;
     let mut outcomes: Vec<SearchOutcome<T>> = Vec::new();
@@ -104,7 +107,13 @@ where
         }
         info.forbidden_root_moves.clear();
         let num_pvs = info.multi_pv as usize;
+        if solved[num_pvs - 1] {
+            // Stop wasting time
+            break;
+        }
         for pv_idx in 0..num_pvs {
+            let alpha = alphas[pv_idx];
+            let beta = betas[pv_idx];
             let mut best_score = alpha_beta(
                 board,
                 eval,
@@ -144,10 +153,8 @@ where
                         )
                     }
                 }
-                if pv_idx == 0 {
-                    alpha = best_score - info.hyper.aspiration;
-                    beta = best_score + info.hyper.aspiration;
-                }
+                alphas[pv_idx] = best_score - info.hyper.aspiration;
+                betas[pv_idx] = best_score + info.hyper.aspiration;
             }
             let pv_moves = info.pv_table.get_pv();
             // If we had an incomplete depth search, use the previous depth's vals
@@ -198,11 +205,7 @@ where
             }
             // Stop wasting time
             if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
-                if pv_idx == 0 {
-                    return outcome;
-                } else {
-                    break;
-                }
+                solved[pv_idx] = true;
             }
         }
     }

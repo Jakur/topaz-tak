@@ -13,7 +13,7 @@ use std::marker::PhantomData;
 pub struct SearchInfo<'a> {
     pub max_depth: usize,
     pub(crate) trans_table: &'a HashTable,
-    pub(crate) pv_table: PVTable<32>,
+    pub(crate) pv_table: PVTable<50>,
     pub hash_history: HashHistory,
     pub counter_moves: CounterMoves<49>, // Todo make this better generic
     pub hist_moves: PlaceHistory<49>,    // Todo make this better generic
