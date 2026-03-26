@@ -539,6 +539,8 @@ where
                     if score >= beta {
                         info.stats.add_cut(0);
                         if m.is_stack_move() {
+                            let bonus = 5 * depth as i32 - 4;
+                            info.capture_hist.update(board.side_to_move(), bonus, m);
                             if let Some(prev) = last_move {
                                 if prev.game_move.is_place_move() {
                                     // Update countermove
