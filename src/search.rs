@@ -479,6 +479,14 @@ where
                     info.hist_moves.update(-1, mv);
                 }
             }
+        } else {
+            if let Some(diff) = info.eval_hist.eval_diff_from_last_move(ply_depth) {
+                if diff < -20 {
+                    info.capture_hist.update(!side, 1, mv);
+                } else if diff > 20 {
+                    info.capture_hist.update(!side, -1, mv);
+                }
+            }
         }
     }
 
