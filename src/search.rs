@@ -280,6 +280,10 @@ where
     if (info.nodes() & FREQ) == FREQ {
         info.check_stop();
     }
+    let ply_depth = info.ply_depth(board);
+    if ply_depth < info.pv_table.table_length.len() {
+        info.pv_table.table_length[ply_depth] = 0;
+    }
     match board.game_result() {
         Some(GameResult::WhiteWin) => {
             if let Color::White = board.side_to_move() {
@@ -300,7 +304,6 @@ where
         return DRAW_SCORE;
     }
 
-    let ply_depth = info.ply_depth(board);
     // let mut road_move = None;
     if depth == 0 {
         let side = board.side_to_move();
@@ -316,11 +319,12 @@ where
             }
         }
 
-        if board
-            .can_make_road(&mut info.extra_move_buffer, None)
-            .is_some()
-        {
+        if let Some(road_move) = board.can_make_road(&mut info.extra_move_buffer, None) {
             info.extra_move_buffer.clear();
+            if ply_depth < info.pv_table.table_length.len() {
+                info.pv_table.table[ply_depth][ply_depth] = road_move;
+                info.pv_table.table_length[ply_depth] = 1;
+            }
             return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
         }
 
