@@ -11,7 +11,7 @@ use crate::{Bitboard, TeiCommand};
 #[cfg(feature = "cli")]
 pub mod book;
 mod util;
-pub use util::{HashHistory, SearchHyper, SearchInfo, SearchOutcome, SearchStats};
+pub use util::{HashHistory, ScoreBound, SearchHyper, SearchInfo, SearchOutcome, SearchStats};
 
 const DRAW_SCORE: i32 = 0;
 
@@ -37,6 +37,7 @@ const FUTILITY_MARGIN: i32 = 50;
 // CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
 const ASPIRATION_ENABLED: bool = true; // Requires stable search, it's close
 const ASPIRATION_WINDOW: i32 = 55;
+const ASPIRATION_REPORT_DELAY_MS: u128 = 1000;
 
 // internal iterative deepening parameters TODO not tuned yet
 // doesn't have much cost attached to it, so why not
@@ -123,14 +124,17 @@ where
             );
             if ASPIRATION_ENABLED {
                 if (best_score <= alpha) || (best_score >= beta) {
+                    report_aspiration_bound::<T>(info, best_score, alpha, beta, depth, num_pvs);
                     let diff = beta - alpha;
+                    let wide_alpha = alpha - 2 * diff;
+                    let wide_beta = beta + 2 * diff;
                     best_score = alpha_beta(
                         board,
                         eval,
                         info,
                         SearchData::new(
-                            alpha - 2 * diff,
-                            beta + 2 * diff,
+                            wide_alpha,
+                            wide_beta,
                             depth,
                             true,
                             None,
@@ -142,6 +146,9 @@ where
                         &mut moves,
                     );
                     if (best_score <= alpha) || (best_score >= beta) {
+                        report_aspiration_bound::<T>(
+                            info, best_score, wide_alpha, wide_beta, depth, num_pvs,
+                        );
                         best_score = alpha_beta(
                             board,
                             eval,
@@ -212,6 +219,34 @@ where
     info.hist_moves.clear();
     info.counter_moves.clear();
     outcome
+}
+
+fn report_aspiration_bound<T>(
+    info: &SearchInfo,
+    score: i32,
+    search_alpha: i32,
+    search_beta: i32,
+    depth: usize,
+    num_pvs: usize,
+) where
+    T: TakBoard,
+{
+    if info.quiet || !info.main_thread || num_pvs > 1 {
+        return;
+    }
+    if info.start_time.elapsed().as_millis() < ASPIRATION_REPORT_DELAY_MS {
+        return;
+    }
+    let (display_score, bound) = if score <= search_alpha {
+        (search_alpha, ScoreBound::Upper)
+    } else if score >= search_beta {
+        (search_beta, ScoreBound::Lower)
+    } else {
+        return;
+    };
+    let pv_moves = info.pv_table.get_pv();
+    let outcome = SearchOutcome::<T>::new(display_score, pv_moves, depth, info).with_bound(bound);
+    println!("{}", outcome);
 }
 
 #[derive(Clone)]
