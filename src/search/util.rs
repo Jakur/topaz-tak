@@ -330,6 +330,13 @@ impl SearchStats {
         }
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScoreBound {
+    Exact,
+    Lower,
+    Upper,
+}
+
 #[derive(Debug, Clone)]
 pub struct SearchOutcome<T> {
     pub score: i32,
@@ -341,6 +348,7 @@ pub struct SearchOutcome<T> {
     pub hashfull: usize,
     pub phantom: PhantomData<T>,
     multi_pv_idx: usize,
+    bound: ScoreBound,
 }
 
 impl<T> SearchOutcome<T>
@@ -362,7 +370,12 @@ where
             hashfull: search_info.trans_table.occupancy(),
             phantom: PhantomData,
             multi_pv_idx: 0,
+            bound: ScoreBound::Exact,
         }
+    }
+    pub fn with_bound(mut self, bound: ScoreBound) -> Self {
+        self.bound = bound;
+        self
     }
     pub fn update_multipv_index(&mut self, idx: usize) {
         self.multi_pv_idx = idx;
@@ -403,13 +416,19 @@ where
         } else {
             0
         };
+        let bound_str = match self.bound {
+            ScoreBound::Exact => "",
+            ScoreBound::Lower => " lowerbound",
+            ScoreBound::Upper => " upperbound",
+        };
         if self.multi_pv_idx > 0 {
             write!(
                 f,
-                "info depth {} multipv {} score cp {} time {} nodes {} nps {} hashfull {} pv {}",
+                "info depth {} multipv {} score cp {}{} time {} nodes {} nps {} hashfull {} pv {}",
                 self.depth,
                 self.multi_pv_idx,
                 readable_eval(self.score),
+                bound_str,
                 self.time,
                 self.nodes,
                 nps,
@@ -419,9 +438,10 @@ where
         } else {
             write!(
                 f,
-                "info depth {} score cp {} time {} nodes {} nps {} hashfull {} pv {}",
+                "info depth {} score cp {}{} time {} nodes {} nps {} hashfull {} pv {}",
                 self.depth,
                 readable_eval(self.score),
+                bound_str,
                 self.time,
                 self.nodes,
                 nps,

@@ -11,7 +11,7 @@ use crate::{Bitboard, TeiCommand};
 #[cfg(feature = "cli")]
 pub mod book;
 mod util;
-pub use util::{HashHistory, SearchHyper, SearchInfo, SearchOutcome, SearchStats};
+pub use util::{HashHistory, ScoreBound, SearchHyper, SearchInfo, SearchOutcome, SearchStats};
 
 const DRAW_SCORE: i32 = 0;
 
@@ -37,6 +37,7 @@ const FUTILITY_MARGIN: i32 = 50;
 // CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
 const ASPIRATION_ENABLED: bool = true; // Requires stable search, it's close
 const ASPIRATION_WINDOW: i32 = 55;
+const ASPIRATION_REPORT_DELAY_MS: u128 = 1000;
 
 // internal iterative deepening parameters TODO not tuned yet
 // doesn't have much cost attached to it, so why not
@@ -123,14 +124,17 @@ where
             );
             if ASPIRATION_ENABLED {
                 if (best_score <= alpha) || (best_score >= beta) {
+                    report_aspiration_bound::<T>(info, best_score, alpha, beta, depth, num_pvs);
                     let diff = beta - alpha;
+                    let wide_alpha = alpha - 2 * diff;
+                    let wide_beta = beta + 2 * diff;
                     best_score = alpha_beta(
                         board,
                         eval,
                         info,
                         SearchData::new(
-                            alpha - 2 * diff,
-                            beta + 2 * diff,
+                            wide_alpha,
+                            wide_beta,
                             depth,
                             true,
                             None,
@@ -142,6 +146,9 @@ where
                         &mut moves,
                     );
                     if (best_score <= alpha) || (best_score >= beta) {
+                        report_aspiration_bound::<T>(
+                            info, best_score, wide_alpha, wide_beta, depth, num_pvs,
+                        );
                         best_score = alpha_beta(
                             board,
                             eval,
@@ -164,6 +171,32 @@ where
                     outcome = Some(updated);
                 }
                 break 'outer;
+            }
+            if pv_moves.is_empty() {
+                // The root search returned no PV (e.g. all candidate root
+                // moves were forbidden in multipv, or a fail-low produced
+                // no improving move). Treat this as the end of useful work.
+                if pv_idx == 0 {
+                    if let Some(data) = outcome {
+                        let updated = SearchOutcome::new(data.score, data.pv, data.depth, info);
+                        outcome = Some(updated);
+                    }
+                    break 'outer;
+                }
+                if !info.quiet && is_multi_pv {
+                    for (idx, res) in outcomes.iter_mut().enumerate() {
+                        res.update_multipv_index(idx + 1);
+                    }
+                    if let Some((last_pv, result)) = outcomes.split_last_mut() {
+                        for res in result {
+                            res.update_multipv(last_pv);
+                        }
+                    }
+                    for line in outcomes.drain(..) {
+                        println!("{}", line);
+                    }
+                }
+                break;
             }
             if pv_idx == 0 {
                 outcome = Some(SearchOutcome::new(
@@ -212,6 +245,34 @@ where
     info.hist_moves.clear();
     info.counter_moves.clear();
     outcome
+}
+
+fn report_aspiration_bound<T>(
+    info: &SearchInfo,
+    score: i32,
+    search_alpha: i32,
+    search_beta: i32,
+    depth: usize,
+    num_pvs: usize,
+) where
+    T: TakBoard,
+{
+    if info.quiet || !info.main_thread || num_pvs > 1 {
+        return;
+    }
+    if info.start_time.elapsed().as_millis() < ASPIRATION_REPORT_DELAY_MS {
+        return;
+    }
+    let (display_score, bound) = if score <= search_alpha {
+        (search_alpha, ScoreBound::Upper)
+    } else if score >= search_beta {
+        (search_beta, ScoreBound::Lower)
+    } else {
+        return;
+    };
+    let pv_moves = info.pv_table.get_pv();
+    let outcome = SearchOutcome::<T>::new(display_score, pv_moves, depth, info).with_bound(bound);
+    println!("{}", outcome);
 }
 
 #[derive(Clone)]
@@ -280,6 +341,10 @@ where
     if (info.nodes() & FREQ) == FREQ {
         info.check_stop();
     }
+    let ply_depth = info.ply_depth(board);
+    if ply_depth < info.pv_table.table_length.len() {
+        info.pv_table.table_length[ply_depth] = 0;
+    }
     match board.game_result() {
         Some(GameResult::WhiteWin) => {
             if let Color::White = board.side_to_move() {
@@ -300,7 +365,6 @@ where
         return DRAW_SCORE;
     }
 
-    let ply_depth = info.ply_depth(board);
     // let mut road_move = None;
     if depth == 0 {
         let side = board.side_to_move();
@@ -316,11 +380,12 @@ where
             }
         }
 
-        if board
-            .can_make_road(&mut info.extra_move_buffer, None)
-            .is_some()
-        {
+        if let Some(road_move) = board.can_make_road(&mut info.extra_move_buffer, None) {
             info.extra_move_buffer.clear();
+            if ply_depth < info.pv_table.table_length.len() {
+                info.pv_table.table[ply_depth][ply_depth] = road_move;
+                info.pv_table.table_length[ply_depth] = 1;
+            }
             return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
         }
 
