@@ -172,6 +172,32 @@ where
                 }
                 break 'outer;
             }
+            if pv_moves.is_empty() {
+                // The root search returned no PV (e.g. all candidate root
+                // moves were forbidden in multipv, or a fail-low produced
+                // no improving move). Treat this as the end of useful work.
+                if pv_idx == 0 {
+                    if let Some(data) = outcome {
+                        let updated = SearchOutcome::new(data.score, data.pv, data.depth, info);
+                        outcome = Some(updated);
+                    }
+                    break 'outer;
+                }
+                if !info.quiet && is_multi_pv {
+                    for (idx, res) in outcomes.iter_mut().enumerate() {
+                        res.update_multipv_index(idx + 1);
+                    }
+                    if let Some((last_pv, result)) = outcomes.split_last_mut() {
+                        for res in result {
+                            res.update_multipv(last_pv);
+                        }
+                    }
+                    for line in outcomes.drain(..) {
+                        println!("{}", line);
+                    }
+                }
+                break;
+            }
             if pv_idx == 0 {
                 outcome = Some(SearchOutcome::new(
                     best_score,
