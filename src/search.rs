@@ -89,7 +89,7 @@ where
     eval.set_tempo_offset(info.hyper.tempo_bonus);
     let mut alphas = [-1_000_000; 8];
     let mut betas = [1_000_000; 8];
-    let mut solved = [false; 8];
+    let mut scores = [0_i32; 8];
     // let mut alpha = -1_000_000;
     // let mut beta = 1_000_000;
     let mut moves: [SmartMoveBuffer; 50] = core::array::from_fn(|_| SmartMoveBuffer::new(0));
@@ -108,8 +108,13 @@ where
         }
         info.forbidden_root_moves.clear();
         let num_pvs = info.multi_pv as usize;
-        if solved[num_pvs - 1] {
-            // Stop wasting time
+        // Only stop when no reported PV can still gain accuracy: the worst line
+        // is a win in <= 2 plies (so all lines are, and no shorter win is
+        // hidden), or the best line is mated in 1 (so every line is). Greater
+        // mate distances can still shorten under extensions/reductions, and in
+        // multipv the lower lines may still be moving even once the top one is
+        // settled. The all-zero init can't trigger before the first depth.
+        if scores[num_pvs - 1] >= WIN_SCORE - 2 || scores[0] <= LOSE_SCORE + 1 {
             break;
         }
         for pv_idx in 0..num_pvs {
@@ -236,10 +241,8 @@ where
                     }
                 }
             }
-            // Stop wasting time
-            if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
-                solved[pv_idx] = true;
-            }
+            // Record for the early-out check at the top of the next iteration.
+            scores[pv_idx] = best_score;
         }
     }
     info.hist_moves.clear();
