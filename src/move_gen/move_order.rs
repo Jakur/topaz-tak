@@ -351,6 +351,13 @@ impl SmartMoveBuffer {
         info: &SearchInfo,
         prev: Option<RevGameMove>,
     ) -> ScoredMove {
+        // const THOROUGH: [usize; 16] = [
+        //     24, 24, 24, 24, 24, 24, 24, 32, 32, 32, 32, 64, 64, 64, 64, 64,
+        // ];
+        // let idx = depth & 0xF;
+        // assert!(idx < 16);
+        // let thorough = THOROUGH[idx];
+        // let thorough = GEN_THOROUGH_ORDER_DEPTH;
         if self.queries <= Self::THOROUGH_MOVES {
             self.queries += 1;
             let (idx, m) = self

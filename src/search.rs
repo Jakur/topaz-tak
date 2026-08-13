@@ -29,14 +29,11 @@ const LMR_REDUCE_ROOT: bool = true; // probably shouldn't
 const PV_SEARCH_ENABLED: bool = true; // no speedup, worse playing strength
 const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF
 
-const REVERSE_FUTILITY_MARGIN: i32 = 115;
-const FUTILITY_MARGIN: i32 = 50;
 // const FUTILITY_MARGIN: i32 = 42;
 
 // aspiration window parameters
 // CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
 const ASPIRATION_ENABLED: bool = true; // Requires stable search, it's close
-const ASPIRATION_WINDOW: i32 = 55;
 const ASPIRATION_REPORT_DELAY_MS: u128 = 1000;
 
 // internal iterative deepening parameters TODO not tuned yet
@@ -114,7 +111,7 @@ where
         // mate distances can still shorten under extensions/reductions, and in
         // multipv the lower lines may still be moving even once the top one is
         // settled. The all-zero init can't trigger before the first depth.
-        if scores[num_pvs - 1] >= WIN_SCORE - 2 || scores[0] <= LOSE_SCORE + 1 {
+        if scores[num_pvs - 1] > WIN_SCORE - 10 || scores[0] < LOSE_SCORE + 10 {
             break;
         }
         for pv_idx in 0..num_pvs {
@@ -129,7 +126,9 @@ where
             );
             if ASPIRATION_ENABLED {
                 if (best_score <= alpha) || (best_score >= beta) {
-                    report_aspiration_bound::<T>(info, best_score, alpha, beta, depth, num_pvs);
+                    report_aspiration_bound::<T>(
+                        info, best_score, alpha, beta, depth, num_pvs, board,
+                    );
                     let diff = beta - alpha;
                     let wide_alpha = alpha - 2 * diff;
                     let wide_beta = beta + 2 * diff;
@@ -138,21 +137,13 @@ where
                         eval,
                         info,
                         SearchData::new(
-                            wide_alpha,
-                            wide_beta,
-                            depth,
-                            true,
-                            None,
-                            0,
-                            false,
-                            true,
-                            true,
+                            wide_alpha, wide_beta, depth, true, None, 0, false, true, true,
                         ),
                         &mut moves,
                     );
                     if (best_score <= alpha) || (best_score >= beta) {
                         report_aspiration_bound::<T>(
-                            info, best_score, wide_alpha, wide_beta, depth, num_pvs,
+                            info, best_score, wide_alpha, wide_beta, depth, num_pvs, board,
                         );
                         best_score = alpha_beta(
                             board,
@@ -172,7 +163,7 @@ where
             // If we had an incomplete depth search, use the previous depth's vals
             if info.stopped {
                 if let Some(data) = outcome {
-                    let updated = SearchOutcome::new(data.score, data.pv, data.depth, info);
+                    let updated = SearchOutcome::new(data.score, data.pv, data.depth, info, board);
                     outcome = Some(updated);
                 }
                 break 'outer;
@@ -183,7 +174,8 @@ where
                 // no improving move). Treat this as the end of useful work.
                 if pv_idx == 0 {
                     if let Some(data) = outcome {
-                        let updated = SearchOutcome::new(data.score, data.pv, data.depth, info);
+                        let updated =
+                            SearchOutcome::new(data.score, data.pv, data.depth, info, board);
                         outcome = Some(updated);
                     }
                     break 'outer;
@@ -209,6 +201,7 @@ where
                     pv_moves.clone(),
                     depth,
                     info,
+                    board,
                 ));
             }
             if is_multi_pv {
@@ -217,6 +210,7 @@ where
                     pv_moves.clone(),
                     depth,
                     info,
+                    board,
                 ));
                 info.forbidden_root_moves.try_append(pv_moves[0]);
             }
@@ -250,6 +244,7 @@ where
     outcome
 }
 
+#[inline]
 fn report_aspiration_bound<T>(
     info: &SearchInfo,
     score: i32,
@@ -257,6 +252,7 @@ fn report_aspiration_bound<T>(
     search_beta: i32,
     depth: usize,
     num_pvs: usize,
+    board: &T,
 ) where
     T: TakBoard,
 {
@@ -274,7 +270,8 @@ fn report_aspiration_bound<T>(
         return;
     };
     let pv_moves = info.pv_table.get_pv();
-    let outcome = SearchOutcome::<T>::new(display_score, pv_moves, depth, info).with_bound(bound);
+    let outcome =
+        SearchOutcome::<T>::new(display_score, pv_moves, depth, info, board).with_bound(bound);
     println!("{}", outcome);
 }
 
@@ -1035,7 +1032,7 @@ mod test {
     #[test]
     fn small_alpha_beta() {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
-        let table = HashTable::new(50000);
+        let table = HashTable::new(40);
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut info = SearchInfo::new(4, &table);
         table.clear();
@@ -1051,7 +1048,7 @@ mod test {
     fn unk_puzzle() {
         let tps = "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27";
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let table = HashTable::new(100_000);
+        let table = HashTable::new(40);
         let mut eval = Weights6::default();
         let mut info = SearchInfo::new(5, &table);
         search(&mut board, &mut eval, &mut info);
@@ -1062,7 +1059,7 @@ mod test {
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut eval = Weights6::default();
         eval.evaluate(&board, 2);
-        let table = HashTable::new(1 << 14);
+        let table = HashTable::new(40);
         let mut info = SearchInfo::new(5, &table);
         search(&mut board, &mut eval, &mut info);
     }

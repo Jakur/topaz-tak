@@ -281,6 +281,7 @@ impl std::default::Default for SearchHyper {
     // }
     fn default() -> Self {
         Self::new(118, 47, 34, 0, 51, 34)
+        // Self::new(110, 45, 32, 0, 50, 34)
     }
 }
 
@@ -348,6 +349,9 @@ pub struct SearchOutcome<T> {
     pub hashfull: usize,
     pub phantom: PhantomData<T>,
     multi_pv_idx: usize,
+    win: f32,
+    draw: f32,
+    loss: f32,
     bound: ScoreBound,
 }
 
@@ -355,9 +359,16 @@ impl<T> SearchOutcome<T>
 where
     T: TakBoard,
 {
-    pub fn new(score: i32, pv: Vec<GameMove>, depth: usize, search_info: &SearchInfo) -> Self {
+    pub fn new(
+        score: i32,
+        pv: Vec<GameMove>,
+        depth: usize,
+        search_info: &SearchInfo,
+        board: &T,
+    ) -> Self {
         let nodes = search_info.nodes();
         let time = search_info.start_time.elapsed().as_millis();
+        let (win, draw, loss) = board.wdl_correction(readable_eval(score));
         // let t_cuts = search_info.transposition_cutoffs;
         let t_cuts = search_info.stats.transposition_cutoffs;
         Self {
@@ -371,6 +382,9 @@ where
             phantom: PhantomData,
             multi_pv_idx: 0,
             bound: ScoreBound::Exact,
+            win,
+            draw,
+            loss,
         }
     }
     pub fn with_bound(mut self, bound: ScoreBound) -> Self {
@@ -417,9 +431,14 @@ where
             0
         };
         let bound_str = match self.bound {
-            ScoreBound::Exact => "",
-            ScoreBound::Lower => " lowerbound",
-            ScoreBound::Upper => " upperbound",
+            ScoreBound::Exact => format!(
+                " wdl {} {} {}",
+                (self.win * 1000.0) as i32,
+                (self.draw * 1000.0) as i32,
+                (self.loss * 1000.0) as i32
+            ),
+            ScoreBound::Lower => " lowerbound".to_string(),
+            ScoreBound::Upper => " upperbound".to_string(),
         };
         if self.multi_pv_idx > 0 {
             write!(
