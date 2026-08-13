@@ -11,7 +11,7 @@ use crate::{Bitboard, TeiCommand};
 #[cfg(feature = "cli")]
 pub mod book;
 mod util;
-pub use util::{HashHistory, SearchHyper, SearchInfo, SearchOutcome, SearchStats};
+pub use util::{HashHistory, ScoreBound, SearchHyper, SearchInfo, SearchOutcome, SearchStats};
 
 const DRAW_SCORE: i32 = 0;
 
@@ -29,14 +29,12 @@ const LMR_REDUCE_ROOT: bool = true; // probably shouldn't
 const PV_SEARCH_ENABLED: bool = true; // no speedup, worse playing strength
 const PV_RE_SEARCH_NON_PV: bool = true; // stockfish doesn't... ONLY DISABLE WHEN SOFT CUTOFF
 
-const REVERSE_FUTILITY_MARGIN: i32 = 115;
-const FUTILITY_MARGIN: i32 = 50;
 // const FUTILITY_MARGIN: i32 = 42;
 
 // aspiration window parameters
 // CAN CAUSE CUT-OFF ON ROOT WHEN USED WITH PV_SEARCH!!!
 const ASPIRATION_ENABLED: bool = true; // Requires stable search, it's close
-const ASPIRATION_WINDOW: i32 = 55;
+const ASPIRATION_REPORT_DELAY_MS: u128 = 1000;
 
 // internal iterative deepening parameters TODO not tuned yet
 // doesn't have much cost attached to it, so why not
@@ -88,7 +86,7 @@ where
     eval.set_tempo_offset(info.hyper.tempo_bonus);
     let mut alphas = [-1_000_000; 8];
     let mut betas = [1_000_000; 8];
-    let mut solved = [false; 8];
+    let mut scores = [0_i32; 8];
     // let mut alpha = -1_000_000;
     // let mut beta = 1_000_000;
     let mut moves: [SmartMoveBuffer; 50] = core::array::from_fn(|_| SmartMoveBuffer::new(0));
@@ -107,8 +105,13 @@ where
         }
         info.forbidden_root_moves.clear();
         let num_pvs = info.multi_pv as usize;
-        if solved[num_pvs - 1] {
-            // Stop wasting time
+        // Only stop when no reported PV can still gain accuracy: the worst line
+        // is a win in <= 2 plies (so all lines are, and no shorter win is
+        // hidden), or the best line is mated in 1 (so every line is). Greater
+        // mate distances can still shorten under extensions/reductions, and in
+        // multipv the lower lines may still be moving even once the top one is
+        // settled. The all-zero init can't trigger before the first depth.
+        if scores[num_pvs - 1] > WIN_SCORE - 10 || scores[0] < LOSE_SCORE + 10 {
             break;
         }
         for pv_idx in 0..num_pvs {
@@ -123,25 +126,25 @@ where
             );
             if ASPIRATION_ENABLED {
                 if (best_score <= alpha) || (best_score >= beta) {
+                    report_aspiration_bound::<T>(
+                        info, best_score, alpha, beta, depth, num_pvs, board,
+                    );
                     let diff = beta - alpha;
+                    let wide_alpha = alpha - 2 * diff;
+                    let wide_beta = beta + 2 * diff;
                     best_score = alpha_beta(
                         board,
                         eval,
                         info,
                         SearchData::new(
-                            alpha - 2 * diff,
-                            beta + 2 * diff,
-                            depth,
-                            true,
-                            None,
-                            0,
-                            false,
-                            true,
-                            true,
+                            wide_alpha, wide_beta, depth, true, None, 0, false, true, true,
                         ),
                         &mut moves,
                     );
                     if (best_score <= alpha) || (best_score >= beta) {
+                        report_aspiration_bound::<T>(
+                            info, best_score, wide_alpha, wide_beta, depth, num_pvs, board,
+                        );
                         best_score = alpha_beta(
                             board,
                             eval,
@@ -160,10 +163,37 @@ where
             // If we had an incomplete depth search, use the previous depth's vals
             if info.stopped {
                 if let Some(data) = outcome {
-                    let updated = SearchOutcome::new(data.score, data.pv, data.depth, info);
+                    let updated = SearchOutcome::new(data.score, data.pv, data.depth, info, board);
                     outcome = Some(updated);
                 }
                 break 'outer;
+            }
+            if pv_moves.is_empty() {
+                // The root search returned no PV (e.g. all candidate root
+                // moves were forbidden in multipv, or a fail-low produced
+                // no improving move). Treat this as the end of useful work.
+                if pv_idx == 0 {
+                    if let Some(data) = outcome {
+                        let updated =
+                            SearchOutcome::new(data.score, data.pv, data.depth, info, board);
+                        outcome = Some(updated);
+                    }
+                    break 'outer;
+                }
+                if !info.quiet && is_multi_pv {
+                    for (idx, res) in outcomes.iter_mut().enumerate() {
+                        res.update_multipv_index(idx + 1);
+                    }
+                    if let Some((last_pv, result)) = outcomes.split_last_mut() {
+                        for res in result {
+                            res.update_multipv(last_pv);
+                        }
+                    }
+                    for line in outcomes.drain(..) {
+                        println!("{}", line);
+                    }
+                }
+                break;
             }
             if pv_idx == 0 {
                 outcome = Some(SearchOutcome::new(
@@ -171,6 +201,7 @@ where
                     pv_moves.clone(),
                     depth,
                     info,
+                    board,
                 ));
             }
             if is_multi_pv {
@@ -179,6 +210,7 @@ where
                     pv_moves.clone(),
                     depth,
                     info,
+                    board,
                 ));
                 info.forbidden_root_moves.try_append(pv_moves[0]);
             }
@@ -203,15 +235,44 @@ where
                     }
                 }
             }
-            // Stop wasting time
-            if best_score > WIN_SCORE - 10 || best_score < LOSE_SCORE + 10 {
-                solved[pv_idx] = true;
-            }
+            // Record for the early-out check at the top of the next iteration.
+            scores[pv_idx] = best_score;
         }
     }
     info.hist_moves.clear();
     info.counter_moves.clear();
     outcome
+}
+
+#[inline]
+fn report_aspiration_bound<T>(
+    info: &SearchInfo,
+    score: i32,
+    search_alpha: i32,
+    search_beta: i32,
+    depth: usize,
+    num_pvs: usize,
+    board: &T,
+) where
+    T: TakBoard,
+{
+    if info.quiet || !info.main_thread || num_pvs > 1 {
+        return;
+    }
+    if info.start_time.elapsed().as_millis() < ASPIRATION_REPORT_DELAY_MS {
+        return;
+    }
+    let (display_score, bound) = if score <= search_alpha {
+        (search_alpha, ScoreBound::Upper)
+    } else if score >= search_beta {
+        (search_beta, ScoreBound::Lower)
+    } else {
+        return;
+    };
+    let pv_moves = info.pv_table.get_pv();
+    let outcome =
+        SearchOutcome::<T>::new(display_score, pv_moves, depth, info, board).with_bound(bound);
+    println!("{}", outcome);
 }
 
 #[derive(Clone)]
@@ -280,6 +341,10 @@ where
     if (info.nodes() & FREQ) == FREQ {
         info.check_stop();
     }
+    let ply_depth = info.ply_depth(board);
+    if ply_depth < info.pv_table.table_length.len() {
+        info.pv_table.table_length[ply_depth] = 0;
+    }
     match board.game_result() {
         Some(GameResult::WhiteWin) => {
             if let Color::White = board.side_to_move() {
@@ -300,7 +365,6 @@ where
         return DRAW_SCORE;
     }
 
-    let ply_depth = info.ply_depth(board);
     // let mut road_move = None;
     if depth == 0 {
         let side = board.side_to_move();
@@ -316,11 +380,12 @@ where
             }
         }
 
-        if board
-            .can_make_road(&mut info.extra_move_buffer, None)
-            .is_some()
-        {
+        if let Some(road_move) = board.can_make_road(&mut info.extra_move_buffer, None) {
             info.extra_move_buffer.clear();
+            if ply_depth < info.pv_table.table_length.len() {
+                info.pv_table.table[ply_depth][ply_depth] = road_move;
+                info.pv_table.table_length[ply_depth] = 1;
+            }
             return WIN_SCORE - board.ply() as i32 + info.start_ply as i32 - 1;
         }
 
@@ -967,7 +1032,7 @@ mod test {
     #[test]
     fn small_alpha_beta() {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
-        let table = HashTable::new(50000);
+        let table = HashTable::new(40);
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut info = SearchInfo::new(4, &table);
         table.clear();
@@ -983,7 +1048,7 @@ mod test {
     fn unk_puzzle() {
         let tps = "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27";
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let table = HashTable::new(100_000);
+        let table = HashTable::new(40);
         let mut eval = Weights6::default();
         let mut info = SearchInfo::new(5, &table);
         search(&mut board, &mut eval, &mut info);
@@ -994,7 +1059,7 @@ mod test {
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut eval = Weights6::default();
         eval.evaluate(&board, 2);
-        let table = HashTable::new(1 << 14);
+        let table = HashTable::new(40);
         let mut info = SearchInfo::new(5, &table);
         search(&mut board, &mut eval, &mut info);
     }

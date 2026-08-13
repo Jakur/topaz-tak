@@ -281,6 +281,7 @@ impl std::default::Default for SearchHyper {
     // }
     fn default() -> Self {
         Self::new(118, 47, 34, 0, 51, 34)
+        // Self::new(110, 45, 32, 0, 50, 34)
     }
 }
 
@@ -330,6 +331,13 @@ impl SearchStats {
         }
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScoreBound {
+    Exact,
+    Lower,
+    Upper,
+}
+
 #[derive(Debug, Clone)]
 pub struct SearchOutcome<T> {
     pub score: i32,
@@ -341,15 +349,26 @@ pub struct SearchOutcome<T> {
     pub hashfull: usize,
     pub phantom: PhantomData<T>,
     multi_pv_idx: usize,
+    win: f32,
+    draw: f32,
+    loss: f32,
+    bound: ScoreBound,
 }
 
 impl<T> SearchOutcome<T>
 where
     T: TakBoard,
 {
-    pub fn new(score: i32, pv: Vec<GameMove>, depth: usize, search_info: &SearchInfo) -> Self {
+    pub fn new(
+        score: i32,
+        pv: Vec<GameMove>,
+        depth: usize,
+        search_info: &SearchInfo,
+        board: &T,
+    ) -> Self {
         let nodes = search_info.nodes();
         let time = search_info.start_time.elapsed().as_millis();
+        let (win, draw, loss) = board.wdl_correction(readable_eval(score));
         // let t_cuts = search_info.transposition_cutoffs;
         let t_cuts = search_info.stats.transposition_cutoffs;
         Self {
@@ -362,7 +381,15 @@ where
             hashfull: search_info.trans_table.occupancy(),
             phantom: PhantomData,
             multi_pv_idx: 0,
+            bound: ScoreBound::Exact,
+            win,
+            draw,
+            loss,
         }
+    }
+    pub fn with_bound(mut self, bound: ScoreBound) -> Self {
+        self.bound = bound;
+        self
     }
     pub fn update_multipv_index(&mut self, idx: usize) {
         self.multi_pv_idx = idx;
@@ -403,13 +430,24 @@ where
         } else {
             0
         };
+        let bound_str = match self.bound {
+            ScoreBound::Exact => format!(
+                " wdl {} {} {}",
+                (self.win * 1000.0) as i32,
+                (self.draw * 1000.0) as i32,
+                (self.loss * 1000.0) as i32
+            ),
+            ScoreBound::Lower => " lowerbound".to_string(),
+            ScoreBound::Upper => " upperbound".to_string(),
+        };
         if self.multi_pv_idx > 0 {
             write!(
                 f,
-                "info depth {} multipv {} score cp {} time {} nodes {} nps {} hashfull {} pv {}",
+                "info depth {} multipv {} score cp {}{} time {} nodes {} nps {} hashfull {} pv {}",
                 self.depth,
                 self.multi_pv_idx,
                 readable_eval(self.score),
+                bound_str,
                 self.time,
                 self.nodes,
                 nps,
@@ -419,9 +457,10 @@ where
         } else {
             write!(
                 f,
-                "info depth {} score cp {} time {} nodes {} nps {} hashfull {} pv {}",
+                "info depth {} score cp {}{} time {} nodes {} nps {} hashfull {} pv {}",
                 self.depth,
                 readable_eval(self.score),
+                bound_str,
                 self.time,
                 self.nodes,
                 nps,

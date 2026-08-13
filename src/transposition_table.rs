@@ -22,10 +22,12 @@ pub struct HashTable {
 }
 
 impl HashTable {
-    pub fn new(size: usize) -> Self {
+    pub fn new(size_kb: usize) -> Self {
+        const SIZE_PER_BUCKET: usize = 16 * TT_BUCKET_SIZE; // Bytes
+        let entries = 1024 * size_kb / SIZE_PER_BUCKET;
         Self {
-            size: size / TT_BUCKET_SIZE,
-            buckets: vec![HashBucket::new(); size / TT_BUCKET_SIZE],
+            size: entries,
+            buckets: vec![HashBucket::new(); entries],
         }
     }
 

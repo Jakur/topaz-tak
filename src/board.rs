@@ -74,6 +74,7 @@ pub trait TakBoard:
     fn reset_stacks(&mut self);
     fn try_from_tps(tps: &str) -> Result<Self>;
     fn fifty_move_rule(&self) -> usize;
+    fn wdl_correction(&self, human_eval: i32) -> (f32, f32, f32);
     // Returns true if any flat placement will win the game
     #[inline]
     fn has_trivial_flat_win(&self) -> bool {
@@ -359,6 +360,9 @@ macro_rules! board_impl {
                 }
                 let updated = road_pieces ^ (road_pieces ^ update) & mask;
                 updated.check_road()
+            }
+            fn wdl_correction(&self, human_eval: i32) -> (f32, f32, f32) {
+                self.wdl_correction_internal(human_eval)
             }
             fn make_ptn_moves(&mut self, moves: &[&str]) -> Option<()> {
                 for s in moves {
@@ -692,6 +696,62 @@ pub struct Board7 {
     pub bits: BitboardStorage<<Self as TakBoard>::Bits>,
     komi: u8,
     fifty_move: u8,
+}
+
+fn sigmoid(x: f32) -> f32 {
+    1.0 / (1.0 + (-x).exp())
+}
+
+impl Board5 {
+    fn wdl_correction_internal(&self, _: i32) -> (f32, f32, f32) {
+        (0.0, 0.0, 0.0) // Todo fix
+    }
+}
+impl Board6 {
+    fn wdl_correction_internal(&self, human_eval: i32) -> (f32, f32, f32) {
+        const COEFS: [f32; 10] = [
+            0.3389, -0.0664, -0.2496, 0.2862, 0.4113, 0.6292, -0.2927, -0.5736, -0.4058, -0.4007,
+        ];
+        const SCALING: f32 = 0.417;
+        let f1 = self.pieces_reserve(Color::White) as f32 / 24.0 - 0.5;
+        let f2 = self.pieces_reserve(Color::Black) as f32 / 24.0 - 0.5;
+        let params = [
+            1.0,
+            f1,
+            f2,
+            f1 * f1,
+            f2 * f2,
+            f1 * f2,
+            f1 * f1 * f1,
+            f2 * f2 * f2,
+            (f1 * f1) * f2,
+            (f2 * f2) * f1,
+        ];
+        let correction: f32 = params
+            .iter()
+            .copied()
+            .zip(COEFS.iter())
+            .map(|(a, b)| a * b)
+            .sum();
+        let white_eval = if self.side_to_move() == Color::White {
+            human_eval as f32 / 100.0
+        } else {
+            -human_eval as f32 / 100.0
+        };
+        // White perspective
+        let mut win = sigmoid((white_eval - correction) / SCALING);
+        let mut loss = sigmoid((-white_eval - correction) / SCALING);
+        let draw = 1.0 - win - loss;
+        if self.side_to_move() == Color::Black {
+            std::mem::swap(&mut win, &mut loss);
+        }
+        (win, draw, loss)
+    }
+}
+impl Board7 {
+    fn wdl_correction_internal(&self, _: i32) -> (f32, f32, f32) {
+        unimplemented!()
+    }
 }
 
 board_impl![Board5, Bitboard5, 5, 21, 1];

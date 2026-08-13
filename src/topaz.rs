@@ -59,7 +59,7 @@ pub fn main() {
             play_game_cmd(true);
         } else if arg1 == "analyze" {
             let game = build_tps(&args[2..]);
-            let table = HashTable::new(2 << 20);
+            let table = HashTable::new(8 * 1024);
             if let Ok(game) = game {
                 let mut info = SearchInfo::new(32, &table);
                 match game {
@@ -200,7 +200,7 @@ pub fn main() {
         } else if arg1 == "selfplay" {
             let mut moves = Vec::new();
             let mut game = build_tps(&args[2..]).unwrap();
-            let table = HashTable::new(2 << 20);
+            let table = HashTable::new(8 * 1024);
             let mut info =
                 SearchInfo::new(SELF_PLAY_DEPTH, &table).time_bank(TimeBank::flat(12_000));
             const SELF_PLAY_DEPTH: usize = 20;
@@ -381,7 +381,7 @@ fn saved_tps(name: &str) -> Option<&str> {
 
 fn search_efficiency(file: &str, depth: usize, save: bool) -> Result<Vec<usize>> {
     let mut vec = Vec::new();
-    let table = HashTable::new(2 << 18);
+    let table = HashTable::new(4 * 1024);
     let f = io::BufReader::new(OpenOptions::new().read(true).open(file)?);
     for line in f.lines().take(10) {
         let tps = line?;
@@ -502,7 +502,7 @@ fn proof_interactive<T: TakBoard>(mut search: TinueSearch<T>, svg: bool) -> Resu
 fn play_game_cmd(mut computer_turn: bool) {
     let mut board = Board6::new();
     let mut eval = Weights6::default();
-    let table = HashTable::new(2 << 22);
+    let table = HashTable::new(8 * 1024);
     while let None = board.game_result() {
         println!("{:?}", &board);
         if computer_turn {
@@ -644,16 +644,6 @@ fn play_game_tei<E: Evaluator + Default + Send>(
             }
             TeiCommand::NewGame(_size) => {
                 info.clear_tt();
-                if init.add_noise {
-                    cfg_if::cfg_if! {
-                        if #[cfg(feature = "random")] {
-                            println!("Adding noise!");
-                            // eval.add_noise();
-                        } else {
-                            panic!("Unable to add noise because no rng was compiled!");
-                        }
-                    }
-                }
             }
             TeiCommand::Quit => {
                 break;
@@ -669,7 +659,7 @@ fn identify() {
     println!("id author Justin Kur");
     println!("option name HalfKomi type spin default 0 min 0 max 12");
     println!("option name Threads type spin default 1 min 1 max 8");
-    println!("option name Hash type spin default 8 min 1 max 1024");
+    println!("option name Hash type spin default 128 min 1 max 16384");
     println!("option name MaxNodes type spin default -1 min -1 max 10000000");
     println!("option name MultiPV type spin default 1 min 1 max 8");
     if TUNING {
@@ -686,7 +676,7 @@ fn tei_loop() {
     let (sender, r) = unbounded();
     let mut receiver = Some(r);
     let mut buffer = String::new();
-    let mut init = GameInitializer::new(2 << 22, 80, 0, false);
+    let mut init = GameInitializer::new(128 * 1024, 80, 0, false);
     identify();
     loop {
         std::io::stdin()
@@ -739,7 +729,7 @@ fn tei_loop() {
                 init.max_nodes = value.parse().unwrap();
                 println!("Setting MaxNodes to {}", init.max_nodes);
             } else if name == "Hash" {
-                init.hash_size = 1024 * 1024 * value.parse::<usize>().unwrap();
+                init.hash_size = 1024 * value.parse::<usize>().unwrap(); // Input in MB, internal in KB
                 println!("Setting Hash to {}", init.hash_size);
             } else if name == "MultiPV" {
                 init.multi_pv = value.parse().unwrap();
@@ -776,7 +766,7 @@ fn play_game_playtak(server_send: Sender<String>, server_recv: Receiver<TeiComma
     // const MAX_OPENING_LENGTH: usize = 10;
     let mut move_cache = Vec::new();
     let mut board = Board6::new().with_komi(KOMI);
-    let table = HashTable::new(2 << 26);
+    let table = HashTable::new(128 * 1024);
     let mut info = SearchInfo::new(MAX_DEPTH, &table);
     let book = load_playtak_book();
     // let mut eval = Weights6::default();

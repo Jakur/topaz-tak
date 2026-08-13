@@ -77,7 +77,7 @@ impl GameInitializer {
 impl std::default::Default for GameInitializer {
     fn default() -> Self {
         Self {
-            hash_size: 2 << 22,
+            hash_size: 128 * 1024,
             max_depth: 128,
             komi: 0,
             num_threads: 1,
