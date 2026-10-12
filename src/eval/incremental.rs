@@ -2,6 +2,7 @@ use crate::{pop_lowest, Piece};
 
 pub const STACK_DEPTH: usize = 10;
 pub const HIDDEN_SIZE: usize = 512;
+const NUM_BUCKETS: usize = 2;
 pub const SCALE: i32 = 400;
 pub const QA: i16 = 255;
 pub const QB: i16 = 64;
@@ -371,7 +372,14 @@ impl NNUE6 {
             vec: theirs_acc,
         };
         // Output
-        let eval = NNUE.evaluate(&ours.vec, &theirs.vec, ours.state.clone().into_iter());
+        let bucket = if takboard.white_to_move { 0 } else { 1 };
+        // let bucket = takboard.data_len as usize / NUM_BUCKETS;
+        let eval = NNUE.evaluate(
+            &ours.vec,
+            &theirs.vec,
+            ours.state.clone().into_iter(),
+            bucket as usize,
+        );
         if takboard.white_to_move {
             self.white = (ours, theirs);
         } else {
@@ -384,7 +392,13 @@ impl NNUE6 {
         let (ours, theirs) = build_features(takboard);
         let ours = Incremental::fresh_new(&NNUE, ours);
         let theirs = Incremental::fresh_new(&NNUE, theirs);
-        let eval = NNUE.evaluate(&ours.vec, &theirs.vec, ours.state.clone().into_iter());
+        let bucket = takboard.data_len as usize / NUM_BUCKETS;
+        let eval = NNUE.evaluate(
+            &ours.vec,
+            &theirs.vec,
+            ours.state.clone().into_iter(),
+            bucket,
+        );
         eval
     }
 }
@@ -431,28 +445,42 @@ pub struct Network {
     /// Column-Major `1 x (2 * HIDDEN_SIZE)`
     /// matrix, we use it like this to make the
     /// code nicer in `Network::evaluate`.
-    output_weights: [i16; 2 * HIDDEN_SIZE],
+    output_weights: [[i16; 2 * HIDDEN_SIZE]; NUM_BUCKETS],
     /// Piece-Square Table for Input
     pqst: [i16; TakSimple6::NUM_INPUTS],
     /// Scalar output bias.
-    output_bias: i16,
+    output_bias: [i16; NUM_BUCKETS],
 }
 
 impl Network {
     /// Calculates the output of the network, starting from the already
     /// calculated hidden layer (done efficiently during makemoves).
-    fn evaluate(&self, us: &Accumulator, them: &Accumulator, original: BitSetIterator) -> i32 {
+    fn evaluate(
+        &self,
+        us: &Accumulator,
+        them: &Accumulator,
+        original: BitSetIterator,
+        bucket: usize,
+    ) -> i32 {
         // Initialise output with bias.
         let mut sum = 0;
         let mut psqt_out = 0;
 
         // Side-To-Move Accumulator -> Output.
-        for (&input, &weight) in us.vals.iter().zip(&self.output_weights[..HIDDEN_SIZE]) {
+        for (&input, &weight) in us
+            .vals
+            .iter()
+            .zip(&self.output_weights[bucket][..HIDDEN_SIZE])
+        {
             sum += screlu(input) * i32::from(weight);
         }
 
         // Not-Side-To-Move Accumulator -> Output.
-        for (&input, &weight) in them.vals.iter().zip(&self.output_weights[HIDDEN_SIZE..]) {
+        for (&input, &weight) in them
+            .vals
+            .iter()
+            .zip(&self.output_weights[bucket][HIDDEN_SIZE..])
+        {
             sum += screlu(input) * i32::from(weight);
         }
 
@@ -463,8 +491,8 @@ impl Network {
         // Apply eval scale.
         psqt_out *= SCALE;
         // Remove quantisation.
-        let output =
-            (sum / (QA as i32) + i32::from(self.output_bias)) * SCALE / (QA as i32 * QB as i32);
+        let output = (sum / (QA as i32) + i32::from(self.output_bias[bucket])) * SCALE
+            / (QA as i32 * QB as i32);
         psqt_out /= i32::from(QA);
         output + psqt_out
     }

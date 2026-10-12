@@ -1032,7 +1032,7 @@ mod test {
     #[test]
     fn small_alpha_beta() {
         let tps = "2,1,1,1,1,2S/1,12,1,x,1C,11112/x,2,2,212,2C,11121/2,21122,x2,1,x/x3,1,1,x/x2,2,21,x,112S 1 34";
-        let table = HashTable::new(40);
+        let table = HashTable::new(256);
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut info = SearchInfo::new(4, &table);
         table.clear();
@@ -1048,7 +1048,7 @@ mod test {
     fn unk_puzzle() {
         let tps = "x2,1,21,2,2/1,2,21,1,21,2/1S,2,2,2C,2,2/21S,1,121C,x,1,12/2,2,121,1,1,1/2,2,x3,22S 1 27";
         let mut board = Board6::try_from_tps(tps).unwrap();
-        let table = HashTable::new(40);
+        let table = HashTable::new(256);
         let mut eval = Weights6::default();
         let mut info = SearchInfo::new(5, &table);
         search(&mut board, &mut eval, &mut info);
@@ -1059,7 +1059,7 @@ mod test {
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut eval = Weights6::default();
         eval.evaluate(&board, 2);
-        let table = HashTable::new(40);
+        let table = HashTable::new(256);
         let mut info = SearchInfo::new(5, &table);
         search(&mut board, &mut eval, &mut info);
     }
