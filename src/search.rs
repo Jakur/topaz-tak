@@ -168,7 +168,7 @@ where
                 }
                 break 'outer;
             }
-            if pv_moves.is_empty() {
+            if pv_moves.is_empty() && info.main_thread {
                 // The root search returned no PV (e.g. all candidate root
                 // moves were forbidden in multipv, or a fail-low produced
                 // no improving move). Treat this as the end of useful work.
