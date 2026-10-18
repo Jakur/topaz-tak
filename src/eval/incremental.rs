@@ -431,7 +431,7 @@ pub struct Network {
     /// code nicer in `Network::evaluate`.
     output_weights: [i16; 2 * HIDDEN_SIZE],
     /// Piece-Square Table for Input
-    pqst: [i16; TakSimple6::NUM_INPUTS],
+    // pqst: [i16; TakSimple6::NUM_INPUTS],
     /// Scalar output bias.
     output_bias: i16,
 }
@@ -442,7 +442,7 @@ impl Network {
     fn evaluate(&self, us: &Accumulator, them: &Accumulator, original: BitSetIterator) -> i32 {
         // Initialise output with bias.
         let mut sum = 0;
-        let mut psqt_out = 0;
+        // let mut psqt_out = 0;
 
         // Side-To-Move Accumulator -> Output.
         for (&input, &weight) in us.vals.iter().zip(&self.output_weights[..HIDDEN_SIZE]) {
@@ -455,16 +455,17 @@ impl Network {
         }
 
         // Update Piece Square Table
-        for idx in original {
-            psqt_out += i32::from(self.pqst[idx as usize]);
-        }
-        // Apply eval scale.
-        psqt_out *= SCALE;
+        // for idx in original {
+        //     psqt_out += i32::from(self.pqst[idx as usize]);
+        // }
+        // // Apply eval scale.
+        // psqt_out *= SCALE;
         // Remove quantisation.
         let output =
             (sum / (QA as i32) + i32::from(self.output_bias)) * SCALE / (QA as i32 * QB as i32);
-        psqt_out /= i32::from(QA);
-        output + psqt_out
+        // psqt_out /= i32::from(QA);
+        // output + psqt_out
+        output
     }
 }
 
