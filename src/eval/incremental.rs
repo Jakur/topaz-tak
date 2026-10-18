@@ -1,8 +1,6 @@
-use arrayvec::ArrayVec;
-
 use crate::{
-    board::{Bitboard6, Board6, StackUpdate, TakBoardUpdate},
-    pop_lowest, Color, GameMove, Piece, Position, TakBoard,
+    board::{Board6, TakBoardUpdate},
+    pop_lowest, Color, Piece, Position, TakBoard,
 };
 
 pub const STACK_DEPTH: usize = 10;
@@ -222,23 +220,7 @@ impl TakSimple6 {
             let ntm = [468, 0][c] + 36 * location + sq;
             f(stm, ntm);
         }
-        // f(
-        //     Self::SQUARE_INPUTS + 8 + reserves[0],
-        //     Self::SQUARE_INPUTS + 8 + reserves[1],
-        // );
-        // f(980 + reserves[1], 980 + reserves[0]);
-        // if pos.white_to_move {
-        //     // Am white, with reserves vs. Am black with reserves
-        //     f(
-        //         Self::SQUARE_INPUTS + reserves[0] / 2,
-        //         Self::SQUARE_INPUTS + 40 + reserves[1] / 2,
-        //     );
-        // } else {
-        //     f(
-        //         Self::SQUARE_INPUTS + 40 + reserves[0] / 2,
-        //         Self::SQUARE_INPUTS + reserves[1],
-        //     );
-        // }
+        // Does not handle reserves, must be manually calced
     }
 }
 
@@ -385,27 +367,9 @@ impl AccUpdate {
     fn apply_pending(&mut self, color: Color) {
         match self.eat_pending() {
             TakBoardUpdate::Empty => {
-                // unimplemented!(); // Unclear if this should ever happen
+                // Null move
             }
             TakBoardUpdate::Placement(game_move, swap) => {
-                // dbg!("Placement");
-                // dbg!(game_move.to_ptn::<Board6>());
-                // if res % 2 == 1 {
-                //     dbg!("Called the nasty reserve code");
-                //     // Was previously even, means it changed
-                //     let prev_res_idx = (res + 1) / 2;
-                //     let current_res_idx = res / 2;
-                //     let offset = if let Color::White = color { 0 } else { 40 };
-                //     // Gosh this is a hack, eh?
-                //     self.data.stm.add_feature(
-                //         TakSimple6::SQUARE_INPUTS + offset as usize + current_res_idx as usize,
-                //         &NNUE,
-                //     );
-                //     self.data.ntm.remove_feature(
-                //         TakSimple6::SQUARE_INPUTS + offset as usize + prev_res_idx as usize,
-                //         &NNUE,
-                //     );
-                // }
                 let square = game_move.src_index();
                 let mut place_piece = game_move.place_piece();
                 if swap == 1 {
@@ -473,6 +437,7 @@ impl AccUpdate {
         let ntm = [468, 0][ours] + 36 * location + square;
         update(&mut self.data, stm, ntm);
     }
+    #[inline]
     fn body_update<U: FnMut(&mut AccPair, usize, usize)>(
         &mut self,
         square: usize,
@@ -529,40 +494,21 @@ impl NNUE6 {
         self.dirty[ply_depth] = true;
     }
     pub fn incremental_eval(&mut self, board: &Board6, ply_depth: usize) -> i32 {
-        if self.dirty[ply_depth] {
-            let mut idx = ply_depth;
-            // dbg!(idx);
-            while self.dirty[idx] {
-                idx -= 1; // Safe, because 0 is never dirty
-                          // dbg!(idx);
-                if idx > usize::MAX - 10 {
-                    panic!("AHHH");
-                }
-            }
-            while idx < ply_depth {
-                idx += 1; // Safe because we want the first dirty index
-                let color = self.get_parity(idx);
-                let (head, tail) = self.data.split_at_mut(idx);
-                tail[0].update_acc_from_parent(&head.last().unwrap().data);
-                tail[0].apply_pending(color);
-                self.dirty[idx] = false;
-                // dbg!("FooBar");
-                // dbg!(idx);
-                // dbg!(ply_depth);
-            }
+        let mut idx = ply_depth;
+        while self.dirty[idx] {
+            idx -= 1; // Safe, because 0 is never dirty
+            assert!(idx < usize::MAX - 10);
+        }
+        while idx < ply_depth {
+            idx += 1; // Safe because we want the first dirty index
+            let color = self.get_parity(idx);
+            let (head, tail) = self.data.split_at_mut(idx);
+            tail[0].update_acc_from_parent(&head.last().unwrap().data);
+            tail[0].apply_pending(color);
+            self.dirty[idx] = false;
         }
         let pair = &self.data[ply_depth].data;
-        // let (ours, theirs) = build_features(takboard); // Dummy for now
-        //                                                // DEBUG:
-        // let ours_debug = Incremental::fresh_new(&NNUE, ours.clone());
-        // let theirs_debug = Incremental::fresh_new(&NNUE, theirs);
-        // if ours_debug.vec != pair.stm {
-        //     dbg!(&board);
-        //     dbg!(&ply_depth);
-        // }
-        // assert_eq!(ours_debug.vec, pair.stm);
-        // assert_eq!(theirs_debug.vec, pair.ntm);
-        // let eval_debug = Self::manual_eval(takboard, board);
+
         let mut cached_stm = pair.stm.clone();
         let mut cached_ntm = pair.ntm.clone();
         let w_reserves = board.pieces_reserve(Color::White) + board.caps_reserve(Color::White);
@@ -574,44 +520,9 @@ impl NNUE6 {
         } else {
             cached_stm.add_feature(TakSimple6::SQUARE_INPUTS + 40 + b_reserves / 2, &NNUE);
             cached_ntm.add_feature(TakSimple6::SQUARE_INPUTS + w_reserves / 2, &NNUE);
-            // f(
-            //     Self::SQUARE_INPUTS + 40 + reserves[0] / 2,
-            //     Self::SQUARE_INPUTS + reserves[1],
-            // );
         }
         let eval = NNUE.evaluate(&cached_stm, &cached_ntm);
-        // assert_eq!(eval_debug, eval);
         eval
-        // let (ours, theirs) = build_features(takboard);
-        // let (old_ours, old_theirs) = if ply_depth >= 2 && self.empty[ply_depth] {
-        //     &self.data[ply_depth - 2]
-        // } else {
-        //     &self.data[ply_depth]
-        // };
-        // // let (old_ours, old_theirs) = if takboard.white_to_move {
-        // //     (&self.white.0, &self.white.1)
-        // // } else {
-        // //     (&self.black.0, &self.black.1)
-        // // };
-        // // Ours
-        // let mut ours_acc = Accumulator::from_old(&old_ours.vec);
-        // ours.compute_diff(&old_ours.state, &mut ours_acc);
-        // let ours = Incremental {
-        //     state: ours,
-        //     vec: ours_acc,
-        // };
-        // // Theirs
-        // let mut theirs_acc = Accumulator::from_old(&old_theirs.vec);
-        // theirs.compute_diff(&old_theirs.state, &mut theirs_acc);
-        // let theirs = Incremental {
-        //     state: theirs,
-        //     vec: theirs_acc,
-        // };
-        // // Output
-        // let eval = NNUE.evaluate(&ours.vec, &theirs.vec, ours.state.clone().into_iter());
-        // self.data[ply_depth] = (ours, theirs);
-        // self.empty[ply_depth] = false;
-        // eval
     }
     fn rebuild_from_board(board: &Board6) -> AccPair {
         let takboard = super::build_nn_repr(board);
@@ -639,18 +550,7 @@ impl NNUE6 {
             theirs
                 .vec
                 .add_feature(TakSimple6::SQUARE_INPUTS + w_reserves / 2, &NNUE);
-            // f(
-            //     Self::SQUARE_INPUTS + 40 + reserves[0] / 2,
-            //     Self::SQUARE_INPUTS + reserves[1],
-            // );
         }
-        // for x in ours.state.clone() {
-        //     println!("Ours: {x}");
-        // }
-        // for x in theirs.state.clone() {
-        //     println!("Theirs: {x}");
-        // }
-        // println!("------------");
         let eval = NNUE.evaluate(&ours.vec, &theirs.vec);
         eval
     }
@@ -724,17 +624,9 @@ impl Network {
             sum += screlu(input) * i32::from(weight);
         }
 
-        // Update Piece Square Table
-        // for idx in original {
-        //     psqt_out += i32::from(self.pqst[idx as usize]);
-        // }
-        // // Apply eval scale.
-        // psqt_out *= SCALE;
         // Remove quantisation.
         let output =
             (sum / (QA as i32) + i32::from(self.output_bias)) * SCALE / (QA as i32 * QB as i32);
-        // psqt_out /= i32::from(QA);
-        // output + psqt_out
         output
     }
 }
@@ -832,69 +724,7 @@ impl IncrementalState {
         let b_val = 1 << (val % 64);
         self.bitset[b_idx] |= b_val
     }
-    pub fn compute_diff(&self, old: &Self, acc: &mut Accumulator) {
-        for (idx, (n, o)) in self
-            .bitset
-            .iter()
-            .copied()
-            .zip(old.bitset.iter().copied())
-            .enumerate()
-        {
-            let d = n ^ o; // Difference between bitsets
-            if d != 0 {
-                let mut sub = d & o; // Difference and Old
-                let mut add = d & n; // Difference and New
-                while sub != 0 {
-                    let bit_idx = pop_lowest(&mut sub);
-                    acc.remove_feature(idx * 64 + bit_idx as usize, &NNUE);
-                }
-                while add != 0 {
-                    let bit_idx = pop_lowest(&mut add);
-                    acc.add_feature(idx * 64 + bit_idx as usize, &NNUE);
-                }
-            }
-        }
-    }
-    #[cfg(test)]
-    pub fn diff(&self, old: &Self) -> (Vec<u16>, Vec<u16>) {
-        // Todo in the real algorithm, do not allocate vecs. This is just to demonstrate the idea
-        let mut subtract_indices = Vec::new();
-        let mut add_indices = Vec::new();
-        for (idx, (n, o)) in self
-            .bitset
-            .iter()
-            .copied()
-            .zip(old.bitset.iter().copied())
-            .enumerate()
-        {
-            let d = n ^ o; // Difference between bitsets
-            if d != 0 {
-                let mut sub = d & o; // Difference and Old
-                let mut add = d & n; // Difference and New
-                while sub != 0 {
-                    let bit_idx = pop_lowest(&mut sub);
-                    subtract_indices.push(idx as u16 * 64 + bit_idx as u16)
-                }
-                while add != 0 {
-                    let bit_idx = pop_lowest(&mut add);
-                    add_indices.push(idx as u16 * 64 + bit_idx as u16)
-                }
-            }
-        }
-        (subtract_indices, add_indices)
-    }
 }
-
-// fn pop_lowest(x: &mut u64) -> u32 {
-//     let highest_index = x.trailing_zeros();
-//     if highest_index == 64 {
-//         0
-//     } else {
-//         let value = 1 << highest_index;
-//         *x ^= value;
-//         highest_index
-//     }
-// }
 
 #[cfg(test)]
 mod tests {

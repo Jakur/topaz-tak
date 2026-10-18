@@ -1,4 +1,4 @@
-use crate::board::{Board6, TakBoard};
+use crate::board::TakBoard;
 use crate::eval::WIN_SCORE;
 use crate::move_gen::{
     CaptureHistory, CorrHist, CounterMoves, EvalHist, GameMove, PlaceHistory, SimpleMoveList,

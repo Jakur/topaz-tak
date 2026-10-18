@@ -304,7 +304,7 @@ macro_rules! eval_impl {
         impl Evaluator for $weights {
             type Game = $board;
             fn reset(&mut self) {}
-            fn begin_search(&mut self, board: &mut Self::Game) {}
+            fn begin_search(&mut self, _: &mut Self::Game) {}
             #[inline(never)]
             fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
                 let mut score = 0;
@@ -464,7 +464,7 @@ macro_rules! eval_impl {
             fn set_tempo_offset(&mut self, tempo: i32) {
                 self.tempo_offset = tempo;
             }
-            fn nudge(&mut self, pending: TakBoardUpdate, ply_depth: usize) {}
+            fn nudge(&mut self, _: TakBoardUpdate, _: usize) {}
         }
     };
 }

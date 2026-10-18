@@ -15,7 +15,7 @@ use telnet::Event;
 use topaz_tak::board::{Board5, Board6};
 use topaz_tak::eval::{Evaluator, Weights5, Weights6, NNUE6};
 use topaz_tak::proof::TinueSearch;
-use topaz_tak::search::{book, search, SearchHyper, SearchInfo};
+use topaz_tak::search::{book, search, SearchInfo};
 use topaz_tak::transposition_table::HashTable;
 use topaz_tak::*;
 const TUNING: bool = false;

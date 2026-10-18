@@ -1,6 +1,6 @@
 use super::{Color, GameResult};
 use crate::board::{TakBoard, TakBoardUpdate};
-use crate::eval::{Evaluator, LOSS_FOUND, WIN_FOUND};
+use crate::eval::Evaluator;
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{GameMove, MoveBuffer, RevGameMove, ScoredMove, SmartMoveBuffer};
 use crate::transposition_table::{HashEntry, ScoreCutoff};
@@ -452,8 +452,8 @@ where
         raw_v
     };
     // 1 endgame, 0 early game
-    let deep_endgame =
-        board.pieces_reserve(Color::White) == 1 || board.pieces_reserve(Color::Black) == 1;
+    // let deep_endgame =
+    //     board.pieces_reserve(Color::White) == 1 || board.pieces_reserve(Color::Black) == 1;
     // (R)FP
     let eval = if depth <= 3 && !is_pv {
         // Reverse futility pruning
