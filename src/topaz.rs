@@ -50,6 +50,8 @@ static SAVED_TPS: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     x
 });
 
+// Suspicious 2,1221122,1,1,1,2S/1,1,1,x,1C,1111212/x,x,2,212,2C,11/2,2,x,x,1,1/x,x,x,1,1,x/x,x,2,21,x,112S 2 32
+
 pub fn main() {
     let args: Vec<String> = env::args().collect();
     if let Some(arg1) = args.get(1) {
@@ -181,7 +183,8 @@ pub fn main() {
                     if let Ok(mut board) = Board6::try_from_tps(*tps) {
                         let outcome = search(&mut board, &mut eval, &mut info);
                         table.clear();
-                        outcome.unwrap().nodes
+                        let nodes = outcome.unwrap().nodes;
+                        nodes
                     } else {
                         0
                     }

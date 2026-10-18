@@ -528,12 +528,7 @@ impl NNUE6 {
         self.data[ply_depth].pending = pending;
         self.dirty[ply_depth] = true;
     }
-    pub fn incremental_eval(
-        &mut self,
-        takboard: BoardData,
-        board: &Board6,
-        ply_depth: usize,
-    ) -> i32 {
+    pub fn incremental_eval(&mut self, board: &Board6, ply_depth: usize) -> i32 {
         if self.dirty[ply_depth] {
             let mut idx = ply_depth;
             // dbg!(idx);
@@ -557,17 +552,17 @@ impl NNUE6 {
             }
         }
         let pair = &self.data[ply_depth].data;
-        let (ours, theirs) = build_features(takboard); // Dummy for now
-                                                       // DEBUG:
-        let ours_debug = Incremental::fresh_new(&NNUE, ours.clone());
-        let theirs_debug = Incremental::fresh_new(&NNUE, theirs);
-        if ours_debug.vec != pair.stm {
-            dbg!(&board);
-            dbg!(&ply_depth);
-        }
-        assert_eq!(ours_debug.vec, pair.stm);
-        assert_eq!(theirs_debug.vec, pair.ntm);
-        let eval_debug = Self::manual_eval(takboard, board);
+        // let (ours, theirs) = build_features(takboard); // Dummy for now
+        //                                                // DEBUG:
+        // let ours_debug = Incremental::fresh_new(&NNUE, ours.clone());
+        // let theirs_debug = Incremental::fresh_new(&NNUE, theirs);
+        // if ours_debug.vec != pair.stm {
+        //     dbg!(&board);
+        //     dbg!(&ply_depth);
+        // }
+        // assert_eq!(ours_debug.vec, pair.stm);
+        // assert_eq!(theirs_debug.vec, pair.ntm);
+        // let eval_debug = Self::manual_eval(takboard, board);
         let mut cached_stm = pair.stm.clone();
         let mut cached_ntm = pair.ntm.clone();
         let w_reserves = board.pieces_reserve(Color::White) + board.caps_reserve(Color::White);
@@ -584,8 +579,8 @@ impl NNUE6 {
             //     Self::SQUARE_INPUTS + reserves[1],
             // );
         }
-        let eval = NNUE.evaluate(&cached_stm, &cached_ntm, ours.into_iter());
-        assert_eq!(eval_debug, eval);
+        let eval = NNUE.evaluate(&cached_stm, &cached_ntm);
+        // assert_eq!(eval_debug, eval);
         eval
         // let (ours, theirs) = build_features(takboard);
         // let (old_ours, old_theirs) = if ply_depth >= 2 && self.empty[ply_depth] {
@@ -656,7 +651,7 @@ impl NNUE6 {
         //     println!("Theirs: {x}");
         // }
         // println!("------------");
-        let eval = NNUE.evaluate(&ours.vec, &theirs.vec, ours.state.clone().into_iter());
+        let eval = NNUE.evaluate(&ours.vec, &theirs.vec);
         eval
     }
 }
@@ -714,7 +709,7 @@ pub struct Network {
 impl Network {
     /// Calculates the output of the network, starting from the already
     /// calculated hidden layer (done efficiently during makemoves).
-    fn evaluate(&self, us: &Accumulator, them: &Accumulator, original: BitSetIterator) -> i32 {
+    fn evaluate(&self, us: &Accumulator, them: &Accumulator) -> i32 {
         // Initialise output with bias.
         let mut sum = 0;
         // let mut psqt_out = 0;

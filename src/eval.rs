@@ -32,12 +32,12 @@ impl Evaluator for NNUE6 {
     type Game = Board6;
 
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> Eval {
-        let takboard = build_nn_repr(game);
         // Depth 0 => Root
         let eval = if depth == 0 {
+            let takboard = build_nn_repr(game);
             Self::manual_eval(takboard, game)
         } else {
-            self.incremental_eval(takboard, game, depth)
+            self.incremental_eval(game, depth)
         };
         if depth % 2 == 0 {
             eval
