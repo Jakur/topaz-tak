@@ -85,6 +85,19 @@ pub trait TakBoard:
     }
 }
 
+#[derive(Debug)]
+pub enum TakBoardUpdate {
+    Empty,
+    Placement(GameMove, u8),
+    Stack(FullThrow),
+}
+
+impl std::default::Default for TakBoardUpdate {
+    fn default() -> Self {
+        Self::Empty
+    }
+}
+
 macro_rules! board_impl {
     ($t: ty, $bits: ty, $sz: expr, $flats: expr, $caps: expr) => {
         impl $t {
@@ -194,7 +207,7 @@ macro_rules! board_impl {
                 let mut tak_threats = Vec::new();
                 let mut stack_moves = Vec::new();
                 for m in legal_moves.iter().copied() {
-                    let rev = self.do_move(m);
+                    let (rev, _) = self.do_move(m);
                     self.null_move();
                     if let Some(_winning) = self.can_make_road(&mut stack_moves, hint) {
                         tak_threats.push(m);
@@ -565,7 +578,8 @@ macro_rules! board_impl {
                     for q_step in iter {
                         build.append(
                             self.board[q_step.index]
-                                .split_off(q_step.quantity as usize, &mut self.bits),
+                                .split_off(q_step.quantity as usize, &mut self.bits)
+                                .0,
                         );
                     }
                     self.board[src_index].add_stack(
@@ -578,7 +592,10 @@ macro_rules! board_impl {
                     }
                 }
             }
-            fn do_move(&mut self, m: GameMove) -> <Self as Position>::ReverseMove {
+            fn do_move(
+                &mut self,
+                m: GameMove,
+            ) -> (<Self as Position>::ReverseMove, TakBoardUpdate) {
                 let swap_pieces = self.move_num == 1;
                 let curr_fifty_move = self.fifty_move;
                 self.fifty_move += 1;
@@ -599,28 +616,37 @@ macro_rules! board_impl {
                     } else {
                         self.flats_left[piece.owner() as usize] -= 1;
                     }
-                    RevGameMove::new(m, src_index, curr_fifty_move)
+                    (
+                        RevGameMove::new(m, src_index, curr_fifty_move),
+                        TakBoardUpdate::Placement(m, swap_pieces as u8),
+                    )
                 } else {
+                    let mut stack_out = FullThrow::empty();
                     let num_pieces = m.number() as usize;
                     // let stack_move = m.forward_iter(Self::SIZE);
                     let stack_move = m.quantity_iter(Self::SIZE);
                     let src_stack = &mut self.board[src_index];
                     debug_assert!(src_stack.len() >= num_pieces);
-                    let mut take_stack = src_stack.split_off(num_pieces, &mut self.bits);
+                    let (mut take_stack, update) = src_stack.split_off(num_pieces, &mut self.bits);
+                    stack_out.push(update);
                     let mut last_idx = 0;
                     for q_step in stack_move.into_iter() {
                         debug_assert!(q_step.index != src_index);
-                        self.board[q_step.index].add_stack(
+                        let update = self.board[q_step.index].add_stack(
                             q_step.quantity as usize,
                             &mut take_stack,
                             &mut self.bits,
                         );
+                        stack_out.push(update);
                         last_idx = q_step.index;
                     }
                     if m.crush() {
                         self.fifty_move = 0;
                     }
-                    RevGameMove::new(m, last_idx, curr_fifty_move)
+                    (
+                        RevGameMove::new(m, last_idx, curr_fifty_move),
+                        TakBoardUpdate::Stack(stack_out),
+                    )
                 }
             }
         }
@@ -861,7 +887,7 @@ mod test {
         let mut board = Board6::try_from_tps(tps).unwrap();
         let mut moves = Vec::new();
         generate_all_moves(&board, &mut moves);
-        let rev = board.do_move(GameMove::try_from_ptn("2d6-11", &board).unwrap());
+        let (rev, _) = board.do_move(GameMove::try_from_ptn("2d6-11", &board).unwrap());
         board.null_move();
         let mut storage = Vec::new();
         assert!(board.can_make_road(&mut storage, None).is_some());
@@ -934,7 +960,7 @@ mod test {
         let mut board = Board6::try_from_tps(s).unwrap();
         let check_move = |tps: &str, ptn: &str, board: &mut Board6| {
             let parsed = GameMove::try_from_ptn(ptn, board).unwrap();
-            let rev_move = board.do_move(parsed);
+            let (rev_move, _) = board.do_move(parsed);
             board.reverse_move(rev_move);
             assert_eq!(*board, Board6::try_from_tps(tps).unwrap())
         };

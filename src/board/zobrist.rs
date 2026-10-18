@@ -200,7 +200,7 @@ mod test {
         generate_all_moves(&board, &mut moves);
         assert!(moves.iter().any(|m| m.crush()));
         for m in moves {
-            let rev = board.do_move(m);
+            let (rev, _) = board.do_move(m);
             let hash = TABLE.manual_build_hash(&board);
             assert_eq!(board.bits.zobrist(), hash.0 ^ hash.1);
             board.reverse_move(rev);
@@ -218,7 +218,7 @@ mod test {
         assert_eq!(buffer.len(), 174);
         let mut hash = 0;
         for mv in buffer {
-            let rev = board.do_move(mv);
+            let (rev, _) = board.do_move(mv);
             hash ^= board.hash();
             board.reverse_move(rev);
         }

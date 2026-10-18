@@ -569,6 +569,7 @@ fn play_game_tei<E: Evaluator + Default + Send>(
         let message = receiver.recv()?;
         match message {
             TeiCommand::Go(go) => {
+                eval.reset();
                 let mut info = if let Some(max_depth) = go.depth {
                     SearchInfo::new(max_depth, &table)
                 } else {

@@ -1,6 +1,7 @@
 use super::{Bitboard, Piece, Stack};
 use crate::board::BitIndexIterator;
 use crate::board::TakBoard;
+use crate::board::TakBoardUpdate;
 use crate::board::{Board5, Board6};
 use crate::Color;
 use crate::Position;
@@ -22,6 +23,9 @@ pub trait Evaluator {
     type Game: TakBoard + Send;
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> Eval;
     fn set_tempo_offset(&mut self, tempo: Eval);
+    fn reset(&mut self);
+    fn nudge(&mut self, pending: TakBoardUpdate, ply_depth: usize);
+    fn begin_search(&mut self, board: &mut Self::Game);
 }
 
 impl Evaluator for NNUE6 {
@@ -29,7 +33,12 @@ impl Evaluator for NNUE6 {
 
     fn evaluate(&mut self, game: &Self::Game, depth: usize) -> Eval {
         let takboard = build_nn_repr(game);
-        let eval = self.incremental_eval(takboard);
+        // Depth 0 => Root
+        let eval = if depth == 0 {
+            Self::manual_eval(takboard, game)
+        } else {
+            self.incremental_eval(takboard, game, depth)
+        };
         if depth % 2 == 0 {
             eval
         } else {
@@ -38,6 +47,15 @@ impl Evaluator for NNUE6 {
     }
     fn set_tempo_offset(&mut self, tempo: Eval) {
         self.tempo_offset = tempo;
+    }
+    fn reset(&mut self) {
+        self.clear();
+    }
+    fn nudge(&mut self, pending: TakBoardUpdate, ply_depth: usize) {
+        self._nudge(pending, ply_depth);
+    }
+    fn begin_search(&mut self, board: &mut Self::Game) {
+        self._begin_search(board);
     }
 }
 
@@ -285,6 +303,8 @@ macro_rules! eval_impl {
         }
         impl Evaluator for $weights {
             type Game = $board;
+            fn reset(&mut self) {}
+            fn begin_search(&mut self, board: &mut Self::Game) {}
             #[inline(never)]
             fn evaluate(&mut self, game: &Self::Game, depth: usize) -> i32 {
                 let mut score = 0;
@@ -444,6 +464,7 @@ macro_rules! eval_impl {
             fn set_tempo_offset(&mut self, tempo: i32) {
                 self.tempo_offset = tempo;
             }
+            fn nudge(&mut self, pending: TakBoardUpdate, ply_depth: usize) {}
         }
     };
 }

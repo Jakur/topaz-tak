@@ -158,7 +158,7 @@ where
             let mut legal_moves = Vec::new();
             generate_all_moves(&self.board, &mut legal_moves);
             if legal_moves.contains(&m) {
-                let rev = self.board.do_move(m);
+                let (rev, _) = self.board.do_move(m);
                 self.view_hist.push((m, rev));
             } else {
                 return Err(anyhow!("Attempted to execute illegal move, breaking!"));
@@ -170,7 +170,7 @@ where
         let mut rev_moves = Vec::new();
         for ptn in moves.iter() {
             let m = GameMove::try_from_ptn(ptn, &self.board).unwrap();
-            let rev = self.board.do_move(m);
+            let (rev, _) = self.board.do_move(m);
             self.expand.insert(self.board.hash());
             rev_moves.push(rev);
         }
@@ -206,7 +206,7 @@ where
             Some(AttackerOutcome::TakThreats(moves)) => {
                 for m in moves.clone().into_iter() {
                     // Children will be a defender node
-                    let rev = self.board.do_move(m);
+                    let (rev, _) = self.board.do_move(m);
                     let bounds = self.bounds_table.get(&self.board.hash()).unwrap();
                     let solved = if bounds.phi == INFINITY {
                         Solved::Proved(m)
@@ -241,7 +241,7 @@ where
             DefenderOutcome::Defenses(vec) => {
                 for m in vec {
                     // Children will be a attacker node
-                    let rev = self.board.do_move(m);
+                    let (rev, _) = self.board.do_move(m);
                     let bounds = self.bounds_table.get(&self.board.hash()).unwrap();
                     let solved = if bounds.phi == INFINITY {
                         Solved::Disproved(m)
@@ -421,7 +421,7 @@ where
                         moves
                     };
                     let min = search.into_iter().min_by_key(|&mv| {
-                        let rev = self.board.do_move(mv);
+                        let (rev, _) = self.board.do_move(mv);
                         let lookup = self
                             .bounds_table
                             .get(&self.board.hash())
@@ -431,7 +431,7 @@ where
                         lookup
                     });
                     if let Some(mv) = min {
-                        hist.push(self.board.do_move(mv));
+                        hist.push(self.board.do_move(mv).0);
                         pv.push(mv);
                     } else {
                         break;
@@ -441,7 +441,7 @@ where
                     // We are on the losing side, follow last analyzed line
                     if let Some(&game_move) = self.replies.get(&self.board.hash()) {
                         pv.push(game_move);
-                        let rev = self.board.do_move(game_move);
+                        let (rev, _) = self.board.do_move(game_move);
                         hist.push(rev);
                     } else {
                         break;
@@ -460,7 +460,7 @@ where
             return;
         }
         if child.game_move != GameMove::null_move() {
-            let rev = self.board.do_move(child.game_move);
+            let (rev, _) = self.board.do_move(child.game_move);
             self.rev_moves.push(rev);
         }
         self.zobrist_hist.push(self.board.hash());
@@ -612,7 +612,7 @@ where
     fn init_pns(&mut self, game_move: GameMove, depth: u32) -> Option<Child> {
         let side_to_move = self.board.side_to_move();
         let attacker = side_to_move == self.attacker;
-        let rev = self.board.do_move(game_move);
+        let (rev, _) = self.board.do_move(game_move);
         let hash = self.board.hash();
         // let default_bounds = Bounds::default();
         let default_bounds = if attacker {
@@ -691,7 +691,7 @@ where
             }
         }
         for mv in moves {
-            let rev = self.board.do_move(mv);
+            let (rev, _) = self.board.do_move(mv);
             hist.push(mv.to_ptn::<T>());
             let zobrist = self.board.zobrist();
             if !zobrist_hist.insert(zobrist) {

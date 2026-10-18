@@ -280,7 +280,7 @@ impl SmartMoveBuffer {
             let mut tak_score = 0;
             if check_tak {
                 let mv = GameMove::from_placement(Piece::flat(side), idx);
-                let rev = board.do_move(mv);
+                let (rev, _) = board.do_move(mv);
                 board.null_move();
                 let buffer = info.buffer();
                 if let Some(_winning) = board.can_make_road(buffer, None) {

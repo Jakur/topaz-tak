@@ -1,7 +1,5 @@
-use std::result;
-
 use super::{Color, GameResult};
-use crate::board::TakBoard;
+use crate::board::{TakBoard, TakBoardUpdate};
 use crate::eval::{Evaluator, LOSS_FOUND, WIN_FOUND};
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{GameMove, MoveBuffer, RevGameMove, ScoredMove, SmartMoveBuffer};
@@ -83,6 +81,7 @@ where
     let mut outcome: Option<SearchOutcome<T>> = None;
     // let mut node_counts = vec![1];
     info.start_search(board.ply());
+    eval.begin_search(board);
     eval.set_tempo_offset(info.hyper.tempo_bonus);
     let mut alphas = [-1_000_000; 8];
     let mut betas = [1_000_000; 8];
@@ -499,6 +498,7 @@ where
     {
         // Require that we can place a new flat without losing
         board.null_move();
+        evaluator.nudge(TakBoardUpdate::Empty, ply_depth + 1);
         info.hash_history.push(0, board.ply());
         // Check if our position is so good that passing still gives opp a bad pos
         let score = -1
@@ -579,7 +579,8 @@ where
             // TODO maybe a really fast legal checker is faster
             {
                 let m = entry.game_move;
-                let rev_move = board.do_move(m);
+                let (rev_move, update) = board.do_move(m);
+                evaluator.nudge(update, ply_depth + 1);
                 info.hash_history.push(board.hash(), board.ply());
                 let score = -1
                     * alpha_beta(
@@ -711,8 +712,8 @@ where
         //         // info.hist_moves.debug();
         //     }
         // }
-
-        let rev_move = board.do_move(mv);
+        let (rev_move, update) = board.do_move(mv);
+        evaluator.nudge(update, ply_depth + 1);
         info.hash_history.push(board.hash(), board.ply());
         let next_extensions = extensions;
 
@@ -925,7 +926,7 @@ where
     let mut best_eval = i32::MIN;
     let mut best_move = None;
     let child_evaluations = moves.into_iter().map(|mv| {
-        let reverse_move = board.do_move(mv);
+        let (reverse_move, _) = board.do_move(mv);
         let eval = -1 * naive_minimax(board, eval, depth - 1);
         board.reverse_move(reverse_move);
         (mv, eval)
@@ -968,7 +969,7 @@ fn naive_minimax<T: TakBoard, E: Evaluator<Game = T>>(
         let mut moves = vec![];
         board.generate_moves(&mut moves);
         let child_evaluations = moves.into_iter().map(|mv| {
-            let reverse_move = board.do_move(mv);
+            let (reverse_move, _) = board.do_move(mv);
             let eval = -1 * naive_minimax(board, eval, depth - 1);
             board.reverse_move(reverse_move);
             eval

@@ -1,4 +1,9 @@
-use crate::{pop_lowest, Piece};
+use arrayvec::ArrayVec;
+
+use crate::{
+    board::{Bitboard6, Board6, StackUpdate, TakBoardUpdate},
+    pop_lowest, Color, GameMove, Piece, Position, TakBoard,
+};
 
 pub const STACK_DEPTH: usize = 10;
 pub const HIDDEN_SIZE: usize = 512;
@@ -222,20 +227,18 @@ impl TakSimple6 {
         //     Self::SQUARE_INPUTS + 8 + reserves[1],
         // );
         // f(980 + reserves[1], 980 + reserves[0]);
-        if pos.white_to_move {
-            // Am white, with reserves vs. Am black with reserves
-            f(
-                Self::SQUARE_INPUTS + reserves[0] / 2,
-                Self::SQUARE_INPUTS + 40 + reserves[1] / 2,
-            );
-            // f(Self::SQUARE_INPUTS, Self::SQUARE_INPUTS + 1);
-        } else {
-            // Am with reserves
-            f(
-                Self::SQUARE_INPUTS + 40 + reserves[0] / 2,
-                Self::SQUARE_INPUTS + reserves[1],
-            );
-        }
+        // if pos.white_to_move {
+        //     // Am white, with reserves vs. Am black with reserves
+        //     f(
+        //         Self::SQUARE_INPUTS + reserves[0] / 2,
+        //         Self::SQUARE_INPUTS + 40 + reserves[1] / 2,
+        //     );
+        // } else {
+        //     f(
+        //         Self::SQUARE_INPUTS + 40 + reserves[0] / 2,
+        //         Self::SQUARE_INPUTS + reserves[1],
+        //     );
+        // }
     }
 }
 
@@ -288,7 +291,7 @@ impl Iterator for TakBoardIter {
 
 /// A column of the feature-weights matrix.
 /// Note the `align(64)`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 #[repr(C, align(64))]
 pub struct Accumulator {
     vals: [i16; HIDDEN_SIZE],
@@ -340,48 +343,319 @@ impl Accumulator {
     }
 }
 
+struct AccPair {
+    stm: Accumulator,
+    ntm: Accumulator,
+}
+
+impl AccPair {
+    fn new(stm: Accumulator, ntm: Accumulator) -> Self {
+        Self { stm, ntm }
+    }
+    fn flip(&mut self) {
+        std::mem::swap(&mut self.stm, &mut self.ntm);
+    }
+    fn flip_from_parent(parent: &AccPair) -> Self {
+        Self::new(parent.ntm.clone(), parent.stm.clone())
+    }
+    fn f(&mut self, stm: usize, ntm: usize) {
+        self.stm.add_feature(stm, &NNUE);
+        self.ntm.add_feature(ntm, &NNUE);
+    }
+    fn f_inverse(&mut self, stm: usize, ntm: usize) {
+        self.stm.remove_feature(stm, &NNUE);
+        self.ntm.remove_feature(ntm, &NNUE);
+    }
+}
+
+struct AccUpdate {
+    data: AccPair,
+    pending: TakBoardUpdate,
+}
+
+impl AccUpdate {
+    fn new(data: AccPair, pending: TakBoardUpdate) -> Self {
+        Self { data, pending }
+    }
+    fn eat_pending(&mut self) -> TakBoardUpdate {
+        let mut new = TakBoardUpdate::Empty;
+        std::mem::swap(&mut self.pending, &mut new);
+        new
+    }
+    fn apply_pending(&mut self, color: Color) {
+        match self.eat_pending() {
+            TakBoardUpdate::Empty => {
+                // unimplemented!(); // Unclear if this should ever happen
+            }
+            TakBoardUpdate::Placement(game_move, swap) => {
+                // dbg!("Placement");
+                // dbg!(game_move.to_ptn::<Board6>());
+                // if res % 2 == 1 {
+                //     dbg!("Called the nasty reserve code");
+                //     // Was previously even, means it changed
+                //     let prev_res_idx = (res + 1) / 2;
+                //     let current_res_idx = res / 2;
+                //     let offset = if let Color::White = color { 0 } else { 40 };
+                //     // Gosh this is a hack, eh?
+                //     self.data.stm.add_feature(
+                //         TakSimple6::SQUARE_INPUTS + offset as usize + current_res_idx as usize,
+                //         &NNUE,
+                //     );
+                //     self.data.ntm.remove_feature(
+                //         TakSimple6::SQUARE_INPUTS + offset as usize + prev_res_idx as usize,
+                //         &NNUE,
+                //     );
+                // }
+                let square = game_move.src_index();
+                let mut place_piece = game_move.place_piece();
+                if swap == 1 {
+                    place_piece = place_piece.swap_color();
+                }
+                let psquare = super::build_piece_square(square, place_piece);
+                self.top_update(square, psquare, color, place_piece.is_cap(), AccPair::f);
+            }
+            TakBoardUpdate::Stack(full_throw) => {
+                // dbg!("Stack Move");
+                for stack_update in full_throw.data {
+                    let square = stack_update.sq as usize;
+                    let old_top = stack_update.old.top_piece();
+                    let new_top = stack_update.new.top_piece();
+                    if old_top != new_top {
+                        if let Some(old) = old_top {
+                            let old_pq = super::build_piece_square(square, old);
+                            self.top_update(
+                                square,
+                                old_pq,
+                                color,
+                                old.is_cap(),
+                                AccPair::f_inverse,
+                            );
+                        }
+                        if let Some(new) = new_top {
+                            let new_pq = super::build_piece_square(square, new);
+                            self.top_update(square, new_pq, color, new.is_cap(), AccPair::f);
+                        }
+                    }
+                    let old_friendly = stack_update.old.under_bits(color);
+                    let new_friendly = stack_update.new.under_bits(color);
+                    let old_enemy = stack_update.old.under_bits(!color);
+                    let new_enemy = stack_update.new.under_bits(!color);
+                    let friendly_diff = old_friendly ^ new_friendly;
+                    let enemy_diff = old_enemy ^ new_enemy;
+                    let friendly_in = friendly_diff & new_friendly;
+                    let friendly_out = friendly_diff & old_friendly;
+                    let enemy_in = enemy_diff & new_enemy;
+                    let enemy_out = enemy_diff & old_enemy;
+                    self.body_update(square, 0, friendly_out, AccPair::f_inverse);
+                    self.body_update(square, 0, friendly_in, AccPair::f);
+                    self.body_update(square, 1, enemy_out, AccPair::f_inverse);
+                    self.body_update(square, 1, enemy_in, AccPair::f);
+                }
+            }
+        }
+    }
+    fn top_update<U: FnMut(&mut AccPair, usize, usize)>(
+        &mut self,
+        square: usize,
+        psquare: PieceSquare,
+        color: Color,
+        is_cap: bool,
+        mut update: U,
+    ) {
+        let mut piece = psquare.piece();
+        if is_cap {
+            piece = piece.promote_cap();
+        }
+        let ours = (piece.is_white() ^ color.is_white()) as usize; // 0 if matches, else 1
+        let location = usize::from(piece.without_color());
+
+        let stm = [0, 468][ours] + 36 * location + square;
+        let ntm = [468, 0][ours] + 36 * location + square;
+        update(&mut self.data, stm, ntm);
+    }
+    fn body_update<U: FnMut(&mut AccPair, usize, usize)>(
+        &mut self,
+        square: usize,
+        ours: usize,
+        mut bits: u16,
+        mut update: U,
+    ) {
+        const DEPTH_TABLE: [usize; 10] = [0, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+        while bits != 0 {
+            let lowest = bits.lowest_one().unwrap();
+            if lowest < 9 {
+                let location = DEPTH_TABLE[1 + lowest as usize];
+                let stm = [0, 468][ours] + 36 * location + square;
+                let ntm = [468, 0][ours] + 36 * location + square;
+                update(&mut self.data, stm, ntm);
+            }
+            bits = bits & !(1 << lowest); // Should lop off lowest one
+        }
+    }
+    fn update_acc_from_parent(&mut self, parent: &AccPair) {
+        self.data = AccPair::flip_from_parent(parent);
+    }
+}
+
 pub struct NNUE6 {
-    white: (Incremental, Incremental),
-    black: (Incremental, Incremental),
+    dirty: [bool; 64],
+    data: [AccUpdate; 64],
     pub(crate) tempo_offset: i32,
+    root_player: Color,
 }
 
 impl NNUE6 {
-    pub fn incremental_eval(&mut self, takboard: BoardData) -> i32 {
-        let (ours, theirs) = build_features(takboard);
-        let (old_ours, old_theirs) = if takboard.white_to_move {
-            (&self.white.0, &self.white.1)
-        } else {
-            (&self.black.0, &self.black.1)
-        };
-        // Ours
-        let mut ours_acc = Accumulator::from_old(&old_ours.vec);
-        ours.compute_diff(&old_ours.state, &mut ours_acc);
-        let ours = Incremental {
-            state: ours,
-            vec: ours_acc,
-        };
-        // Theirs
-        let mut theirs_acc = Accumulator::from_old(&old_theirs.vec);
-        theirs.compute_diff(&old_theirs.state, &mut theirs_acc);
-        let theirs = Incremental {
-            state: theirs,
-            vec: theirs_acc,
-        };
-        // Output
-        let eval = NNUE.evaluate(&ours.vec, &theirs.vec, ours.state.clone().into_iter());
-        if takboard.white_to_move {
-            self.white = (ours, theirs);
-        } else {
-            self.black = (ours, theirs);
+    pub fn clear(&mut self) {
+        for e in self.dirty.iter_mut() {
+            *e = true;
         }
-        eval
     }
-    #[cfg(test)]
-    pub(crate) fn manual_eval(takboard: BoardData) -> i32 {
+    fn get_parity(&self, idx: usize) -> Color {
+        if idx % 2 == 0 {
+            self.root_player
+        } else {
+            !self.root_player
+        }
+    }
+    pub fn _begin_search(&mut self, board: &mut crate::Board6) {
+        let root_even = Self::rebuild_from_board(board);
+        self.data[0] = AccUpdate::new(root_even, TakBoardUpdate::Empty);
+        self.dirty[0] = false;
+        self.root_player = board.side_to_move();
+    }
+    pub fn _nudge(&mut self, pending: TakBoardUpdate, ply_depth: usize) {
+        assert!(ply_depth > 0);
+        self.data[ply_depth].pending = pending;
+        self.dirty[ply_depth] = true;
+    }
+    pub fn incremental_eval(
+        &mut self,
+        takboard: BoardData,
+        board: &Board6,
+        ply_depth: usize,
+    ) -> i32 {
+        if self.dirty[ply_depth] {
+            let mut idx = ply_depth;
+            // dbg!(idx);
+            while self.dirty[idx] {
+                idx -= 1; // Safe, because 0 is never dirty
+                          // dbg!(idx);
+                if idx > usize::MAX - 10 {
+                    panic!("AHHH");
+                }
+            }
+            while idx < ply_depth {
+                idx += 1; // Safe because we want the first dirty index
+                let color = self.get_parity(idx);
+                let (head, tail) = self.data.split_at_mut(idx);
+                tail[0].update_acc_from_parent(&head.last().unwrap().data);
+                tail[0].apply_pending(color);
+                self.dirty[idx] = false;
+                // dbg!("FooBar");
+                // dbg!(idx);
+                // dbg!(ply_depth);
+            }
+        }
+        let pair = &self.data[ply_depth].data;
+        let (ours, theirs) = build_features(takboard); // Dummy for now
+                                                       // DEBUG:
+        let ours_debug = Incremental::fresh_new(&NNUE, ours.clone());
+        let theirs_debug = Incremental::fresh_new(&NNUE, theirs);
+        if ours_debug.vec != pair.stm {
+            dbg!(&board);
+            dbg!(&ply_depth);
+        }
+        assert_eq!(ours_debug.vec, pair.stm);
+        assert_eq!(theirs_debug.vec, pair.ntm);
+        let eval_debug = Self::manual_eval(takboard, board);
+        let mut cached_stm = pair.stm.clone();
+        let mut cached_ntm = pair.ntm.clone();
+        let w_reserves = board.pieces_reserve(Color::White) + board.caps_reserve(Color::White);
+        let b_reserves = board.pieces_reserve(Color::Black) + board.caps_reserve(Color::Black);
+        if let Color::White = board.side_to_move() {
+            // Am white, with reserves vs. Am black with reserves
+            cached_stm.add_feature(TakSimple6::SQUARE_INPUTS + w_reserves / 2, &NNUE);
+            cached_ntm.add_feature(TakSimple6::SQUARE_INPUTS + 40 + b_reserves / 2, &NNUE);
+        } else {
+            cached_stm.add_feature(TakSimple6::SQUARE_INPUTS + 40 + b_reserves / 2, &NNUE);
+            cached_ntm.add_feature(TakSimple6::SQUARE_INPUTS + w_reserves / 2, &NNUE);
+            // f(
+            //     Self::SQUARE_INPUTS + 40 + reserves[0] / 2,
+            //     Self::SQUARE_INPUTS + reserves[1],
+            // );
+        }
+        let eval = NNUE.evaluate(&cached_stm, &cached_ntm, ours.into_iter());
+        assert_eq!(eval_debug, eval);
+        eval
+        // let (ours, theirs) = build_features(takboard);
+        // let (old_ours, old_theirs) = if ply_depth >= 2 && self.empty[ply_depth] {
+        //     &self.data[ply_depth - 2]
+        // } else {
+        //     &self.data[ply_depth]
+        // };
+        // // let (old_ours, old_theirs) = if takboard.white_to_move {
+        // //     (&self.white.0, &self.white.1)
+        // // } else {
+        // //     (&self.black.0, &self.black.1)
+        // // };
+        // // Ours
+        // let mut ours_acc = Accumulator::from_old(&old_ours.vec);
+        // ours.compute_diff(&old_ours.state, &mut ours_acc);
+        // let ours = Incremental {
+        //     state: ours,
+        //     vec: ours_acc,
+        // };
+        // // Theirs
+        // let mut theirs_acc = Accumulator::from_old(&old_theirs.vec);
+        // theirs.compute_diff(&old_theirs.state, &mut theirs_acc);
+        // let theirs = Incremental {
+        //     state: theirs,
+        //     vec: theirs_acc,
+        // };
+        // // Output
+        // let eval = NNUE.evaluate(&ours.vec, &theirs.vec, ours.state.clone().into_iter());
+        // self.data[ply_depth] = (ours, theirs);
+        // self.empty[ply_depth] = false;
+        // eval
+    }
+    fn rebuild_from_board(board: &Board6) -> AccPair {
+        let takboard = super::build_nn_repr(board);
         let (ours, theirs) = build_features(takboard);
         let ours = Incremental::fresh_new(&NNUE, ours);
         let theirs = Incremental::fresh_new(&NNUE, theirs);
+        AccPair::new(ours.vec, theirs.vec)
+    }
+    pub(crate) fn manual_eval(takboard: BoardData, board: &Board6) -> i32 {
+        let (ours, theirs) = build_features(takboard);
+        let mut ours = Incremental::fresh_new(&NNUE, ours);
+        let mut theirs = Incremental::fresh_new(&NNUE, theirs);
+        let w_reserves = board.pieces_reserve(Color::White) + board.caps_reserve(Color::White);
+        let b_reserves = board.pieces_reserve(Color::Black) + board.caps_reserve(Color::Black);
+        if let Color::White = board.side_to_move() {
+            // Am white, with reserves vs. Am black with reserves
+            ours.vec
+                .add_feature(TakSimple6::SQUARE_INPUTS + w_reserves / 2, &NNUE);
+            theirs
+                .vec
+                .add_feature(TakSimple6::SQUARE_INPUTS + 40 + b_reserves / 2, &NNUE);
+        } else {
+            ours.vec
+                .add_feature(TakSimple6::SQUARE_INPUTS + 40 + b_reserves / 2, &NNUE);
+            theirs
+                .vec
+                .add_feature(TakSimple6::SQUARE_INPUTS + w_reserves / 2, &NNUE);
+            // f(
+            //     Self::SQUARE_INPUTS + 40 + reserves[0] / 2,
+            //     Self::SQUARE_INPUTS + reserves[1],
+            // );
+        }
+        // for x in ours.state.clone() {
+        //     println!("Ours: {x}");
+        // }
+        // for x in theirs.state.clone() {
+        //     println!("Theirs: {x}");
+        // }
+        // println!("------------");
         let eval = NNUE.evaluate(&ours.vec, &theirs.vec, ours.state.clone().into_iter());
         eval
     }
@@ -389,15 +663,16 @@ impl NNUE6 {
 
 impl Default for NNUE6 {
     fn default() -> Self {
+        let acc = Incremental::fresh_empty(&NNUE).vec;
         Self {
-            white: (
-                Incremental::fresh_empty(&NNUE),
-                Incremental::fresh_empty(&NNUE),
-            ),
-            black: (
-                Incremental::fresh_empty(&NNUE),
-                Incremental::fresh_empty(&NNUE),
-            ),
+            dirty: [true; 64],
+            data: std::array::from_fn(|_| {
+                AccUpdate::new(
+                    AccPair::new(acc.clone(), acc.clone()),
+                    TakBoardUpdate::Empty,
+                )
+            }),
+            root_player: Color::White,
             tempo_offset: 100,
         }
     }
@@ -485,9 +760,12 @@ impl Incremental {
         }
     }
     fn fresh_new(net: &Network, data: IncrementalState) -> Self {
+        const THRESHOLD: u16 = TakSimple6::SQUARE_INPUTS as u16;
         let mut acc = Accumulator::new(net);
         for d in data.clone().into_iter() {
-            acc.add_feature(d as usize, net);
+            if d < THRESHOLD {
+                acc.add_feature(d as usize, net);
+            }
         }
         Self {
             vec: acc,

@@ -1,9 +1,14 @@
+use arrayvec::ArrayVec;
+
+use crate::Color;
+
 use super::bitboard::{Bitboard, BitboardStorage};
 use super::Piece;
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct Stack {
     data: u64,
+    /// Note the bits store the color of the top piece at the end as well
     length: u8,
     index: u8,
     top_piece: Piece,
@@ -204,13 +209,26 @@ impl Stack {
     pub fn is_empty(&self) -> bool {
         self.length == 0
     }
+    fn inspect(&self) -> StackData {
+        if self.length == 0 {
+            return StackData::new(0, 0, 0);
+        }
+        if self.length == 1 {
+            return StackData::new(1, 0, self.top_piece as u8);
+        }
+        let mask = (1 << (self.length)) - 1;
+        let bits = self.data & mask & 0b111_1111_1111;
+        let bits = bits >> 1; // Lop off top
+        StackData::new(self.length, bits as u16, self.top_piece as u8)
+    }
     pub fn add_stack<T: Bitboard>(
         &mut self,
         num: usize,
         other: &mut Pickup,
         bits: &mut BitboardStorage<T>,
-    ) {
+    ) -> StackUpdate {
         self.hash_out_top(bits);
+        let st = self.inspect();
         let add = other.take(num as u8);
         // dbg!(format!("{:X}", add));
         self.data = self.data << num;
@@ -225,7 +243,9 @@ impl Stack {
             }
         }
         self.length += num as u8;
+        let end = self.inspect();
         self.hash_in_many(num, bits);
+        StackUpdate::new(st, end, self.index)
     }
     // Convert the top piece of a stack into a Capstone
     pub fn promote_top<T: Bitboard>(&mut self, bits: &mut BitboardStorage<T>) -> crate::Color {
@@ -247,8 +267,9 @@ impl Stack {
         &mut self,
         top_n: usize,
         bits: &mut BitboardStorage<T>,
-    ) -> Pickup {
+    ) -> (Pickup, StackUpdate) {
         self.hash_out_many(top_n, bits);
+        let st = self.inspect();
         let mask = (1 << top_n) - 1;
         let take_bits = self.data & mask;
         let pickup = Pickup::new(take_bits as u8, self.top_piece, top_n as u8);
@@ -260,7 +281,9 @@ impl Stack {
         }
         self.length = self.length - top_n as u8;
         self.hash_in_top(bits);
-        pickup
+        let end = self.inspect();
+        let update = StackUpdate::new(st, end, self.index);
+        (pickup, update)
     }
     fn hash_out_many<T: Bitboard>(&self, top_n: usize, bits: &mut BitboardStorage<T>) {
         if self.length == 0 {
@@ -405,6 +428,67 @@ impl<'a> Iterator for StackIterator<'a> {
     }
 }
 
+#[derive(Debug)]
+pub struct FullThrow {
+    pub(crate) data: ArrayVec<StackUpdate, 7>,
+}
+
+impl FullThrow {
+    pub fn new(data: ArrayVec<StackUpdate, 7>) -> Self {
+        Self { data }
+    }
+    pub fn empty() -> Self {
+        FullThrow {
+            data: ArrayVec::new(),
+        }
+    }
+    pub fn push(&mut self, item: StackUpdate) {
+        self.data.push(item)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct StackData {
+    length: u8,
+    bits: u16, // Already lopped off the top from the repr
+    top: u8,
+}
+
+impl StackData {
+    pub fn new(length: u8, bits: u16, top: u8) -> Self {
+        Self { length, bits, top }
+    }
+    pub fn under_bits(&self, side: Color) -> u16 {
+        if self.length <= 1 {
+            return 0;
+        }
+        match side {
+            Color::White => !self.bits & ((1 << self.length - 1) - 1),
+            Color::Black => self.bits,
+        }
+    }
+    pub fn top_piece(&self) -> Option<Piece> {
+        if self.top > 0 {
+            Some(Piece::from_index(self.top as u32))
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct StackUpdate {
+    pub old: StackData,
+    pub new: StackData,
+    pub sq: u8,
+}
+
+impl StackUpdate {
+    pub fn new(old: StackData, new: StackData, sq: u8) -> Self {
+        Self { old, new, sq }
+    }
+}
+
 pub struct Pickup {
     pieces: u8,
     top: Piece,
@@ -454,6 +538,15 @@ mod test {
         let board = Board6::try_from_tps(tps).unwrap();
         let array = board.board[15].white_black_deep();
         assert_eq!(array, [3, 2, 3, 1]);
+    }
+    #[test]
+    fn bar() {
+        let sd = super::StackData {
+            length: 2,
+            bits: 0,
+            top: 1,
+        };
+        assert_eq!(1, sd.under_bits(crate::Color::White));
     }
     // #[test]
     // fn stack_interpret() {

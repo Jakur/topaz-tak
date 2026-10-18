@@ -96,6 +96,15 @@ pub enum Color {
     Black = 1,
 }
 
+impl Color {
+    fn is_white(self) -> bool {
+        match self {
+            Color::White => true,
+            Color::Black => false,
+        }
+    }
+}
+
 impl std::ops::Not for Color {
     type Output = Color;
 
@@ -184,7 +193,7 @@ pub trait Position {
         Self: Sized;
     fn side_to_move(&self) -> Color;
     fn generate_moves(&self, moves: &mut Vec<Self::Move>);
-    fn do_move(&mut self, mv: Self::Move) -> Self::ReverseMove;
+    fn do_move(&mut self, mv: Self::Move) -> (Self::ReverseMove, board::TakBoardUpdate);
     fn reverse_move(&mut self, mv: Self::ReverseMove);
     fn game_result(&self) -> Option<GameResult>;
 }
@@ -252,7 +261,7 @@ impl Position for TakGame {
         }
     }
 
-    fn do_move(&mut self, mv: Self::Move) -> Self::ReverseMove {
+    fn do_move(&mut self, mv: Self::Move) -> (Self::ReverseMove, board::TakBoardUpdate) {
         match self {
             TakGame::Standard5(board) => board.do_move(mv),
             TakGame::Standard6(board) => board.do_move(mv),
@@ -343,7 +352,7 @@ pub fn perft<P: Position>(board: &mut P, depth: u16) -> u64 {
         moves
             .into_iter()
             .map(|mv| {
-                let reverse_move = board.do_move(mv);
+                let (reverse_move, _) = board.do_move(mv);
                 let num_moves = perft(board, depth - 1);
                 board.reverse_move(reverse_move);
                 num_moves

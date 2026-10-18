@@ -28,6 +28,12 @@ impl Piece {
             Piece::BlackFlat | Piece::BlackWall | Piece::BlackCap => Color::Black,
         }
     }
+    pub fn is_white(self) -> bool {
+        match self {
+            Piece::WhiteFlat | Piece::WhiteWall | Piece::WhiteCap => true,
+            Piece::BlackFlat | Piece::BlackWall | Piece::BlackCap => false,
+        }
+    }
     pub fn kind_index(self) -> usize {
         (self as usize - 1) % 3
     }

@@ -884,7 +884,7 @@ mod test {
         }
         for m in moves.iter().copied() {
             assert!(board.legal_move(m));
-            let r = board.do_move(m);
+            let (r, _) = board.do_move(m);
             if m.crush() {
                 assert!(!board.legal_move(m));
             }
@@ -896,7 +896,7 @@ mod test {
         let moves = all_moves_allocate(&board2);
         for m in moves.iter().copied() {
             assert!(board2.legal_move(m));
-            let r = board2.do_move(m);
+            let (r, _) = board2.do_move(m);
             board2.reverse_move(r);
         }
 
