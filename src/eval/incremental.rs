@@ -204,21 +204,31 @@ impl BoardData {
 pub struct TakSimple6 {}
 
 impl TakSimple6 {
-    pub const SQUARE_INPUTS: usize = 36 * (6 + 2 * STACK_DEPTH);
+    pub const SQUARE_INPUTS: usize = 36 * (6 + 2 * 2 * STACK_DEPTH);
+    const HALF: usize = Self::SQUARE_INPUTS / 2;
     // Squares + Side + Reserves
-    pub const NUM_INPUTS: usize = TakSimple6::SQUARE_INPUTS + 8 + 80; // Pad to 1024
+    pub const NUM_INPUTS: usize = TakSimple6::SQUARE_INPUTS + 8 + 80;
 
     pub fn handle_features<F: FnMut(usize, usize)>(&self, pos: &BoardData, mut f: F) {
         let mut reserves: [usize; 2] = [31, 31];
+        let mut top = 0usize;
         for (piece, square, depth_idx) in pos.into_iter() {
             let c = (piece.is_white() ^ pos.white_to_move) as usize; // 0 if matches, else 1
             reserves[c] -= 1;
-            let location = usize::from(piece.without_color() + depth_idx);
             let sq = usize::from(square);
-
-            let stm = [0, 468][c] + 36 * location + sq;
-            let ntm = [468, 0][c] + 36 * location + sq;
-            f(stm, ntm);
+            if depth_idx == 0 {
+                // top = piece.0;
+                top = c; // Friendly or enemy top
+                let location = usize::from(piece.without_color()); // + depth, but we know it is 0
+                let stm = [0, Self::HALF][c] + 36 * location + sq;
+                let ntm = [Self::HALF, 0][c] + 36 * location + sq;
+                f(stm, ntm);
+            } else {
+                let location = usize::from(depth_idx); // + top
+                let stm = [0, Self::HALF][c] + 36 * (location + top) + sq;
+                let ntm = [Self::HALF, 0][c] + 36 * (location + [1, 0][top]) + sq;
+                f(stm, ntm);
+            };
         }
         // Does not handle reserves, must be manually calced
     }
@@ -244,10 +254,34 @@ pub struct TakBoardIter {
     depth: u8,
 }
 
+impl TakBoardIter {
+    const DEPTH_TABLE: [u8; 10] = {
+        const fn init(x: usize) -> u8 {
+            const TOP_KINDS: u8 = 2;
+            if x == 0 {
+                0 as u8
+            } else {
+                3 + TOP_KINDS * ((x - 1) as u8)
+            }
+        }
+        [
+            init(0),
+            init(1),
+            init(2),
+            init(3),
+            init(4),
+            init(5),
+            init(6),
+            init(7),
+            init(8),
+            init(9),
+        ]
+    };
+}
+
 impl Iterator for TakBoardIter {
     type Item = (ValidPiece, u8, u8); // PieceType, Square, Depth
     fn next(&mut self) -> Option<Self::Item> {
-        const DEPTH_TABLE: [u8; 10] = [0, 3, 4, 5, 6, 7, 8, 9, 10, 11];
         if self.idx > self.board.data.len() {
             return None;
         }
@@ -267,7 +301,7 @@ impl Iterator for TakBoardIter {
         }
         self.idx += 1;
         self.last = square;
-        Some((piece, square, DEPTH_TABLE[self.depth as usize]))
+        Some((piece, square, Self::DEPTH_TABLE[self.depth as usize]))
     }
 }
 
@@ -328,25 +362,47 @@ impl Accumulator {
 struct AccPair {
     stm: Accumulator,
     ntm: Accumulator,
+    // stm_vec: Vec<usize>,
+    // ntm_vec: Vec<usize>,
 }
 
 impl AccPair {
     fn new(stm: Accumulator, ntm: Accumulator) -> Self {
-        Self { stm, ntm }
+        Self {
+            stm,
+            ntm,
+            // stm_vec: Vec::new(),
+            // ntm_vec: Vec::new(),
+        }
     }
     fn flip(&mut self) {
         std::mem::swap(&mut self.stm, &mut self.ntm);
     }
     fn flip_from_parent(parent: &AccPair) -> Self {
-        Self::new(parent.ntm.clone(), parent.stm.clone())
+        AccPair {
+            stm: parent.ntm.clone(),
+            ntm: parent.stm.clone(),
+            // stm_vec: parent.ntm_vec.clone(),
+            // ntm_vec: parent.stm_vec.clone(),
+        }
     }
     fn f(&mut self, stm: usize, ntm: usize) {
         self.stm.add_feature(stm, &NNUE);
         self.ntm.add_feature(ntm, &NNUE);
+        // self.stm_vec.push(stm);
+        // self.ntm_vec.push(ntm);
     }
     fn f_inverse(&mut self, stm: usize, ntm: usize) {
         self.stm.remove_feature(stm, &NNUE);
         self.ntm.remove_feature(ntm, &NNUE);
+        // let rem = self.ntm_vec.iter().position(|&x| x == ntm);
+        // if let Some(rem) = rem {
+        //     self.ntm_vec.remove(rem);
+        // }
+        // let rem = self.stm_vec.iter().position(|&x| x == stm);
+        // if let Some(rem) = rem {
+        //     self.stm_vec.remove(rem);
+        // }
     }
 }
 
@@ -380,11 +436,16 @@ impl AccUpdate {
             }
             TakBoardUpdate::Stack(full_throw) => {
                 // dbg!("Stack Move");
-                for stack_update in full_throw.data {
-                    let square = stack_update.sq as usize;
-                    let old_top = stack_update.old.top_piece();
-                    let new_top = stack_update.new.top_piece();
-                    if old_top != new_top {
+                for update in full_throw.data {
+                    let square = update.sq as usize;
+                    let old_top = update.old.top_piece();
+                    let new_top = update.new.top_piece();
+                    let top_out = self.lookup_top(old_top, color);
+                    let top_in;
+                    if old_top == new_top {
+                        top_in = top_out;
+                    } else {
+                        top_in = self.lookup_top(new_top, color);
                         if let Some(old) = old_top {
                             let old_pq = super::build_piece_square(square, old);
                             self.top_update(
@@ -400,22 +461,39 @@ impl AccUpdate {
                             self.top_update(square, new_pq, color, new.is_cap(), AccPair::f);
                         }
                     }
-                    let old_friendly = stack_update.old.under_bits(color);
-                    let new_friendly = stack_update.new.under_bits(color);
-                    let old_enemy = stack_update.old.under_bits(!color);
-                    let new_enemy = stack_update.new.under_bits(!color);
-                    let friendly_diff = old_friendly ^ new_friendly;
-                    let enemy_diff = old_enemy ^ new_enemy;
-                    let friendly_in = friendly_diff & new_friendly;
-                    let friendly_out = friendly_diff & old_friendly;
-                    let enemy_in = enemy_diff & new_enemy;
-                    let enemy_out = enemy_diff & old_enemy;
-                    self.body_update(square, 0, friendly_out, AccPair::f_inverse);
-                    self.body_update(square, 0, friendly_in, AccPair::f);
-                    self.body_update(square, 1, enemy_out, AccPair::f_inverse);
-                    self.body_update(square, 1, enemy_in, AccPair::f);
+                    let old_friendly = update.old.under_bits(color);
+                    let new_friendly = update.new.under_bits(color);
+                    let old_enemy = update.old.under_bits(!color);
+                    let new_enemy = update.new.under_bits(!color);
+                    if top_in == top_out {
+                        // Figure out the diff
+                        let friendly_diff = old_friendly ^ new_friendly;
+                        let enemy_diff = old_enemy ^ new_enemy;
+                        let friendly_in = friendly_diff & new_friendly;
+                        let friendly_out = friendly_diff & old_friendly;
+                        let enemy_in = enemy_diff & new_enemy;
+                        let enemy_out = enemy_diff & old_enemy;
+                        self.body_update(square, 0, friendly_out, top_out, AccPair::f_inverse);
+                        self.body_update(square, 0, friendly_in, top_in, AccPair::f);
+                        self.body_update(square, 1, enemy_out, top_out, AccPair::f_inverse);
+                        self.body_update(square, 1, enemy_in, top_in, AccPair::f);
+                    } else {
+                        // Needs full rehash
+                        self.body_update(square, 0, old_friendly, top_out, AccPair::f_inverse);
+                        self.body_update(square, 0, new_friendly, top_in, AccPair::f);
+                        self.body_update(square, 1, old_enemy, top_out, AccPair::f_inverse);
+                        self.body_update(square, 1, new_enemy, top_in, AccPair::f);
+                    }
                 }
             }
+        }
+    }
+    fn lookup_top(&self, p: Option<Piece>, side: Color) -> usize {
+        if let Some(p) = p {
+            let agrees = p.is_white() ^ (side == Color::White);
+            agrees as usize
+        } else {
+            0
         }
     }
     fn top_update<U: FnMut(&mut AccPair, usize, usize)>(
@@ -433,8 +511,8 @@ impl AccUpdate {
         let ours = (piece.is_white() ^ color.is_white()) as usize; // 0 if matches, else 1
         let location = usize::from(piece.without_color());
 
-        let stm = [0, 468][ours] + 36 * location + square;
-        let ntm = [468, 0][ours] + 36 * location + square;
+        let stm = [0, TakSimple6::HALF][ours] + 36 * location + square;
+        let ntm = [TakSimple6::HALF, 0][ours] + 36 * location + square;
         update(&mut self.data, stm, ntm);
     }
     #[inline]
@@ -443,15 +521,15 @@ impl AccUpdate {
         square: usize,
         ours: usize,
         mut bits: u16,
+        top: usize,
         mut update: U,
     ) {
-        const DEPTH_TABLE: [usize; 10] = [0, 3, 4, 5, 6, 7, 8, 9, 10, 11];
         while bits != 0 {
             let lowest = bits.lowest_one().unwrap();
             if lowest < 9 {
-                let location = DEPTH_TABLE[1 + lowest as usize];
-                let stm = [0, 468][ours] + 36 * location + square;
-                let ntm = [468, 0][ours] + 36 * location + square;
+                let location = TakBoardIter::DEPTH_TABLE[1 + lowest as usize] as usize;
+                let stm = [0, TakSimple6::HALF][ours] + 36 * (location + top) + square;
+                let ntm = [TakSimple6::HALF, 0][ours] + 36 * (location + [1, 0][top]) + square;
                 update(&mut self.data, stm, ntm);
             }
             bits = bits & !(1 << lowest); // Should lop off lowest one
@@ -537,6 +615,10 @@ impl NNUE6 {
         let mut theirs = Incremental::fresh_new(&NNUE, theirs);
         let w_reserves = board.pieces_reserve(Color::White) + board.caps_reserve(Color::White);
         let b_reserves = board.pieces_reserve(Color::Black) + board.caps_reserve(Color::Black);
+        // let ours: Vec<_> = ours.state.clone().into_iter().collect();
+        // dbg!(ours);
+        // let theirs: Vec<_> = theirs.state.clone().into_iter().collect();
+        // dbg!(theirs);
         if let Color::White = board.side_to_move() {
             // Am white, with reserves vs. Am black with reserves
             ours.vec
@@ -667,7 +749,7 @@ struct BitSetIterator {
 }
 
 impl BitSetIterator {
-    const SIZE: usize = 16;
+    const SIZE: usize = 73;
     const END: usize = Self::SIZE - 1;
 }
 
@@ -689,7 +771,7 @@ impl Iterator for BitSetIterator {
 
 #[derive(Clone, PartialEq)]
 struct IncrementalState {
-    pub(crate) bitset: [u64; 16],
+    pub(crate) bitset: [u64; 73],
 }
 
 impl IntoIterator for IncrementalState {
@@ -707,11 +789,11 @@ impl IntoIterator for IncrementalState {
 
 impl IncrementalState {
     pub fn empty() -> Self {
-        let bitset = [0; 16];
+        let bitset = [0; 73];
         Self { bitset }
     }
     pub fn from_vec(vec: Vec<u16>) -> Self {
-        let mut bitset = [0; 16];
+        let mut bitset = [0; 73];
         for val in vec {
             let b_idx = (val / 64) as usize;
             let b_val = 1 << (val % 64);

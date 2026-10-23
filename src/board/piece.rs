@@ -22,6 +22,13 @@ impl Piece {
             _ => unimplemented!(),
         }
     }
+    pub fn colorless(self) -> usize {
+        match self {
+            Piece::WhiteFlat | Piece::BlackFlat => 0,
+            Piece::WhiteWall | Piece::BlackWall => 1,
+            Piece::WhiteCap | Piece::BlackCap => 2,
+        }
+    }
     pub fn owner(self) -> Color {
         match self {
             Piece::WhiteFlat | Piece::WhiteWall | Piece::WhiteCap => Color::White,
