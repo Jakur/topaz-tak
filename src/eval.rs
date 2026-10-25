@@ -43,6 +43,7 @@ impl Evaluator for NNUE6 {
             // let debug = Self::manual_eval(takboard, game);
             let inc = self.incremental_eval(game, depth);
             // assert_eq!(debug, inc);
+            // debug
             inc
         };
         if depth % 2 == 0 {

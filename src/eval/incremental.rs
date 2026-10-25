@@ -36,6 +36,13 @@ impl ValidPiece {
     const fn flip_color(self) -> Self {
         Self(self.0 ^ 1) // Toggle bit 0
     }
+    const fn set_white(self) -> Self {
+        const PATTERN: u8 = 0b1111_1110;
+        Self(self.0 & PATTERN)
+    }
+    const fn set_black(self) -> Self {
+        Self(self.0 | 1)
+    }
     pub const fn promote_cap(self) -> Self {
         Self(self.0 | 4) // Set bit 2
     }
@@ -204,29 +211,33 @@ impl BoardData {
 pub struct TakSimple6 {}
 
 impl TakSimple6 {
-    pub const SQUARE_INPUTS: usize = 36 * (6 + 2 * 2 * STACK_DEPTH);
+    pub const SQUARE_INPUTS: usize = 36 * (6 + 6 * 2 * STACK_DEPTH);
     const HALF: usize = Self::SQUARE_INPUTS / 2;
     // Squares + Side + Reserves
     pub const NUM_INPUTS: usize = TakSimple6::SQUARE_INPUTS + 8 + 80;
 
     pub fn handle_features<F: FnMut(usize, usize)>(&self, pos: &BoardData, mut f: F) {
         let mut reserves: [usize; 2] = [31, 31];
-        let mut top = 0usize;
+        let mut top = WHITE_FLAT;
         for (piece, square, depth_idx) in pos.into_iter() {
             let c = (piece.is_white() ^ pos.white_to_move) as usize; // 0 if matches, else 1
             reserves[c] -= 1;
             let sq = usize::from(square);
             if depth_idx == 0 {
                 // top = piece.0;
-                top = c; // Friendly or enemy top
+                if c == 0 {
+                    top = piece.set_white();
+                } else {
+                    top = piece.set_black();
+                }
                 let location = usize::from(piece.without_color()); // + depth, but we know it is 0
                 let stm = [0, Self::HALF][c] + 36 * location + sq;
                 let ntm = [Self::HALF, 0][c] + 36 * location + sq;
                 f(stm, ntm);
             } else {
                 let location = usize::from(depth_idx); // + top
-                let stm = [0, Self::HALF][c] + 36 * (location + top) + sq;
-                let ntm = [Self::HALF, 0][c] + 36 * (location + [1, 0][top]) + sq;
+                let stm = [0, Self::HALF][c] + 36 * (location + top.0 as usize) + sq;
+                let ntm = [Self::HALF, 0][c] + 36 * (location + top.flip_color().0 as usize) + sq;
                 f(stm, ntm);
             };
         }
@@ -257,7 +268,7 @@ pub struct TakBoardIter {
 impl TakBoardIter {
     const DEPTH_TABLE: [u8; 10] = {
         const fn init(x: usize) -> u8 {
-            const TOP_KINDS: u8 = 2;
+            const TOP_KINDS: u8 = 6;
             if x == 0 {
                 0 as u8
             } else {
@@ -441,11 +452,8 @@ impl AccUpdate {
                     let old_top = update.old.top_piece();
                     let new_top = update.new.top_piece();
                     let top_out = self.lookup_top(old_top, color);
-                    let top_in;
-                    if old_top == new_top {
-                        top_in = top_out;
-                    } else {
-                        top_in = self.lookup_top(new_top, color);
+                    let top_in = self.lookup_top(new_top, color);
+                    if old_top != new_top {
                         if let Some(old) = old_top {
                             let old_pq = super::build_piece_square(square, old);
                             self.top_update(
@@ -465,7 +473,8 @@ impl AccUpdate {
                     let new_friendly = update.new.under_bits(color);
                     let old_enemy = update.old.under_bits(!color);
                     let new_enemy = update.new.under_bits(!color);
-                    if top_in == top_out {
+                    // old_top == new_top
+                    if old_top == new_top {
                         // Figure out the diff
                         let friendly_diff = old_friendly ^ new_friendly;
                         let enemy_diff = old_enemy ^ new_enemy;
@@ -488,12 +497,24 @@ impl AccUpdate {
             }
         }
     }
-    fn lookup_top(&self, p: Option<Piece>, side: Color) -> usize {
+    fn lookup_top(&self, p: Option<Piece>, color: Color) -> ValidPiece {
         if let Some(p) = p {
-            let agrees = p.is_white() ^ (side == Color::White);
-            agrees as usize
+            let c = (p.is_white() ^ (color == Color::White)) as usize; // 0 if matches, else 1
+            let value = match p {
+                Piece::WhiteFlat => WHITE_FLAT,
+                Piece::WhiteWall => WHITE_WALL,
+                Piece::WhiteCap => WHITE_CAP,
+                Piece::BlackFlat => BLACK_FLAT,
+                Piece::BlackWall => BLACK_WALL,
+                Piece::BlackCap => BLACK_CAP,
+            };
+            if c == 0 {
+                value.set_white()
+            } else {
+                value.set_black()
+            }
         } else {
-            0
+            WHITE_FLAT
         }
     }
     fn top_update<U: FnMut(&mut AccPair, usize, usize)>(
@@ -521,15 +542,17 @@ impl AccUpdate {
         square: usize,
         ours: usize,
         mut bits: u16,
-        top: usize,
+        top: ValidPiece,
         mut update: U,
     ) {
         while bits != 0 {
             let lowest = bits.lowest_one().unwrap();
             if lowest < 9 {
                 let location = TakBoardIter::DEPTH_TABLE[1 + lowest as usize] as usize;
-                let stm = [0, TakSimple6::HALF][ours] + 36 * (location + top) + square;
-                let ntm = [TakSimple6::HALF, 0][ours] + 36 * (location + [1, 0][top]) + square;
+                let stm = [0, TakSimple6::HALF][ours] + 36 * (location + top.0 as usize) + square;
+                let ntm = [TakSimple6::HALF, 0][ours]
+                    + 36 * (location + top.flip_color().0 as usize)
+                    + square;
                 update(&mut self.data, stm, ntm);
             }
             bits = bits & !(1 << lowest); // Should lop off lowest one
