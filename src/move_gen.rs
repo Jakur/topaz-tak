@@ -193,6 +193,7 @@ pub struct GameMove(u32);
 impl GameMove {
     const PLACEMENT_BITS: u32 = 0xF000000;
     const LONG_SLIDE_TABLE: [u32; 256] = gen_long_slide_table();
+    const NULL_MOVE: GameMove = GameMove::null_move();
     /// Creates a placement move from the provided piece and board index
     pub fn from_placement(piece: Piece, index: usize) -> Self {
         let bits = ((piece as u32) << 24) | index as u32;
@@ -435,6 +436,9 @@ impl GameMove {
             };
             out.set_direction(dir)
         }
+    }
+    pub fn is_null(&self) -> bool {
+        *self == Self::NULL_MOVE
     }
     pub(crate) fn from_raw(raw: u32) -> Self {
         Self(raw)

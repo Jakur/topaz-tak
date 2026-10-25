@@ -21,7 +21,7 @@ pub struct SmartMoveBuffer {
 }
 
 impl SmartMoveBuffer {
-    pub(crate) const THOROUGH_MOVES: usize = 24;
+    pub(crate) const THOROUGH_MOVES: usize = 16;
     pub fn new(buffer_size: usize) -> Self {
         Self {
             moves: Vec::with_capacity(buffer_size),
@@ -350,7 +350,9 @@ impl SmartMoveBuffer {
         &mut self,
         info: &SearchInfo,
         prev: Option<RevGameMove>,
+        ply_depth: usize,
     ) -> ScoredMove {
+        // const THOROUGH: [usize; 3] = [usize::MAX, 32, 24];
         // const THOROUGH: [usize; 16] = [
         //     24, 24, 24, 24, 24, 24, 24, 32, 32, 32, 32, 64, 64, 64, 64, 64,
         // ];
@@ -358,6 +360,7 @@ impl SmartMoveBuffer {
         // assert!(idx < 16);
         // let thorough = THOROUGH[idx];
         // let thorough = GEN_THOROUGH_ORDER_DEPTH;
+        // let margin = *THOROUGH.get(ply_depth).unwrap_or(&Self::THOROUGH_MOVES);
         if self.queries <= Self::THOROUGH_MOVES {
             self.queries += 1;
             let (idx, m) = self
@@ -386,9 +389,9 @@ impl SmartMoveBuffer {
             x
         }
     }
-    pub fn get_best(&mut self, info: &SearchInfo, prev: Option<RevGameMove>) -> GameMove {
-        self.get_best_scored(info, prev).mv
-    }
+    // pub fn get_best(&mut self, info: &SearchInfo, prev: Option<RevGameMove>) -> GameMove {
+    //     self.get_best_scored(info, prev).mv
+    // }
     pub fn len(&self) -> usize {
         self.moves.len()
     }

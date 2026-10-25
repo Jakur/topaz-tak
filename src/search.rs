@@ -1,6 +1,6 @@
 use super::{Color, GameResult};
 use crate::board::{TakBoard, TakBoardUpdate};
-use crate::eval::Evaluator;
+use crate::eval::{Evaluator, WIN_FOUND};
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{GameMove, MoveBuffer, RevGameMove, ScoredMove, SmartMoveBuffer};
 use crate::transposition_table::{HashEntry, ScoreCutoff};
@@ -120,7 +120,7 @@ where
                 board,
                 eval,
                 info,
-                SearchData::new(alpha, beta, depth, true, None, 0, false, true, true),
+                SearchData::new_root(alpha, beta, depth),
                 &mut moves,
             );
             if ASPIRATION_ENABLED {
@@ -135,9 +135,7 @@ where
                         board,
                         eval,
                         info,
-                        SearchData::new(
-                            wide_alpha, wide_beta, depth, true, None, 0, false, true, true,
-                        ),
+                        SearchData::new_root(wide_alpha, wide_beta, depth),
                         &mut moves,
                     );
                     if (best_score <= alpha) || (best_score >= beta) {
@@ -148,9 +146,7 @@ where
                             board,
                             eval,
                             info,
-                            SearchData::new(
-                                -1_000_000, 1_000_000, depth, true, None, 0, false, true, true,
-                            ),
+                            SearchData::new_root(-1_000_000, 1_000_000, depth),
                             &mut moves,
                         )
                     }
@@ -285,9 +281,24 @@ struct SearchData {
     cut_node: bool,
     is_pv: bool,
     is_root: bool,
+    excluded_move: GameMove,
 }
 
 impl SearchData {
+    fn new_root(alpha: i32, beta: i32, depth: usize) -> Self {
+        Self::new(
+            alpha,
+            beta,
+            depth,
+            true,
+            None,
+            0,
+            false,
+            true,
+            true,
+            GameMove::null_move(),
+        )
+    }
     fn new(
         alpha: i32,
         beta: i32,
@@ -298,6 +309,7 @@ impl SearchData {
         cut_node: bool,
         is_pv: bool,
         is_root: bool,
+        excluded_move: GameMove,
     ) -> Self {
         Self {
             alpha,
@@ -309,7 +321,12 @@ impl SearchData {
             cut_node,
             is_pv,
             is_root,
+            excluded_move,
         }
+    }
+    fn exclude(mut self, game_move: GameMove) -> Self {
+        self.excluded_move = game_move;
+        self
     }
 }
 
@@ -334,6 +351,7 @@ where
         cut_node,
         is_pv,
         is_root,
+        excluded_move,
     } = data;
     info.stats.nodes += 1;
     const FREQ: usize = (1 << 12) - 1; // Per 4k nodes
@@ -413,7 +431,8 @@ where
     let pv_entry: Option<HashEntry> = info.lookup_move(board);
 
     let raw_eval = if let Some(entry) = pv_entry {
-        if !is_pv && entry.depth() as usize >= depth {
+        // Avoid TT hits on singular search attempt
+        if !is_pv && entry.depth() as usize >= depth && excluded_move.is_null() {
             match entry.score() {
                 ScoreCutoff::Alpha(score) => {
                     if score <= alpha {
@@ -455,7 +474,7 @@ where
     // let deep_endgame =
     //     board.pieces_reserve(Color::White) == 1 || board.pieces_reserve(Color::Black) == 1;
     // (R)FP
-    let eval = if depth <= 3 && !is_pv {
+    let eval = if depth <= 3 && !is_pv && excluded_move.is_null() {
         // Reverse futility pruning
         let rfp_margin = info.hyper.rfp_margin;
         // let rfp_margin = [info.hyper.rfp_margin, info.hyper.rfp_margin + 15][phase];
@@ -516,6 +535,7 @@ where
                     next_cut,
                     false,
                     false,
+                    GameMove::null_move(),
                 ),
                 rest,
             );
@@ -566,22 +586,63 @@ where
     // step 4: check for TT-Move and search it immediately
     // step 5: score spread moves, generate and score placements in gen_and_score()
     // step 6: search all moves ordered by score.
-
+    let mut ext = 0;
     let mut has_searched_pv = false;
     if !has_win {
         // if we don't have an immediate win, check TT move first
         if let Some(entry) = pv_entry {
             if entry.game_move.is_valid()
                 && board.legal_move(entry.game_move)
+                && excluded_move.is_null()
                 && (!is_root
                     || info.multi_pv < 2
                     || !info.forbidden_root_moves.contains(&entry.game_move))
             // TODO maybe a really fast legal checker is faster
             {
                 let m = entry.game_move;
+                if !is_root && depth >= 8 && m != GameMove::null_move() && extensions == 0 {
+                    match entry.score() {
+                        ScoreCutoff::Beta(_) => {}
+                        ScoreCutoff::Alpha(s) | ScoreCutoff::Exact(s) => {
+                            if s.abs() < WIN_FOUND && entry.depth() as usize >= depth - 3 {
+                                let singular_beta = s - depth as i32 * 10 / 8;
+                                let singular_depth = (depth - 1) / 2;
+                                let sd = SearchData::new(
+                                    singular_beta - 1,
+                                    singular_beta,
+                                    singular_depth,
+                                    false,
+                                    last_move,
+                                    extensions,
+                                    cut_node,
+                                    is_pv,
+                                    false,
+                                    m,
+                                );
+                                let singular_score = alpha_beta(board, evaluator, info, sd, rest);
+                                if singular_score < singular_beta {
+                                    // Failed low, meaning this move was important (?)
+                                    ext += 1;
+                                } else if singular_score >= beta && singular_score.abs() < WIN_FOUND
+                                {
+                                    // We restricted the best move and still beta cut, get outta here
+                                    return beta;
+                                }
+                                // else if s >= beta {
+                                //     ext -= 1;
+                                // } else if cut_node {
+                                //     ext -= 2;
+                                // }
+                            }
+                        }
+                    }
+                }
+
                 let (rev_move, update) = board.do_move(m);
                 evaluator.nudge(update, ply_depth + 1);
                 info.hash_history.push(board.hash(), board.ply());
+                let next_depth =
+                    std::cmp::max(depth as i32 - 1 - reduction as i32 + ext, 1) as usize;
                 let score = -1
                     * alpha_beta(
                         board,
@@ -590,13 +651,14 @@ where
                         SearchData::new(
                             -beta,
                             -alpha,
-                            depth - 1 - reduction,
+                            next_depth,
                             true,
                             Some(rev_move),
-                            extensions,
+                            extensions + (ext > 0) as u8,
                             next_cut,
                             data.is_pv,
                             false,
+                            GameMove::null_move(),
                         ),
                         rest,
                     );
@@ -663,9 +725,6 @@ where
         } else if depth <= 4 && eval < alpha {
             moves.drop_below_score(40);
         }
-        // if depth <= 6 && !is_pv && eval + (depth as i32 * fp_margin) < alpha {
-        //     let _num_pruned = moves.drop_below_score(0);
-        // }
     }
 
     if let Some(entry) = pv_entry {
@@ -687,10 +746,12 @@ where
             score: mv_order_score,
             is_tak,
             fcd,
-        } = moves.get_best_scored(info, last_move);
-
+        } = moves.get_best_scored(info, last_move, ply_depth);
         if !is_pv && c > SmartMoveBuffer::THOROUGH_MOVES && depth < 2 {
             break;
+        }
+        if mv == excluded_move {
+            continue;
         }
         // if is_tak {
         //     tak_history = tak_history.add(ply_depth + 1);
@@ -715,9 +776,9 @@ where
         let (rev_move, update) = board.do_move(mv);
         evaluator.nudge(update, ply_depth + 1);
         info.hash_history.push(board.hash(), board.ply());
-        let next_extensions = extensions;
+        let next_extensions = extensions + (ext > 0) as u8;
 
-        let next_depth = depth - 1 - reduction;
+        let next_depth = std::cmp::max(depth as i32 - 1 - reduction as i32 + ext, 0) as usize;
 
         let mut score;
 
@@ -737,6 +798,7 @@ where
                     next_cut,
                     data.is_pv,
                     false,
+                    GameMove::null_move(),
                 ),
                 rest,
             );
@@ -777,6 +839,7 @@ where
                     !cut_node,
                     false,
                     false,
+                    GameMove::null_move(),
                 ),
                 rest,
             );
@@ -797,6 +860,7 @@ where
                         !cut_node,
                         false,
                         false,
+                        GameMove::null_move(),
                     ),
                     rest,
                 );
@@ -822,6 +886,7 @@ where
                         next_cut,
                         is_pv,
                         false,
+                        GameMove::null_move(),
                     ),
                     rest,
                 );
@@ -841,39 +906,41 @@ where
 
             if score >= beta {
                 info.stats.add_cut(count);
-                if mv.is_stack_move() {
-                    if let Some(prev) = last_move {
-                        if prev.game_move.is_place_move() {
-                            // Update countermove
-                            info.counter_moves.update(prev.game_move, mv);
+                if excluded_move.is_null() {
+                    if mv.is_stack_move() {
+                        if let Some(prev) = last_move {
+                            if prev.game_move.is_place_move() {
+                                // Update countermove
+                                info.counter_moves.update(prev.game_move, mv);
+                            }
                         }
+                        let bonus = 5 * depth as i32 - 4;
+                        info.capture_hist.update(board.side_to_move(), bonus, mv);
+                        // if mv_order_score < 0 {
+                        //     info.killers[depth % 64].add(mv);
+                        // }
+                        // info.killers[depth % 64].add(mv);
+                        // Penalize already searched moves
+                        moves.apply_stack_penalty(
+                            board.side_to_move(),
+                            -bonus,
+                            mv,
+                            &mut info.capture_hist,
+                        );
+                        moves.apply_history_penalty(-bonus, mv, &mut info.hist_moves);
+                    } else {
+                        // Placement
+                        let bonus = 5 * depth as i32 - 4;
+                        info.hist_moves.update(bonus, mv);
+                        // Penalize already searched moves
+                        moves.apply_history_penalty(-bonus, mv, &mut info.hist_moves);
+                        moves.apply_stack_penalty(
+                            board.side_to_move(),
+                            -bonus,
+                            mv,
+                            &mut info.capture_hist,
+                        );
                     }
-                    let bonus = 5 * depth as i32 - 4;
-                    info.capture_hist.update(board.side_to_move(), bonus, mv);
-                    // if mv_order_score < 0 {
-                    //     info.killers[depth % 64].add(mv);
-                    // }
-                    // info.killers[depth % 64].add(mv);
-                    // Penalize already searched moves
-                    moves.apply_stack_penalty(
-                        board.side_to_move(),
-                        -bonus,
-                        mv,
-                        &mut info.capture_hist,
-                    );
-                    moves.apply_history_penalty(-bonus, mv, &mut info.hist_moves);
-                } else {
-                    // Placement
-                    let bonus = 5 * depth as i32 - 4;
-                    info.hist_moves.update(bonus, mv);
-                    // Penalize already searched moves
-                    moves.apply_history_penalty(-bonus, mv, &mut info.hist_moves);
-                    moves.apply_stack_penalty(
-                        board.side_to_move(),
-                        -bonus,
-                        mv,
-                        &mut info.capture_hist,
-                    );
                 }
                 beta_cut = true;
                 best_move = Some(mv);
@@ -889,20 +956,22 @@ where
 
     if let Some(best) = best_move {
         if let Some(best_score) = best_score {
-            let cutoff = if beta_cut {
-                ScoreCutoff::Beta(beta)
-            } else if alpha != old_alpha {
-                ScoreCutoff::Exact(best_score)
-            } else {
-                ScoreCutoff::Alpha(alpha)
-            };
-            info.store_move(
-                board,
-                info.eval_hist
-                    .get_eval(ply_depth)
-                    .unwrap_or_else(|| raw_eval + info.corr_hist.correction(board)),
-                HashEntry::new(board.hash(), best, cutoff, raw_eval, depth, board.ply()),
-            );
+            if excluded_move.is_null() {
+                let cutoff = if beta_cut {
+                    ScoreCutoff::Beta(beta)
+                } else if alpha != old_alpha {
+                    ScoreCutoff::Exact(best_score)
+                } else {
+                    ScoreCutoff::Alpha(alpha)
+                };
+                info.store_move(
+                    board,
+                    info.eval_hist
+                        .get_eval(ply_depth)
+                        .unwrap_or_else(|| raw_eval + info.corr_hist.correction(board)),
+                    HashEntry::new(board.hash(), best, cutoff, raw_eval, depth, board.ply()),
+                );
+            }
         }
     } else {
         info.stats.bad_search += 1;
