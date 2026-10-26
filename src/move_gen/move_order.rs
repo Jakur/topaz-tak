@@ -1,6 +1,6 @@
 use crate::search::SearchInfo;
 
-const GEN_THOROUGH_ORDER_DEPTH: usize = 1; // where to stop bothering with accurate move ordering
+const GEN_THOROUGH_ORDER_DEPTH: usize = 3; // where to stop bothering with accurate move ordering
 
 use super::*;
 
