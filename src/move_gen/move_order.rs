@@ -21,7 +21,7 @@ pub struct SmartMoveBuffer {
 }
 
 impl SmartMoveBuffer {
-    pub(crate) const THOROUGH_MOVES: usize = 16;
+    pub(crate) const THOROUGH_MOVES: usize = 32;
     pub fn new(buffer_size: usize) -> Self {
         Self {
             moves: Vec::with_capacity(buffer_size),

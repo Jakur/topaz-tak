@@ -747,8 +747,12 @@ where
             is_tak,
             fcd,
         } = moves.get_best_scored(info, last_move, ply_depth);
-        if !is_pv && c > SmartMoveBuffer::THOROUGH_MOVES && depth < 2 {
-            break;
+        if !is_pv {
+            if (c > SmartMoveBuffer::THOROUGH_MOVES / 2 && depth < 2)
+                || (c > SmartMoveBuffer::THOROUGH_MOVES && depth < 3)
+            {
+                break;
+            }
         }
         if mv == excluded_move {
             continue;
