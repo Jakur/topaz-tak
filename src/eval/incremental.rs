@@ -584,6 +584,7 @@ impl NNUE6 {
         }
     }
     pub fn _begin_search(&mut self, board: &mut crate::Board6) {
+        self.clear();
         let root_even = Self::rebuild_from_board(board);
         self.data[0] = AccUpdate::new(root_even, TakBoardUpdate::Empty);
         self.dirty[0] = false;
