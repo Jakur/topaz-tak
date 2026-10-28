@@ -473,28 +473,32 @@ where
     // 1 endgame, 0 early game
     // let deep_endgame =
     //     board.pieces_reserve(Color::White) == 1 || board.pieces_reserve(Color::Black) == 1;
+    let eval = raw_eval + info.corr_hist.correction(board);
+    info.eval_hist.set_eval(ply_depth, eval);
     // (R)FP
-    let eval = if depth <= 3 && !is_pv && excluded_move.is_null() {
+    if depth <= 6 && !is_pv && excluded_move.is_null() {
         // Reverse futility pruning
-        let rfp_margin = info.hyper.rfp_margin;
+        // let rfp_margin = info.hyper.rfp_margin;
+        let rfp_margin = 55;
         // let rfp_margin = [info.hyper.rfp_margin, info.hyper.rfp_margin + 15][phase];
         let eval = raw_eval + info.corr_hist.correction(board);
-        info.eval_hist.set_eval(ply_depth, eval);
+        let d_margin = depth as i32 + (depth + 1).ilog2() as i32;
+        // let d_margin = if depth <= 3 {
+        //     depth as i32
+        // } else {
+        //     depth as i32 + depth.ilog2() as i32
+        // };
+        // let d_margin = depth as i32 * (depth + 1).ilog2() as i32;
         if info.eval_hist.is_improving(ply_depth) {
-            if eval - (depth as i32 * rfp_margin - info.hyper.improving_rfp_offset) >= beta {
+            if eval - (d_margin * rfp_margin - info.hyper.improving_rfp_offset) >= beta {
                 return beta;
             }
         } else {
-            if eval - (depth as i32 * rfp_margin) >= beta {
+            if eval - (d_margin * rfp_margin) >= beta {
                 return beta;
             }
         }
-        eval
-    } else {
-        let eval = raw_eval + info.corr_hist.correction(board);
-        info.eval_hist.set_eval(ply_depth, eval);
-        eval
-    };
+    }
 
     let (moves, rest) = bufs.split_first_mut().unwrap();
 
