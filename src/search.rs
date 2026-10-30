@@ -4,7 +4,7 @@ use crate::eval::{Evaluator, WIN_FOUND};
 use crate::eval::{LOSE_SCORE, WIN_SCORE};
 use crate::move_gen::{GameMove, MoveBuffer, RevGameMove, ScoredMove, SmartMoveBuffer};
 use crate::transposition_table::{HashEntry, ScoreCutoff};
-use crate::{Bitboard, TeiCommand};
+use crate::{Bitboard, TeiCommand, INT_CONVERSION};
 
 #[cfg(feature = "cli")]
 pub mod book;
@@ -475,21 +475,14 @@ where
     //     board.pieces_reserve(Color::White) == 1 || board.pieces_reserve(Color::Black) == 1;
     let eval = raw_eval + info.corr_hist.correction(board);
     info.eval_hist.set_eval(ply_depth, eval);
+    let improving = info.eval_hist.is_improving(ply_depth);
     // (R)FP
     if depth <= 6 && !is_pv && excluded_move.is_null() {
         // Reverse futility pruning
         // let rfp_margin = info.hyper.rfp_margin;
         let rfp_margin = 55;
-        // let rfp_margin = [info.hyper.rfp_margin, info.hyper.rfp_margin + 15][phase];
-        let eval = raw_eval + info.corr_hist.correction(board);
         let d_margin = depth as i32 + (depth + 1).ilog2() as i32;
-        // let d_margin = if depth <= 3 {
-        //     depth as i32
-        // } else {
-        //     depth as i32 + depth.ilog2() as i32
-        // };
-        // let d_margin = depth as i32 * (depth + 1).ilog2() as i32;
-        if info.eval_hist.is_improving(ply_depth) {
+        if improving {
             if eval - (d_margin * rfp_margin - info.hyper.improving_rfp_offset) >= beta {
                 return beta;
             }
@@ -721,14 +714,39 @@ where
     if is_root && info.multi_pv > 1 {
         moves.drop_arbitrary(&info.forbidden_root_moves);
     }
-    if !(has_win || is_pv) {
+    if !(has_win || is_pv) && depth <= 6 {
+        // Cubic smoothstep
+        const fn smooth_range(x: i32, min: i32, max: i32) -> f32 {
+            let t = if x <= min {
+                0.0
+            } else if x >= max {
+                1.0
+            } else {
+                (x - min) as f32 / (max - min) as f32
+            };
+            t * t * (3.0 - 2.0 * t)
+        }
+
         // Futility pruning
         let fp_margin = info.hyper.fp_margin;
-        if depth <= 6 && eval + (depth.ilog2().max(1) as i32 * depth as i32 * fp_margin) < alpha {
-            let _num_pruned = moves.drop_below_score(110 - info.hyper.quiet_score);
-        } else if depth <= 4 && eval < alpha {
-            moves.drop_below_score(40);
+        // Remember we want to see that eval is terrible compared to alpha + margin
+        let exceeding_fp = alpha - eval;
+        if exceeding_fp > 0 {
+            let depth_penalty = depth as i32 * fp_margin;
+            let outcome = smooth_range(exceeding_fp - depth_penalty, -100, 100);
+            // let depth_penalty =
+            //     -crate::APPROX_LOG2_INT[depth].max(INT_CONVERSION) * depth as i32 * fp_margin;
+            // Scale from drop below score 0 to 100
+            let value = (100.0 * outcome) as i16;
+            moves.drop_below_score(value);
+            // At least eval < alpha
         }
+        // - crate::APPROX_LOG2_INT[depth].max(INT_CONVERSION) * depth as i32 * fp_margin;
+        // if depth <= 6 && exceeding_fp > 0 {
+        //     let _num_pruned = moves.drop_below_score(76);
+        // } else if depth <= 4 && eval < alpha {
+        //     moves.drop_below_score(40);
+        // }
     }
 
     if let Some(entry) = pv_entry {
@@ -819,11 +837,10 @@ where
             if LMR_ENABLED
                 && depth > LMR_DEPTH_LIMIT
                 && count >= LMR_FULL_SEARCH_MOVES
-                && mv_order_score < 500 // Not a flat placement tak move
                 && (LMR_REDUCE_PV || !is_pv)
                 && (LMR_REDUCE_ROOT || !is_root)
             {
-                reduced_depth = moves.get_lmr_reduced_depth(depth, cut_node, is_pv);
+                reduced_depth = moves.get_lmr_reduced_depth(depth, cut_node, is_pv, is_root);
                 needs_re_search_on_alpha = true;
             }
             let next_beta = -alpha;

@@ -8,6 +8,32 @@ const WIN_SORT: i16 = 10_000;
 const PV_SORT: i16 = 5_000;
 const TAK_SORT: i16 = 500;
 
+const MAX_DEPTH: usize = 64; // 64
+const LMR_TABLE_MOVES: usize = 64; // 64
+
+const LMR_REDUCTIONS: [[i32; LMR_TABLE_MOVES]; MAX_DEPTH as usize] = {
+    let mut reductions = [[0; _]; _];
+    let mut depth = 1;
+    while depth < MAX_DEPTH {
+        let mut move_number = 1;
+        let log_depth = crate::APPROX_LOG2_INT[depth];
+        while move_number < LMR_TABLE_MOVES {
+            let log_move_number = crate::APPROX_LOG2_INT[move_number];
+            // let reduction1 = (BASE + log_depth * log_move_number / DIVISOR) * 1024.0;
+            // let reduction1 = 0.0f32;
+            // let reduction2 =
+            //     (LOG_CONVERSION * log_depth + LOG_CONVERSION * log_move_number - 2.0) * 1024.0;
+            let reduction = log_depth + log_move_number - crate::INT_CONVERSION * 2;
+            // let reduction2 = 0.0f32;
+            // let reduction = reduction1.max(reduction2);
+            reductions[depth][move_number] = reduction as i32;
+            move_number += 1;
+        }
+        depth += 1;
+    }
+    reductions
+};
+
 #[derive(Clone)]
 pub struct SmartMoveBuffer {
     moves: Vec<ScoredMove>,
@@ -340,11 +366,27 @@ impl SmartMoveBuffer {
             }
         }
     }
-    pub fn get_lmr_reduced_depth(&self, depth: usize, cut_node: bool, pv_node: bool) -> usize {
-        let max_val = if cut_node { 21 } else { 16 };
-        let reduction =
-            (depth as f32).log2() + (self.queries.clamp(1, max_val) as f32).log2() - 2.0;
-        depth - (reduction.floor() as usize).clamp(2, depth - 1) // Reduce at minimum 2, at max to depth 1
+    pub fn get_lmr_reduced_depth(
+        &self,
+        depth: usize,
+        cut_node: bool,
+        pv_node: bool,
+        is_root: bool,
+    ) -> usize {
+        let queries = self.queries.clamp(1, LMR_TABLE_MOVES - 1);
+        let d = depth as i32;
+        let mut reduction = LMR_REDUCTIONS[depth][queries];
+        reduction -= 512 * i32::from(!cut_node);
+        reduction -= 256 * i32::from(pv_node);
+        // reduction += 1024 * i32::from(cut_node); // 1024
+        // reduction += 512 * i32::from(!pv_node); // 512
+        // reduction += 256 * i32::from(!is_improving);
+        // reduction += 1024 * i32::from(fcd < 0);
+        (d - reduction / crate::INT_CONVERSION).clamp(1, d) as usize
+        // let max_val = if cut_node { 21 } else { 16 };
+        // let reduction =
+        //     (depth as f32).log2() + (self.queries.clamp(1, max_val) as f32).log2() - 2.0;
+        // depth - (reduction.floor() as usize).clamp(2, depth - 1) // Reduce at minimum 2, at max to depth 1
     }
     pub(crate) fn get_best_scored(
         &mut self,
@@ -825,6 +867,17 @@ impl<const SIZE: usize> EvalHist<SIZE> {
             None
         } else {
             Some(eval)
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn foo() {
+        for i in 0..16 {
+            eprintln!("{:?}", &LMR_REDUCTIONS[i][1..48])
         }
     }
 }

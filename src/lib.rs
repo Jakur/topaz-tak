@@ -7,6 +7,8 @@ pub use move_gen::{generate_all_moves, GameMove, RevGameMove};
 pub mod board;
 #[cfg(feature = "evaluation")]
 pub mod eval;
+pub mod math_table;
+pub use math_table::*;
 pub mod move_gen;
 pub mod proof;
 #[cfg(feature = "evaluation")]
